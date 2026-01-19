@@ -2,11 +2,10 @@ package driver
 
 import (
 	"context"
-	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
+	"golang.org/x/sys/unix"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -47,7 +46,7 @@ func (d *Driver) NodeGetCapabilities(ctx context.Context, req *csi.NodeGetCapabi
 	return resp, nil
 }
 
-// NodePublishVolume mounts the volume to the target path.
+// NodePublishVolume bind-mounts the BPF path to the target path.
 func (d *Driver) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolumeRequest) (*csi.NodePublishVolumeResponse, error) {
 	volumeID := req.GetVolumeId()
 	targetPath := req.GetTargetPath()
@@ -63,53 +62,43 @@ func (d *Driver) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolu
 	)
 
 	if volumeID == "" {
-		d.logger.Error("NodePublishVolume failed: volume ID required",
-			"method", "Node.NodePublishVolume",
-		)
 		return nil, status.Error(codes.InvalidArgument, "volume ID is required")
 	}
 	if targetPath == "" {
-		d.logger.Error("NodePublishVolume failed: target path required",
-			"method", "Node.NodePublishVolume",
-		)
 		return nil, status.Error(codes.InvalidArgument, "target path is required")
 	}
 
-	d.logger.Debug("creating target directory",
-		"method", "Node.NodePublishVolume",
-		"targetPath", targetPath,
-	)
+	mapPath := volumeContext["mapPath"]
+	if mapPath == "" {
+		return nil, status.Error(codes.InvalidArgument, "volumeAttributes.mapPath is required")
+	}
 
+	// Verify source path exists
+	if _, err := os.Stat(mapPath); err != nil {
+		return nil, status.Errorf(codes.NotFound, "mapPath %q does not exist: %v", mapPath, err)
+	}
+
+	// Create target directory
 	if err := os.MkdirAll(targetPath, 0755); err != nil {
-		d.logger.Error("NodePublishVolume failed: could not create directory",
-			"method", "Node.NodePublishVolume",
-			"targetPath", targetPath,
-			"error", err,
-		)
 		return nil, status.Errorf(codes.Internal, "failed to create target path: %v", err)
 	}
 
-	markerPath := filepath.Join(targetPath, "csi-volume-info.txt")
-	content := fmt.Sprintf("CSI Volume ID: %s\nDriver: %s\nNode: %s\n", volumeID, d.name, d.nodeID)
+	// Bind-mount the BPF path
+	flags := uintptr(unix.MS_BIND)
+	if readonly {
+		flags |= unix.MS_RDONLY
+	}
 
-	d.logger.Debug("writing marker file",
-		"method", "Node.NodePublishVolume",
-		"markerPath", markerPath,
-	)
-
-	if err := os.WriteFile(markerPath, []byte(content), 0644); err != nil {
-		d.logger.Error("NodePublishVolume failed: could not write marker",
-			"method", "Node.NodePublishVolume",
-			"markerPath", markerPath,
-			"error", err,
-		)
-		return nil, status.Errorf(codes.Internal, "failed to write marker file: %v", err)
+	if err := unix.Mount(mapPath, targetPath, "", flags, ""); err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to bind-mount %q to %q: %v", mapPath, targetPath, err)
 	}
 
 	d.logger.Info("NodePublishVolume succeeded",
 		"method", "Node.NodePublishVolume",
 		"volumeID", volumeID,
+		"mapPath", mapPath,
 		"targetPath", targetPath,
+		"readonly", readonly,
 	)
 
 	return &csi.NodePublishVolumeResponse{}, nil
@@ -127,29 +116,22 @@ func (d *Driver) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpublish
 	)
 
 	if volumeID == "" {
-		d.logger.Error("NodeUnpublishVolume failed: volume ID required",
-			"method", "Node.NodeUnpublishVolume",
-		)
 		return nil, status.Error(codes.InvalidArgument, "volume ID is required")
 	}
 	if targetPath == "" {
-		d.logger.Error("NodeUnpublishVolume failed: target path required",
-			"method", "Node.NodeUnpublishVolume",
-		)
 		return nil, status.Error(codes.InvalidArgument, "target path is required")
 	}
 
-	d.logger.Debug("removing target directory",
-		"method", "Node.NodeUnpublishVolume",
-		"targetPath", targetPath,
-	)
+	// Unmount the bind-mount
+	if err := unix.Unmount(targetPath, 0); err != nil {
+		// Ignore "not mounted" errors for idempotency
+		if err != unix.EINVAL && err != unix.ENOENT {
+			return nil, status.Errorf(codes.Internal, "failed to unmount %q: %v", targetPath, err)
+		}
+	}
 
+	// Remove the target directory
 	if err := os.RemoveAll(targetPath); err != nil {
-		d.logger.Error("NodeUnpublishVolume failed: could not remove directory",
-			"method", "Node.NodeUnpublishVolume",
-			"targetPath", targetPath,
-			"error", err,
-		)
 		return nil, status.Errorf(codes.Internal, "failed to remove target path: %v", err)
 	}
 
