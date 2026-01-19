@@ -14,6 +14,7 @@
 
 #include <dirent.h>
 #include <errno.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -25,6 +26,100 @@
 
 #include "cJSON.h"
 
+static char *vmprintf(const char *fmt, va_list args)
+{
+	va_list ap;
+	size_t size;
+	char *p;
+
+	va_copy(ap, args);
+	size = vsnprintf(NULL, 0, fmt, ap);
+	va_end(ap);
+
+	size++;
+	if ((p = malloc(size)) == NULL)
+		return NULL;
+
+	vsnprintf(p, size, fmt, args);
+	return p;
+}
+
+__attribute__((format(printf, 1, 2), unused))
+static char *mprintf(const char *fmt, ...)
+{
+	va_list ap;
+	char *p;
+
+	va_start(ap, fmt);
+	p = vmprintf(fmt, ap);
+	va_end(ap);
+
+	return p;
+}
+
+static char *must_vmprintf(const char *fmt, va_list args)
+{
+	char *p = vmprintf(fmt, args);
+	if (!p)
+		exit(1);
+	return p;
+}
+
+__attribute__((format(printf, 1, 2), unused))
+static char *must_mprintf(const char *fmt, ...)
+{
+	va_list ap;
+	char *p;
+
+	va_start(ap, fmt);
+	p = must_vmprintf(fmt, ap);
+	va_end(ap);
+
+	return p;
+}
+
+/*
+ * Buffer to capture libbpf log messages. These are global because
+ * libbpf's print callback signature doesn't allow passing user data.
+ */
+static char *libbpf_log;
+static size_t libbpf_log_len;
+static size_t libbpf_log_cap;
+
+static int libbpf_print_fn(enum libbpf_print_level level __attribute__((unused)),
+			   const char *format, va_list args)
+{
+	va_list ap;
+	size_t needed;
+	char *new_log;
+
+	va_copy(ap, args);
+	needed = vsnprintf(NULL, 0, format, ap);
+	va_end(ap);
+
+	if (libbpf_log_len + needed + 1 > libbpf_log_cap) {
+		size_t new_cap = libbpf_log_cap ? libbpf_log_cap * 2 : 1024;
+		while (new_cap < libbpf_log_len + needed + 1)
+			new_cap *= 2;
+		new_log = realloc(libbpf_log, new_cap);
+		if (!new_log)
+			return 0;
+		libbpf_log = new_log;
+		libbpf_log_cap = new_cap;
+	}
+
+	libbpf_log_len += vsnprintf(libbpf_log + libbpf_log_len,
+				    libbpf_log_cap - libbpf_log_len, format, args);
+	return 0;
+}
+
+static void libbpf_log_clear(void)
+{
+	libbpf_log_len = 0;
+	if (libbpf_log)
+		libbpf_log[0] = '\0';
+}
+
 static int ensure_dir(const char *path)
 {
 	struct stat st;
@@ -32,14 +127,12 @@ static int ensure_dir(const char *path)
 	if (stat(path, &st) == 0) {
 		if (S_ISDIR(st.st_mode))
 			return 0;
-		fprintf(stderr, "error: %s exists but is not a directory\n", path);
+		errno = ENOTDIR;
 		return -1;
 	}
 
-	if (mkdir(path, 0755) < 0) {
-		fprintf(stderr, "error: mkdir %s: %s\n", path, strerror(errno));
+	if (mkdir(path, 0755) < 0)
 		return -1;
-	}
 
 	return 0;
 }
@@ -51,6 +144,50 @@ static void print_json(cJSON *json)
 		printf("%s\n", str);
 		free(str);
 	}
+}
+
+static int emit_errorv(int errnum, const char *fmt, va_list args)
+{
+	cJSON *root = cJSON_CreateObject();
+	cJSON *error = cJSON_CreateObject();
+	cJSON *messages = cJSON_CreateArray();
+	char *msg;
+
+	/* Add any captured libbpf messages first (they happened before our error) */
+	if (libbpf_log_len > 0) {
+		char *line = strtok(libbpf_log, "\n");
+		while (line) {
+			if (*line)
+				cJSON_AddItemToArray(messages, cJSON_CreateString(line));
+			line = strtok(NULL, "\n");
+		}
+		libbpf_log_clear();
+	}
+
+	msg = must_vmprintf(fmt, args);
+	cJSON_AddItemToArray(messages, cJSON_CreateString(msg));
+	free(msg);
+
+	cJSON_AddNumberToObject(error, "errno", errnum);
+	cJSON_AddItemToObject(error, "messages", messages);
+	cJSON_AddItemToObject(root, "error", error);
+
+	print_json(root);
+	cJSON_Delete(root);
+
+	return 1;
+}
+
+static int emit_error(int errnum, const char *fmt, ...)
+{
+	va_list args;
+	int ret;
+
+	va_start(args, fmt);
+	ret = emit_errorv(errnum, fmt, args);
+	va_end(args);
+
+	return ret;
 }
 
 static int cmd_load(const char *obj_path, const char *prog_name, const char *pin_dir)
@@ -68,58 +205,53 @@ static int cmd_load(const char *obj_path, const char *prog_name, const char *pin
 	/* Open the object file */
 	obj = bpf_object__open(obj_path);
 	if (!obj) {
-		err = -errno;
-		fprintf(stderr, "error: failed to open %s: %s\n", obj_path, strerror(-err));
-		return 1;
+		err = errno;
+		return emit_error(err, "failed to open %s: %s", obj_path, strerror(err));
 	}
 
 	/* Find the program by name */
 	prog = bpf_object__find_program_by_name(obj, prog_name);
 	if (!prog) {
-		fprintf(stderr, "error: program '%s' not found in %s\n", prog_name, obj_path);
 		bpf_object__close(obj);
-		return 1;
+		return emit_error(ENOENT, "program '%s' not found in %s", prog_name, obj_path);
 	}
 
 	/* Load the object (programs + maps) into the kernel */
 	err = bpf_object__load(obj);
 	if (err) {
-		fprintf(stderr, "error: failed to load object: %s\n", strerror(-err));
 		bpf_object__close(obj);
-		return 1;
+		return emit_error(-err, "failed to load object: %s", strerror(-err));
 	}
 
 	/* Get program fd and id */
 	prog_fd = bpf_program__fd(prog);
 	if (prog_fd < 0) {
-		fprintf(stderr, "error: failed to get program fd\n");
 		bpf_object__close(obj);
-		return 1;
+		return emit_error(-prog_fd, "failed to get program fd: %s", strerror(-prog_fd));
 	}
 
 	struct bpf_prog_info prog_info = {};
 	__u32 info_len = sizeof(prog_info);
 	err = bpf_prog_get_info_by_fd(prog_fd, &prog_info, &info_len);
 	if (err) {
-		fprintf(stderr, "error: failed to get program info: %s\n", strerror(-err));
 		bpf_object__close(obj);
-		return 1;
+		return emit_error(-err, "failed to get program info: %s", strerror(-err));
 	}
 	prog_id = prog_info.id;
 
 	/* Ensure pin directory exists */
 	if (ensure_dir(pin_dir) < 0) {
+		err = errno;
 		bpf_object__close(obj);
-		return 1;
+		return emit_error(err, "failed to create pin directory %s: %s", pin_dir, strerror(err));
 	}
 
 	/* Pin the program */
 	snprintf(pin_path, sizeof(pin_path), "%s/%s", pin_dir, prog_name);
 	err = bpf_program__pin(prog, pin_path);
 	if (err) {
-		fprintf(stderr, "error: failed to pin program to %s: %s\n", pin_path, strerror(-err));
 		bpf_object__close(obj);
-		return 1;
+		return emit_error(-err, "failed to pin program to %s: %s", pin_path, strerror(-err));
 	}
 
 	/* Build JSON output */
@@ -151,10 +283,8 @@ static int cmd_load(const char *obj_path, const char *prog_name, const char *pin
 		/* Pin the map */
 		snprintf(pin_path, sizeof(pin_path), "%s/%s", pin_dir, map_name);
 		err = bpf_map__pin(map, pin_path);
-		if (err) {
-			fprintf(stderr, "warning: failed to pin map %s: %s\n", map_name, strerror(-err));
+		if (err)
 			continue;
-		}
 
 		map_json = cJSON_CreateObject();
 		cJSON_AddStringToObject(map_json, "name", map_name);
@@ -180,12 +310,13 @@ static int cmd_unload(const char *pin_dir)
 	char path[512];
 	int count = 0;
 	int errors = 0;
+	int err;
 	cJSON *root;
 
 	dir = opendir(pin_dir);
 	if (!dir) {
-		fprintf(stderr, "error: failed to open directory %s: %s\n", pin_dir, strerror(errno));
-		return 1;
+		err = errno;
+		return emit_error(err, "failed to open directory %s: %s", pin_dir, strerror(err));
 	}
 
 	/* Remove all entries in the directory */
@@ -194,21 +325,17 @@ static int cmd_unload(const char *pin_dir)
 			continue;
 
 		snprintf(path, sizeof(path), "%s/%s", pin_dir, entry->d_name);
-		if (unlink(path) < 0) {
-			fprintf(stderr, "warning: failed to unlink %s: %s\n", path, strerror(errno));
+		if (unlink(path) < 0)
 			errors++;
-		} else {
+		else
 			count++;
-		}
 	}
 
 	closedir(dir);
 
 	/* Remove the directory itself */
-	if (rmdir(pin_dir) < 0) {
-		fprintf(stderr, "warning: failed to remove directory %s: %s\n", pin_dir, strerror(errno));
+	if (rmdir(pin_dir) < 0)
 		errors++;
-	}
 
 	/* Output JSON */
 	root = cJSON_CreateObject();
@@ -220,37 +347,24 @@ static int cmd_unload(const char *pin_dir)
 	return errors > 0 ? 1 : 0;
 }
 
-static void usage(const char *prog)
-{
-	fprintf(stderr, "Usage:\n");
-	fprintf(stderr, "  %s load <object.o> <program-name> <pin-dir>\n", prog);
-	fprintf(stderr, "  %s unload <pin-dir>\n", prog);
-}
-
 int main(int argc, char **argv)
 {
-	if (argc < 2) {
-		usage(argv[0]);
-		return 1;
-	}
+	libbpf_set_print(libbpf_print_fn);
+
+	if (argc < 2)
+		return emit_error(EINVAL, "usage: %s load <object.o> <program-name> <pin-dir> | unload <pin-dir>", argv[0]);
 
 	if (strcmp(argv[1], "load") == 0) {
-		if (argc != 5) {
-			usage(argv[0]);
-			return 1;
-		}
+		if (argc != 5)
+			return emit_error(EINVAL, "usage: %s load <object.o> <program-name> <pin-dir>", argv[0]);
 		return cmd_load(argv[2], argv[3], argv[4]);
 	}
 
 	if (strcmp(argv[1], "unload") == 0) {
-		if (argc != 3) {
-			usage(argv[0]);
-			return 1;
-		}
+		if (argc != 3)
+			return emit_error(EINVAL, "usage: %s unload <pin-dir>", argv[0]);
 		return cmd_unload(argv[2]);
 	}
 
-	fprintf(stderr, "error: unknown command '%s'\n", argv[1]);
-	usage(argv[0]);
-	return 1;
+	return emit_error(EINVAL, "unknown command '%s'", argv[1]);
 }

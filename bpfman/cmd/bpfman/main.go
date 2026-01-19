@@ -37,6 +37,12 @@ func findShimBinary() (string, error) {
 		return candidate, nil
 	}
 
+	// Try relative to current working directory (for development)
+	candidate = "bpfman-kernel/bpfman-kernel"
+	if _, err := os.Stat(candidate); err == nil {
+		return candidate, nil
+	}
+
 	// Fall back to PATH
 	return "bpfman-kernel", nil
 }
