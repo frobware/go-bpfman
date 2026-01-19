@@ -8,16 +8,16 @@ NAMESPACE ?= kube-system
 BINARY_NAME ?= bpffs-csi-driver
 
 build:
-	go build -o $(BINARY_NAME) .
+	cd csi-driver && go build -o $(BINARY_NAME) .
 
 test:
-	go test -v ./...
+	cd csi-driver && go test -v ./...
 
 clean:
-	rm -f $(BINARY_NAME)
+	rm -f csi-driver/$(BINARY_NAME)
 
 docker-build:
-	docker buildx build --quiet --load -t $(IMAGE_NAME):$(IMAGE_TAG) .
+	docker buildx build --quiet --load -t $(IMAGE_NAME):$(IMAGE_TAG) csi-driver/
 
 kind-load: docker-build
 	kind load docker-image $(IMAGE_NAME):$(IMAGE_TAG) --name $(KIND_CLUSTER)
