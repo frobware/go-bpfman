@@ -10,50 +10,56 @@ import (
 	"syscall"
 )
 
-// Program represents a loaded BPF program.
-type Program struct {
-	Name   string `json:"name"`
-	Type   int    `json:"type"`
-	ID     uint32 `json:"id"`
-	Pinned string `json:"pinned"`
+// KernelResponse is the envelope for all shim responses.
+type KernelResponse struct {
+	Op        string         `json:"op"`
+	PinDir    string         `json:"pin_dir,omitempty"`
+	Program   *KernelProgram `json:"program,omitempty"`
+	Maps      []KernelMap    `json:"maps,omitempty"`
+	LibbpfLog []string       `json:"libbpf_log,omitempty"`
+	Error     *KernelError   `json:"error,omitempty"`
 }
 
-// Map represents a BPF map.
-type Map struct {
-	Name   string `json:"name"`
-	Type   int    `json:"type"`
-	ID     uint32 `json:"id"`
-	Pinned string `json:"pinned"`
+// KernelProgram represents a loaded BPF program.
+type KernelProgram struct {
+	KernelID   uint32 `json:"kernel_id"`
+	Name       string `json:"name"`
+	Type       uint32 `json:"type"`
+	PinnedPath string `json:"pinned_path"`
 }
 
-// LoadResult is the result of a load operation.
-type LoadResult struct {
-	Program Program `json:"program"`
-	Maps    []Map   `json:"maps"`
+// KernelMap represents a BPF map.
+type KernelMap struct {
+	KernelID   uint32 `json:"kernel_id"`
+	Name       string `json:"name"`
+	Type       uint32 `json:"type"`
+	PinnedPath string `json:"pinned_path"`
 }
 
-// UnpinResult is the result of an unload operation.
+// KernelError represents an error from the shim.
+type KernelError struct {
+	Errno     int      `json:"errno"`
+	Messages  []string `json:"messages"`
+	LibbpfLog []string `json:"libbpf_log,omitempty"`
+}
+
+// UnpinResult is the result of an unpin operation.
 type UnpinResult struct {
-	Unpinned int `json:"unpinned"`
-	Errors   int `json:"errors"`
+	Op       string `json:"op"`
+	PinDir   string `json:"pin_dir"`
+	Unpinned int    `json:"unpinned"`
+	Errors   int    `json:"errors"`
 }
 
 // ShimError represents an error returned by the shim.
 type ShimError struct {
-	Errno    syscall.Errno
-	Messages []string
+	Errno     syscall.Errno
+	Messages  []string
+	LibbpfLog []string
 }
 
 func (e *ShimError) Error() string {
 	return strings.Join(e.Messages, "; ")
-}
-
-// errorResponse is the JSON error structure from the shim.
-type errorResponse struct {
-	Error *struct {
-		Errno    int      `json:"errno"`
-		Messages []string `json:"messages"`
-	} `json:"error"`
 }
 
 // Shim wraps calls to the bpfman-kernel binary.
@@ -67,8 +73,7 @@ func New(binaryPath string) *Shim {
 	return &Shim{BinaryPath: binaryPath}
 }
 
-// run executes the shim and returns the stdout. If the shim returns an
-// error response, it is converted to a ShimError.
+// run executes the shim and returns the raw stdout bytes.
 func (s *Shim) run(args ...string) ([]byte, error) {
 	cmd := exec.Command(s.BinaryPath, args...)
 
@@ -82,47 +87,42 @@ func (s *Shim) run(args ...string) ([]byte, error) {
 		return nil, fmt.Errorf("shim produced no output")
 	}
 
-	// Check if the output contains an error response
-	var errResp errorResponse
-	if err := json.Unmarshal(output, &errResp); err != nil {
-		return nil, fmt.Errorf("failed to parse shim output: %w: %s", err, string(output))
-	}
-
-	if errResp.Error != nil {
-		return nil, &ShimError{
-			Errno:    syscall.Errno(errResp.Error.Errno),
-			Messages: errResp.Error.Messages,
-		}
-	}
-
 	return output, nil
 }
 
 // Load loads a BPF program from an object file and pins it.
-func (s *Shim) Load(objectPath, programName, pinDir string) (*LoadResult, error) {
+func (s *Shim) Load(objectPath, programName, pinDir string) (*KernelResponse, error) {
 	output, err := s.run("load", objectPath, programName, pinDir)
 	if err != nil {
 		return nil, err
 	}
 
-	var result LoadResult
-	if err := json.Unmarshal(output, &result); err != nil {
-		return nil, fmt.Errorf("failed to parse load result: %w", err)
+	var resp KernelResponse
+	if err := json.Unmarshal(output, &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse shim output: %w: %s", err, string(output))
 	}
 
-	return &result, nil
+	if resp.Error != nil {
+		return &resp, &ShimError{
+			Errno:     syscall.Errno(resp.Error.Errno),
+			Messages:  resp.Error.Messages,
+			LibbpfLog: resp.Error.LibbpfLog,
+		}
+	}
+
+	return &resp, nil
 }
 
 // Unpin unpins all BPF objects in the given directory.
 func (s *Shim) Unpin(pinDir string) (*UnpinResult, error) {
-	output, err := s.run("unload", pinDir)
+	output, err := s.run("unpin", pinDir)
 	if err != nil {
 		return nil, err
 	}
 
 	var result UnpinResult
 	if err := json.Unmarshal(output, &result); err != nil {
-		return nil, fmt.Errorf("failed to parse unload result: %w", err)
+		return nil, fmt.Errorf("failed to parse unpin result: %w", err)
 	}
 
 	return &result, nil
