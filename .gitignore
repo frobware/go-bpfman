@@ -1,1 +1,3 @@
 csi-driver/bpffs-csi-driver
+bpfman/bpfman-kernel/bpfman-kernel
+.direnv/
