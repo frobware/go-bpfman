@@ -1,0 +1,10 @@
+apiVersion: storage.k8s.io/v1
+kind: CSIDriver
+metadata:
+  name: bpffs.csi.frobware.io
+spec:
+  attachRequired: false
+  podInfoOnMount: true
+  volumeLifecycleModes:
+    - Ephemeral
+    - Persistent

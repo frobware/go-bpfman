@@ -1,0 +1,77 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: bpffs-csi-node
+  namespace: kube-system
+  labels:
+    app: bpffs-csi
+spec:
+  selector:
+    matchLabels:
+      app: bpffs-csi-node
+  template:
+    metadata:
+      labels:
+        app: bpffs-csi-node
+    spec:
+      serviceAccountName: bpffs-csi-node
+      containers:
+        - name: csi-driver
+          image: bpffs-csi-driver:dev
+          imagePullPolicy: IfNotPresent
+          args:
+            - --endpoint=unix:///csi/csi.sock
+            - --driver-name=bpffs.csi.frobware.io
+            - --node-id=$(NODE_NAME)
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: plugin-dir
+              mountPath: /csi
+            - name: pods-mount-dir
+              mountPath: /var/lib/kubelet/pods
+              mountPropagation: Bidirectional
+            - name: bpffs
+              mountPath: /sys/fs/bpf
+              mountPropagation: Bidirectional
+
+        - name: node-driver-registrar
+          image: registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.9.0
+          args:
+            - --csi-address=/csi/csi.sock
+            - --kubelet-registration-path=/var/lib/kubelet/plugins/bpffs.csi.frobware.io/csi.sock
+            - --v=5
+          volumeMounts:
+            - name: plugin-dir
+              mountPath: /csi
+            - name: registration-dir
+              mountPath: /registration
+
+      volumes:
+        - name: plugin-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins/bpffs.csi.frobware.io
+            type: DirectoryOrCreate
+        - name: registration-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins_registry
+            type: Directory
+        - name: pods-mount-dir
+          hostPath:
+            path: /var/lib/kubelet/pods
+            type: Directory
+        - name: bpffs
+          hostPath:
+            path: /sys/fs/bpf
+            type: Directory
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: bpffs-csi-node
+  namespace: kube-system

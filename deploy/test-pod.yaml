@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: bpffs-test-pod
+  namespace: default
+spec:
+  containers:
+    - name: test
+      image: busybox
+      command: ["sleep", "3600"]
+      volumeMounts:
+        - name: bpf-volume
+          mountPath: /bpf
+  volumes:
+    - name: bpf-volume
+      csi:
+        driver: bpffs.csi.frobware.io
+        volumeAttributes:
+          # Future: specify which BPF maps/programs to expose
+          mapPath: "/sys/fs/bpf/test"
