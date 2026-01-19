@@ -71,11 +71,8 @@ bpffs-csi-driver/
 Requires a Kubernetes cluster. For local development, use kind:
 
 ```bash
-# Build image and load into kind
-make kind-load
-
-# Deploy to cluster
-make deploy
+# Deploy driver to cluster (builds and loads image automatically)
+make deploy-driver
 
 # Check status
 make status
@@ -85,16 +82,19 @@ make logs
 
 # Rebuild and redeploy
 make redeploy
+
+# Remove driver
+make delete-driver
 ```
 
 ## Testing
 
-Deploy the test pod:
-
 ```bash
-kubectl apply -f deploy/test-pod.yaml
-kubectl exec bpffs-test-pod -- ls -la /bpf
-kubectl exec bpffs-test-pod -- cat /bpf/csi-volume-info.txt
+# Deploy test pod and verify volume
+make deploy-test-pod
+
+# Clean up test pod
+make delete-test-pod
 ```
 
 ## CSI services implemented
