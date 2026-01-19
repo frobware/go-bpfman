@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: bpfman-lite
+  namespace: kube-system
+  labels:
+    app: bpfman-lite
+spec:
+  selector:
+    matchLabels:
+      app: bpfman-lite
+  template:
+    metadata:
+      labels:
+        app: bpfman-lite
+    spec:
+      containers:
+        - name: bpfman-lite
+          image: bpfman-lite:dev
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: bpffs
+              mountPath: /sys/fs/bpf
+              mountPropagation: Bidirectional
+      volumes:
+        - name: bpffs
+          hostPath:
+            path: /sys/fs/bpf
+            type: DirectoryOrCreate
+      tolerations:
+        - operator: Exists
