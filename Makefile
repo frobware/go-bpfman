@@ -18,7 +18,7 @@ clean:
 	rm -f csi-driver/$(BINARY_NAME)
 
 docker-build-csi:
-	docker buildx build --builder=default --quiet --load -t $(IMAGE_NAME):$(IMAGE_TAG) csi-driver/
+	docker buildx build --builder=default --load -t $(IMAGE_NAME):$(IMAGE_TAG) csi-driver/
 
 kind-load: docker-build-csi
 	kind load docker-image $(IMAGE_NAME):$(IMAGE_TAG) --name $(KIND_CLUSTER)
@@ -46,10 +46,10 @@ status:
 
 docker-build-bpfman-builder:
 	@docker image inspect $(BPFMAN_BUILDER_IMAGE):$(IMAGE_TAG) >/dev/null 2>&1 || \
-		docker buildx build --builder=default --quiet --load -t $(BPFMAN_BUILDER_IMAGE):$(IMAGE_TAG) -f bpfman/Dockerfile.builder bpfman/
+		docker buildx build --builder=default --load -t $(BPFMAN_BUILDER_IMAGE):$(IMAGE_TAG) -f bpfman/Dockerfile.builder bpfman/
 
 docker-build-bpfman: docker-build-bpfman-builder bpfman/testdata/stats.o
-	docker buildx build --builder=default --quiet --load --build-arg BUILDER_IMAGE=$(BPFMAN_BUILDER_IMAGE):$(IMAGE_TAG) -t $(BPFMAN_IMAGE):$(IMAGE_TAG) bpfman/
+	docker buildx build --builder=default --load --build-arg BUILDER_IMAGE=$(BPFMAN_BUILDER_IMAGE):$(IMAGE_TAG) -t $(BPFMAN_IMAGE):$(IMAGE_TAG) bpfman/
 
 kind-load-bpfman: docker-build-bpfman
 	kind load docker-image $(BPFMAN_IMAGE):$(IMAGE_TAG) --name $(KIND_CLUSTER)
