@@ -1,8 +1,9 @@
-.PHONY: build test clean docker-build kind-load deploy-driver delete-driver redeploy logs logs-registrar status deploy-app-pod delete-app-pod delete-all docker-build-bpfman kind-load-bpfman deploy-bpfman delete-bpfman logs-bpfman deploy-bpfman-test delete-bpfman-test
+.PHONY: build test clean docker-build kind-load deploy-driver delete-driver redeploy logs logs-registrar status deploy-app-pod delete-app-pod delete-all docker-build-bpfman docker-build-bpfman-builder kind-load-bpfman deploy-bpfman delete-bpfman logs-bpfman deploy-bpfman-test delete-bpfman-test
 
 IMAGE_NAME ?= bpffs-csi-driver
 IMAGE_TAG ?= dev
 BPFMAN_IMAGE ?= bpfman
+BPFMAN_BUILDER_IMAGE ?= bpfman-builder
 KIND_CLUSTER ?= bpfman-deployment
 NAMESPACE ?= kube-system
 BINARY_NAME ?= bpffs-csi-driver
@@ -43,8 +44,12 @@ status:
 	@echo "=== CSI Drivers ==="
 	@kubectl get csidrivers
 
-docker-build-bpfman: bpfman/testdata/stats.o
-	docker build -t $(BPFMAN_IMAGE):$(IMAGE_TAG) bpfman/
+docker-build-bpfman-builder:
+	@docker image inspect $(BPFMAN_BUILDER_IMAGE):$(IMAGE_TAG) >/dev/null 2>&1 || \
+		docker buildx build --builder=default --quiet --load -t $(BPFMAN_BUILDER_IMAGE):$(IMAGE_TAG) -f bpfman/Dockerfile.builder bpfman/
+
+docker-build-bpfman: docker-build-bpfman-builder bpfman/testdata/stats.o
+	docker buildx build --builder=default --quiet --load --build-arg BUILDER_IMAGE=$(BPFMAN_BUILDER_IMAGE):$(IMAGE_TAG) -t $(BPFMAN_IMAGE):$(IMAGE_TAG) bpfman/
 
 kind-load-bpfman: docker-build-bpfman
 	kind load docker-image $(BPFMAN_IMAGE):$(IMAGE_TAG) --name $(KIND_CLUSTER)
