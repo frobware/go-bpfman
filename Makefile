@@ -16,7 +16,7 @@ clean:
 	rm -f $(BINARY_NAME)
 
 docker-build:
-	docker buildx build --load -t $(IMAGE_NAME):$(IMAGE_TAG) .
+	docker buildx build --quiet --load -t $(IMAGE_NAME):$(IMAGE_TAG) .
 
 kind-load: docker-build
 	kind load docker-image $(IMAGE_NAME):$(IMAGE_TAG) --name $(KIND_CLUSTER)
