@@ -23,6 +23,8 @@
 #include <bpf/bpf.h>
 #include <bpf/libbpf.h>
 
+#include "cJSON.h"
+
 static int ensure_dir(const char *path)
 {
 	struct stat st;
@@ -42,19 +44,13 @@ static int ensure_dir(const char *path)
 	return 0;
 }
 
-static void print_json_string(const char *s)
+static void print_json(cJSON *json)
 {
-	putchar('"');
-	for (; *s; s++) {
-		switch (*s) {
-		case '"':  printf("\\\""); break;
-		case '\\': printf("\\\\"); break;
-		case '\n': printf("\\n"); break;
-		case '\t': printf("\\t"); break;
-		default:   putchar(*s); break;
-		}
+	char *str = cJSON_Print(json);
+	if (str) {
+		printf("%s\n", str);
+		free(str);
 	}
-	putchar('"');
 }
 
 static int cmd_load(const char *obj_path, const char *prog_name, const char *pin_dir)
@@ -65,7 +61,9 @@ static int cmd_load(const char *obj_path, const char *prog_name, const char *pin
 	char pin_path[512];
 	int prog_fd, prog_id;
 	int err;
-	int first_map = 1;
+	cJSON *root = NULL;
+	cJSON *prog_json = NULL;
+	cJSON *maps_json = NULL;
 
 	/* Open the object file */
 	obj = bpf_object__open(obj_path);
@@ -124,23 +122,24 @@ static int cmd_load(const char *obj_path, const char *prog_name, const char *pin
 		return 1;
 	}
 
-	/* Output JSON */
-	printf("{\n");
-	printf("  \"program\": {\n");
-	printf("    \"name\": "); print_json_string(prog_name); printf(",\n");
-	printf("    \"type\": %d,\n", bpf_program__type(prog));
-	printf("    \"id\": %u,\n", prog_id);
-	printf("    \"pinned\": "); print_json_string(pin_path); printf("\n");
-	printf("  },\n");
+	/* Build JSON output */
+	root = cJSON_CreateObject();
+	prog_json = cJSON_CreateObject();
+	maps_json = cJSON_CreateArray();
+
+	cJSON_AddStringToObject(prog_json, "name", prog_name);
+	cJSON_AddNumberToObject(prog_json, "type", bpf_program__type(prog));
+	cJSON_AddNumberToObject(prog_json, "id", prog_id);
+	cJSON_AddStringToObject(prog_json, "pinned", pin_path);
+	cJSON_AddItemToObject(root, "program", prog_json);
 
 	/* Pin maps and collect info */
-	printf("  \"maps\": [");
-
 	bpf_object__for_each_map(map, obj) {
 		int map_fd = bpf_map__fd(map);
 		const char *map_name = bpf_map__name(map);
 		struct bpf_map_info map_info = {};
 		__u32 map_info_len = sizeof(map_info);
+		cJSON *map_json;
 
 		if (map_fd < 0)
 			continue;
@@ -157,20 +156,18 @@ static int cmd_load(const char *obj_path, const char *prog_name, const char *pin
 			continue;
 		}
 
-		if (!first_map)
-			printf(",");
-		first_map = 0;
-
-		printf("\n    {\n");
-		printf("      \"name\": "); print_json_string(map_name); printf(",\n");
-		printf("      \"type\": %d,\n", map_info.type);
-		printf("      \"id\": %u,\n", map_info.id);
-		printf("      \"pinned\": "); print_json_string(pin_path); printf("\n");
-		printf("    }");
+		map_json = cJSON_CreateObject();
+		cJSON_AddStringToObject(map_json, "name", map_name);
+		cJSON_AddNumberToObject(map_json, "type", map_info.type);
+		cJSON_AddNumberToObject(map_json, "id", map_info.id);
+		cJSON_AddStringToObject(map_json, "pinned", pin_path);
+		cJSON_AddItemToArray(maps_json, map_json);
 	}
 
-	printf("\n  ]\n");
-	printf("}\n");
+	cJSON_AddItemToObject(root, "maps", maps_json);
+
+	print_json(root);
+	cJSON_Delete(root);
 
 	bpf_object__close(obj);
 	return 0;
@@ -183,6 +180,7 @@ static int cmd_unload(const char *pin_dir)
 	char path[512];
 	int count = 0;
 	int errors = 0;
+	cJSON *root;
 
 	dir = opendir(pin_dir);
 	if (!dir) {
@@ -213,10 +211,11 @@ static int cmd_unload(const char *pin_dir)
 	}
 
 	/* Output JSON */
-	printf("{\n");
-	printf("  \"unpinned\": %d,\n", count);
-	printf("  \"errors\": %d\n", errors);
-	printf("}\n");
+	root = cJSON_CreateObject();
+	cJSON_AddNumberToObject(root, "unpinned", count);
+	cJSON_AddNumberToObject(root, "errors", errors);
+	print_json(root);
+	cJSON_Delete(root);
 
 	return errors > 0 ? 1 : 0;
 }
