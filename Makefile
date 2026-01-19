@@ -1,4 +1,4 @@
-.PHONY: build test clean docker-build-csi kind-load deploy-driver delete-driver redeploy logs logs-registrar status deploy-app-pod delete-app-pod delete-all docker-build-bpfman docker-build-bpfman-builder kind-load-bpfman deploy-bpfman delete-bpfman logs-bpfman deploy-bpfman-test delete-bpfman-test
+.PHONY: build test clean docker-build-csi kind-load deploy-driver delete-driver redeploy logs logs-registrar status deploy-app-pod delete-app-pod delete-all docker-build-bpfman docker-build-bpfman-builder docker-clean-bpfman-builder kind-load-bpfman deploy-bpfman delete-bpfman logs-bpfman deploy-bpfman-test delete-bpfman-test
 
 IMAGE_NAME ?= bpffs-csi-driver
 IMAGE_TAG ?= dev
@@ -47,6 +47,9 @@ status:
 docker-build-bpfman-builder:
 	@docker image inspect $(BPFMAN_BUILDER_IMAGE):$(IMAGE_TAG) >/dev/null 2>&1 || \
 		docker buildx build --builder=default --load -t $(BPFMAN_BUILDER_IMAGE):$(IMAGE_TAG) -f bpfman/Dockerfile.builder bpfman/
+
+docker-clean-bpfman-builder:
+	-docker rmi $(BPFMAN_BUILDER_IMAGE):$(IMAGE_TAG)
 
 docker-build-bpfman: docker-build-bpfman-builder bpfman/testdata/stats.o
 	docker buildx build --builder=default --load --build-arg BUILDER_IMAGE=$(BPFMAN_BUILDER_IMAGE):$(IMAGE_TAG) -t $(BPFMAN_IMAGE):$(IMAGE_TAG) bpfman/
