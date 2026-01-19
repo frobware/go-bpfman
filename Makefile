@@ -1,12 +1,11 @@
-.PHONY: build test clean docker-build kind-load deploy-driver delete-driver redeploy logs logs-registrar status deploy-test-pod delete-test-pod delete-all kind-install-bpftool setup-bpf-test create-test-map
+.PHONY: build test clean docker-build kind-load deploy-driver delete-driver redeploy logs logs-registrar status deploy-app-pod delete-app-pod delete-all docker-build-bpfman-lite kind-load-bpfman-lite deploy-bpfman-lite delete-bpfman-lite logs-bpfman-lite
 
 IMAGE_NAME ?= bpffs-csi-driver
 IMAGE_TAG ?= dev
+BPFMAN_LITE_IMAGE ?= bpfman-lite
 KIND_CLUSTER ?= bpfman-deployment
-KIND_NODE ?= $(KIND_CLUSTER)-control-plane
 NAMESPACE ?= kube-system
 BINARY_NAME ?= bpffs-csi-driver
-BPF_TEST_PATH ?= /sys/fs/bpf/test
 
 build:
 	go build -o $(BINARY_NAME) .
@@ -44,25 +43,31 @@ status:
 	@echo "=== CSI Drivers ==="
 	@kubectl get csidrivers
 
-kind-install-bpftool:
-	docker exec $(KIND_NODE) apt-get update -qq
-	docker exec $(KIND_NODE) apt-get install -y -qq bpftool
+docker-build-bpfman-lite:
+	docker buildx build --quiet --load -t $(BPFMAN_LITE_IMAGE):$(IMAGE_TAG) bpfman-lite/
 
-setup-bpf-test:
-	docker exec $(KIND_NODE) mkdir -p $(BPF_TEST_PATH)
+kind-load-bpfman-lite: docker-build-bpfman-lite
+	kind load docker-image $(BPFMAN_LITE_IMAGE):$(IMAGE_TAG) --name $(KIND_CLUSTER)
 
-create-test-map: setup-bpf-test
-	docker exec $(KIND_NODE) bpftool map create $(BPF_TEST_PATH)/mymap type hash key 4 value 4 entries 16 name testmap 2>/dev/null || true
+deploy-bpfman-lite: kind-load-bpfman-lite
+	kubectl apply -f deploy/bpfman-lite.yaml
+	kubectl -n $(NAMESPACE) wait --for=condition=Ready pod -l app=bpfman-lite --timeout=60s
 
-deploy-test-pod: deploy-driver setup-bpf-test
+delete-bpfman-lite:
+	kubectl delete -f deploy/bpfman-lite.yaml --ignore-not-found
+
+logs-bpfman-lite:
+	kubectl -n $(NAMESPACE) logs -l app=bpfman-lite -f
+
+deploy-app-pod: deploy-driver deploy-bpfman-lite
 	kubectl -n $(NAMESPACE) wait --for=condition=Ready pod -l app=bpffs-csi-node --timeout=60s
-	kubectl apply -f deploy/test-pod.yaml
-	kubectl wait --for=condition=Ready pod/bpffs-test-pod --timeout=30s
+	kubectl apply -f deploy/app-pod.yaml
+	kubectl wait --for=condition=Ready pod/bpffs-app-pod --timeout=30s
 	@echo ""
 	@echo "=== Volume mount ==="
-	@kubectl exec bpffs-test-pod -- mount | grep /bpf
+	@kubectl exec bpffs-app-pod -- mount | grep /bpf
 
-delete-test-pod:
-	kubectl delete -f deploy/test-pod.yaml --ignore-not-found
+delete-app-pod:
+	kubectl delete -f deploy/app-pod.yaml --ignore-not-found
 
-delete-all: delete-test-pod delete-driver
+delete-all: delete-app-pod delete-driver delete-bpfman-lite
