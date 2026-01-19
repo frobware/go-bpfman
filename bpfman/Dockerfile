@@ -1,31 +1,19 @@
-# Build stage for Go binary
-FROM golang:1.24 AS go-builder
+# Build stage for Go binary (uses cilium/ebpf, no CGO)
+FROM golang:1.24 AS builder
 
 WORKDIR /build
-COPY go.mod ./
+COPY go.mod go.sum ./
+RUN go mod download
+
 COPY cmd/ cmd/
 COPY internal/ internal/
 
-RUN go build -o bpfman ./cmd/bpfman
+RUN CGO_ENABLED=0 go build -o bpfman ./cmd/bpfman
 
-# Build stage for C shim (uses pre-built base with dev packages)
-FROM bpfman-builder:latest AS c-builder
-
-WORKDIR /build
-COPY bpfman-kernel/ ./
-
-RUN make
-
-# Runtime image
+# Runtime image - minimal, no libbpf needed
 FROM fedora:latest
 
-RUN dnf install -y \
-    libbpf \
-    elfutils-libelf \
-    && dnf clean all
-
-COPY --from=go-builder /build/bpfman /usr/local/bin/
-COPY --from=c-builder /build/bpfman-kernel /usr/local/bin/
+COPY --from=builder /build/bpfman /usr/local/bin/
 COPY testdata/stats.o /opt/bpf/stats.o
 
 ENTRYPOINT ["/usr/local/bin/bpfman"]

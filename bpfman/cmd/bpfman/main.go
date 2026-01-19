@@ -5,69 +5,36 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 
-	"github.com/frobware/bpffs-csi-driver/bpfman/internal/shim"
+	"github.com/frobware/bpffs-csi-driver/bpfman/internal/bpf"
 )
 
 func usage() {
-	fmt.Fprintf(os.Stderr, "Usage:\n")
-	fmt.Fprintf(os.Stderr, "  %s load <object.o> <program-name> <pin-dir>\n", os.Args[0])
-	fmt.Fprintf(os.Stderr, "  %s unpin <pin-dir>\n", os.Args[0])
+	fmt.Fprintf(os.Stderr, "Usage: %s <COMMAND>\n\n", os.Args[0])
+	fmt.Fprintf(os.Stderr, "Commands:\n")
+	fmt.Fprintf(os.Stderr, "  load    Load an eBPF program from an object file\n")
+	fmt.Fprintf(os.Stderr, "  unload  Unload (unpin) an eBPF program\n")
+	fmt.Fprintf(os.Stderr, "  list    List pinned eBPF programs [--maps]\n")
+	fmt.Fprintf(os.Stderr, "  get     Get details of a pinned program\n")
+	fmt.Fprintf(os.Stderr, "  help    Print this message\n")
 	os.Exit(1)
-}
-
-func findShimBinary() (string, error) {
-	// Look for bpfman-kernel relative to the bpfman binary
-	exe, err := os.Executable()
-	if err != nil {
-		return "", err
-	}
-	dir := filepath.Dir(exe)
-
-	// Try bpfman-kernel/bpfman-kernel (sibling directory)
-	candidate := filepath.Join(dir, "bpfman-kernel", "bpfman-kernel")
-	if _, err := os.Stat(candidate); err == nil {
-		return candidate, nil
-	}
-
-	// Try same directory
-	candidate = filepath.Join(dir, "bpfman-kernel")
-	if _, err := os.Stat(candidate); err == nil {
-		return candidate, nil
-	}
-
-	// Try relative to current working directory (for development)
-	candidate = "bpfman-kernel/bpfman-kernel"
-	if _, err := os.Stat(candidate); err == nil {
-		return candidate, nil
-	}
-
-	// Fall back to PATH
-	return "bpfman-kernel", nil
 }
 
 func cmdLoad(args []string) error {
 	if len(args) != 3 {
-		return fmt.Errorf("load requires: <object.o> <program-name> <pin-dir>")
+		return fmt.Errorf("usage: load <object.o> <program-name> <pin-dir>")
 	}
 
 	objectPath := args[0]
 	programName := args[1]
 	pinDir := args[2]
 
-	shimPath, err := findShimBinary()
-	if err != nil {
-		return fmt.Errorf("failed to find shim binary: %w", err)
-	}
-
-	s := shim.New(shimPath)
-	result, err := s.Load(objectPath, programName, pinDir)
+	mgr := bpf.NewManager()
+	result, err := mgr.Load(objectPath, programName, pinDir)
 	if err != nil {
 		return err
 	}
 
-	// Pretty print the result
 	output, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal result: %w", err)
@@ -77,26 +44,73 @@ func cmdLoad(args []string) error {
 	return nil
 }
 
-func cmdUnpin(args []string) error {
+func cmdUnload(args []string) error {
 	if len(args) != 1 {
-		return fmt.Errorf("unpin requires: <pin-dir>")
+		return fmt.Errorf("usage: unload <pin-dir>")
 	}
 
 	pinDir := args[0]
 
-	shimPath, err := findShimBinary()
-	if err != nil {
-		return fmt.Errorf("failed to find shim binary: %w", err)
-	}
-
-	s := shim.New(shimPath)
-	result, err := s.Unpin(pinDir)
+	mgr := bpf.NewManager()
+	unpinned, err := mgr.Unpin(pinDir)
 	if err != nil {
 		return err
 	}
 
-	// Pretty print the result
+	fmt.Printf("Unpinned %d objects\n", unpinned)
+	return nil
+}
+
+func cmdList(args []string) error {
+	includeMaps := false
+	var pinDir string
+
+	for _, arg := range args {
+		if arg == "--maps" {
+			includeMaps = true
+		} else if pinDir == "" {
+			pinDir = arg
+		}
+	}
+
+	if pinDir == "" {
+		return fmt.Errorf("usage: list [--maps] <pin-dir>")
+	}
+
+	mgr := bpf.NewManager()
+	result, err := mgr.List(pinDir, includeMaps)
+	if err != nil {
+		return err
+	}
+
+	if len(result.Programs) == 0 && len(result.Maps) == 0 {
+		fmt.Println("No objects found")
+		return nil
+	}
+
 	output, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal result: %w", err)
+	}
+
+	fmt.Println(string(output))
+	return nil
+}
+
+func cmdGet(args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("usage: get <pin-path>")
+	}
+
+	pinPath := args[0]
+
+	mgr := bpf.NewManager()
+	program, err := mgr.Get(pinPath)
+	if err != nil {
+		return err
+	}
+
+	output, err := json.MarshalIndent(program, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal result: %w", err)
 	}
@@ -114,8 +128,14 @@ func main() {
 	switch os.Args[1] {
 	case "load":
 		err = cmdLoad(os.Args[2:])
-	case "unpin":
-		err = cmdUnpin(os.Args[2:])
+	case "unload":
+		err = cmdUnload(os.Args[2:])
+	case "list":
+		err = cmdList(os.Args[2:])
+	case "get":
+		err = cmdGet(os.Args[2:])
+	case "help", "-h", "--help":
+		usage()
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", os.Args[1])
 		usage()
