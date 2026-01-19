@@ -1,23 +1,24 @@
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: bpfman-lite
+  name: bpfman
   namespace: kube-system
   labels:
-    app: bpfman-lite
+    app: bpfman
 spec:
   selector:
     matchLabels:
-      app: bpfman-lite
+      app: bpfman
   template:
     metadata:
       labels:
-        app: bpfman-lite
+        app: bpfman
     spec:
       containers:
-        - name: bpfman-lite
-          image: bpfman-lite:dev
+        - name: bpfman
+          image: bpfman:dev
           imagePullPolicy: IfNotPresent
+          command: ["sleep", "infinity"]
           securityContext:
             privileged: true
           volumeMounts:

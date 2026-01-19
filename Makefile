@@ -1,9 +1,7 @@
-.PHONY: build test clean docker-build kind-load deploy-driver delete-driver redeploy logs logs-registrar status deploy-app-pod delete-app-pod delete-all docker-build-bpfman-lite kind-load-bpfman-lite deploy-bpfman-lite delete-bpfman-lite logs-bpfman-lite docker-build-bpfman-builder docker-build-bpfman kind-load-bpfman deploy-bpfman-test delete-bpfman-test
+.PHONY: build test clean docker-build kind-load deploy-driver delete-driver redeploy logs logs-registrar status deploy-app-pod delete-app-pod delete-all docker-build-bpfman kind-load-bpfman deploy-bpfman delete-bpfman logs-bpfman deploy-bpfman-test delete-bpfman-test
 
 IMAGE_NAME ?= bpffs-csi-driver
 IMAGE_TAG ?= dev
-BPFMAN_LITE_IMAGE ?= bpfman-lite
-BPFMAN_BUILDER_IMAGE ?= bpfman-builder
 BPFMAN_IMAGE ?= bpfman
 KIND_CLUSTER ?= bpfman-deployment
 NAMESPACE ?= kube-system
@@ -45,23 +43,23 @@ status:
 	@echo "=== CSI Drivers ==="
 	@kubectl get csidrivers
 
-docker-build-bpfman-lite:
-	docker buildx build --quiet --load -t $(BPFMAN_LITE_IMAGE):$(IMAGE_TAG) bpfman-lite/
+docker-build-bpfman: bpfman/testdata/stats.o
+	docker build -t $(BPFMAN_IMAGE):$(IMAGE_TAG) bpfman/
 
-kind-load-bpfman-lite: docker-build-bpfman-lite
-	kind load docker-image $(BPFMAN_LITE_IMAGE):$(IMAGE_TAG) --name $(KIND_CLUSTER)
+kind-load-bpfman: docker-build-bpfman
+	kind load docker-image $(BPFMAN_IMAGE):$(IMAGE_TAG) --name $(KIND_CLUSTER)
 
-deploy-bpfman-lite: kind-load-bpfman-lite
-	kubectl apply -f deploy/bpfman-lite.yaml
-	kubectl -n $(NAMESPACE) wait --for=condition=Ready pod -l app=bpfman-lite --timeout=60s
+deploy-bpfman: kind-load-bpfman
+	kubectl apply -f deploy/bpfman.yaml
+	kubectl -n $(NAMESPACE) wait --for=condition=Ready pod -l app=bpfman --timeout=60s
 
-delete-bpfman-lite:
-	kubectl delete -f deploy/bpfman-lite.yaml --ignore-not-found
+delete-bpfman:
+	kubectl delete -f deploy/bpfman.yaml --ignore-not-found
 
-logs-bpfman-lite:
-	kubectl -n $(NAMESPACE) logs -l app=bpfman-lite -f
+logs-bpfman:
+	kubectl -n $(NAMESPACE) logs -l app=bpfman -f
 
-deploy-app-pod: deploy-driver deploy-bpfman-lite
+deploy-app-pod: deploy-driver deploy-bpfman
 	kubectl -n $(NAMESPACE) wait --for=condition=Ready pod -l app=bpffs-csi-node --timeout=60s
 	kubectl apply -f deploy/app-pod.yaml
 	kubectl wait --for=condition=Ready pod/bpffs-app-pod --timeout=30s
@@ -72,23 +70,14 @@ deploy-app-pod: deploy-driver deploy-bpfman-lite
 delete-app-pod:
 	kubectl delete -f deploy/app-pod.yaml --ignore-not-found
 
-delete-all: delete-app-pod delete-driver delete-bpfman-lite
+delete-all: delete-app-pod delete-driver delete-bpfman
 
-# bpfman targets
+# bpfman testdata
 BPFMAN_HACKS_DIR ?= $(HOME)/src/github.com/frobware/bpfman-hacks
 
 bpfman/testdata/stats.o: $(BPFMAN_HACKS_DIR)/stats/bpf/stats.o
 	mkdir -p bpfman/testdata
 	cp $< $@
-
-docker-build-bpfman-builder:
-	docker build -t $(BPFMAN_BUILDER_IMAGE):latest -f bpfman/Dockerfile.builder bpfman/
-
-docker-build-bpfman: bpfman/testdata/stats.o
-	docker build -t $(BPFMAN_IMAGE):$(IMAGE_TAG) bpfman/
-
-kind-load-bpfman: docker-build-bpfman
-	kind load docker-image $(BPFMAN_IMAGE):$(IMAGE_TAG) --name $(KIND_CLUSTER)
 
 deploy-bpfman-test: kind-load-bpfman
 	kubectl apply -f bpfman/deploy/test-pod.yaml
