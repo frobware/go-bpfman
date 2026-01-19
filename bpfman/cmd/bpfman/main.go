@@ -11,7 +11,9 @@ import (
 )
 
 func usage() {
-	fmt.Fprintf(os.Stderr, "Usage: %s load <object.o> <program-name> <pin-dir>\n", os.Args[0])
+	fmt.Fprintf(os.Stderr, "Usage:\n")
+	fmt.Fprintf(os.Stderr, "  %s load <object.o> <program-name> <pin-dir>\n", os.Args[0])
+	fmt.Fprintf(os.Stderr, "  %s unload <pin-dir>\n", os.Args[0])
 	os.Exit(1)
 }
 
@@ -69,6 +71,34 @@ func cmdLoad(args []string) error {
 	return nil
 }
 
+func cmdUnload(args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("unload requires: <pin-dir>")
+	}
+
+	pinDir := args[0]
+
+	shimPath, err := findShimBinary()
+	if err != nil {
+		return fmt.Errorf("failed to find shim binary: %w", err)
+	}
+
+	s := shim.New(shimPath)
+	result, err := s.Unload(pinDir)
+	if err != nil {
+		return err
+	}
+
+	// Pretty print the result
+	output, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal result: %w", err)
+	}
+
+	fmt.Println(string(output))
+	return nil
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		usage()
@@ -78,6 +108,8 @@ func main() {
 	switch os.Args[1] {
 	case "load":
 		err = cmdLoad(os.Args[2:])
+	case "unload":
+		err = cmdUnload(os.Args[2:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", os.Args[1])
 		usage()

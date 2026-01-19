@@ -4,12 +4,15 @@
  * This is a stateless helper that loads a BPF program from an object file,
  * pins it, and outputs JSON with the kernel-derived facts.
  *
- * Usage: bpfman-kernel load <object.o> <program-name> <pin-dir>
+ * Usage:
+ *   bpfman-kernel load <object.o> <program-name> <pin-dir>
+ *   bpfman-kernel unload <pin-dir>
  *
  * The program and its maps are pinned under <pin-dir>/.
  * Output is JSON on stdout.
  */
 
+#include <dirent.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -173,9 +176,56 @@ static int cmd_load(const char *obj_path, const char *prog_name, const char *pin
 	return 0;
 }
 
+static int cmd_unload(const char *pin_dir)
+{
+	DIR *dir;
+	struct dirent *entry;
+	char path[512];
+	int count = 0;
+	int errors = 0;
+
+	dir = opendir(pin_dir);
+	if (!dir) {
+		fprintf(stderr, "error: failed to open directory %s: %s\n", pin_dir, strerror(errno));
+		return 1;
+	}
+
+	/* Remove all entries in the directory */
+	while ((entry = readdir(dir)) != NULL) {
+		if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+			continue;
+
+		snprintf(path, sizeof(path), "%s/%s", pin_dir, entry->d_name);
+		if (unlink(path) < 0) {
+			fprintf(stderr, "warning: failed to unlink %s: %s\n", path, strerror(errno));
+			errors++;
+		} else {
+			count++;
+		}
+	}
+
+	closedir(dir);
+
+	/* Remove the directory itself */
+	if (rmdir(pin_dir) < 0) {
+		fprintf(stderr, "warning: failed to remove directory %s: %s\n", pin_dir, strerror(errno));
+		errors++;
+	}
+
+	/* Output JSON */
+	printf("{\n");
+	printf("  \"unpinned\": %d,\n", count);
+	printf("  \"errors\": %d\n", errors);
+	printf("}\n");
+
+	return errors > 0 ? 1 : 0;
+}
+
 static void usage(const char *prog)
 {
-	fprintf(stderr, "Usage: %s load <object.o> <program-name> <pin-dir>\n", prog);
+	fprintf(stderr, "Usage:\n");
+	fprintf(stderr, "  %s load <object.o> <program-name> <pin-dir>\n", prog);
+	fprintf(stderr, "  %s unload <pin-dir>\n", prog);
 }
 
 int main(int argc, char **argv)
@@ -191,6 +241,14 @@ int main(int argc, char **argv)
 			return 1;
 		}
 		return cmd_load(argv[2], argv[3], argv[4]);
+	}
+
+	if (strcmp(argv[1], "unload") == 0) {
+		if (argc != 3) {
+			usage(argv[0]);
+			return 1;
+		}
+		return cmd_unload(argv[2]);
 	}
 
 	fprintf(stderr, "error: unknown command '%s'\n", argv[1]);

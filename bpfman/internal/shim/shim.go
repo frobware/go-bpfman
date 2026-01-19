@@ -30,6 +30,12 @@ type LoadResult struct {
 	Maps    []Map   `json:"maps"`
 }
 
+// UnloadResult is the result of an unload operation.
+type UnloadResult struct {
+	Unpinned int `json:"unpinned"`
+	Errors   int `json:"errors"`
+}
+
 // Shim wraps calls to the bpfman-kernel binary.
 type Shim struct {
 	// BinaryPath is the path to the bpfman-kernel executable.
@@ -54,6 +60,26 @@ func (s *Shim) Load(objectPath, programName, pinDir string) (*LoadResult, error)
 	}
 
 	var result LoadResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		return nil, fmt.Errorf("failed to parse shim output: %w: %s", err, stdout.String())
+	}
+
+	return &result, nil
+}
+
+// Unload unpins all BPF objects in the given directory.
+func (s *Shim) Unload(pinDir string) (*UnloadResult, error) {
+	cmd := exec.Command(s.BinaryPath, "unload", pinDir)
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("shim failed: %w: %s", err, stderr.String())
+	}
+
+	var result UnloadResult
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		return nil, fmt.Errorf("failed to parse shim output: %w: %s", err, stdout.String())
 	}
