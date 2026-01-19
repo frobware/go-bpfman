@@ -6,20 +6,28 @@
  *
  * Usage:
  *   bpfman-kernel load <object.o> <program-name> <pin-dir>
- *   bpfman-kernel unload <pin-dir>
+ *   bpfman-kernel unpin <pin-dir>
  *
  * The program and its maps are pinned under <pin-dir>/.
  * Output is JSON on stdout.
+ *
+ * Note: "unpin" removes pins only; it does not detach attached programs.
  */
 
 #include <dirent.h>
 #include <errno.h>
 #include <stdarg.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/vfs.h>
 #include <unistd.h>
+
+#ifndef BPF_FS_MAGIC
+#define BPF_FS_MAGIC 0xcafe4a11
+#endif
 
 #include <bpf/bpf.h>
 #include <bpf/libbpf.h>
@@ -60,7 +68,7 @@ static char *mprintf(const char *fmt, ...)
 static char *must_vmprintf(const char *fmt, va_list args)
 {
 	char *p = vmprintf(fmt, args);
-	if (!p)
+	if (p == NULL)
 		exit(1);
 	return p;
 }
@@ -102,7 +110,7 @@ static int libbpf_print_fn(enum libbpf_print_level level __attribute__((unused))
 		while (new_cap < libbpf_log_len + needed + 1)
 			new_cap *= 2;
 		new_log = realloc(libbpf_log, new_cap);
-		if (!new_log)
+		if (new_log == NULL)
 			return 0;
 		libbpf_log = new_log;
 		libbpf_log_cap = new_cap;
@@ -116,7 +124,7 @@ static int libbpf_print_fn(enum libbpf_print_level level __attribute__((unused))
 static void libbpf_log_clear(void)
 {
 	libbpf_log_len = 0;
-	if (libbpf_log)
+	if (libbpf_log != NULL)
 		libbpf_log[0] = '\0';
 }
 
@@ -137,10 +145,33 @@ static int ensure_dir(const char *path)
 	return 0;
 }
 
+/* Check if path is on a BPF filesystem */
+static bool is_bpffs(const char *path)
+{
+	struct statfs st;
+	if (statfs(path, &st) < 0)
+		return false;
+	return st.f_type == BPF_FS_MAGIC;
+}
+
+/* Reject names containing path separators to prevent directory traversal */
+static bool valid_pin_name(const char *name)
+{
+	if (name == NULL || name[0] == '\0')
+		return false;
+	if (strchr(name, '/') != NULL)
+		return false;
+	if (strcmp(name, "..") == 0)
+		return false;
+	if (strcmp(name, ".") == 0)
+		return false;
+	return true;
+}
+
 static void print_json(cJSON *json)
 {
 	char *str = cJSON_Print(json);
-	if (str) {
+	if (str != NULL) {
 		printf("%s\n", str);
 		free(str);
 	}
@@ -204,16 +235,29 @@ static int cmd_load(const char *obj_path, const char *prog_name, const char *pin
 
 	/* Open the object file */
 	obj = bpf_object__open(obj_path);
-	if (!obj) {
+	if (obj == NULL) {
 		err = errno;
 		return emit_error(err, "failed to open %s: %s", obj_path, strerror(err));
 	}
 
+	/* Validate program name before using it in pin path */
+	if (!valid_pin_name(prog_name)) {
+		bpf_object__close(obj);
+		return emit_error(EINVAL, "invalid program name '%s': contains path separator", prog_name);
+	}
+
 	/* Find the program by name */
 	prog = bpf_object__find_program_by_name(obj, prog_name);
-	if (!prog) {
+	if (prog == NULL) {
 		bpf_object__close(obj);
 		return emit_error(ENOENT, "program '%s' not found in %s", prog_name, obj_path);
+	}
+
+	/* Disable autoload for all programs except the target */
+	struct bpf_program *p;
+	bpf_object__for_each_program(p, obj) {
+		bool want = (p == prog);
+		bpf_program__set_autoload(p, want);
 	}
 
 	/* Load the object (programs + maps) into the kernel */
@@ -232,10 +276,11 @@ static int cmd_load(const char *obj_path, const char *prog_name, const char *pin
 
 	struct bpf_prog_info prog_info = {};
 	__u32 info_len = sizeof(prog_info);
-	err = bpf_prog_get_info_by_fd(prog_fd, &prog_info, &info_len);
-	if (err) {
+	/* bpf_prog_get_info_by_fd returns -1 and sets errno, not -errno */
+	if (bpf_prog_get_info_by_fd(prog_fd, &prog_info, &info_len) < 0) {
+		err = errno;
 		bpf_object__close(obj);
-		return emit_error(-err, "failed to get program info: %s", strerror(-err));
+		return emit_error(err, "failed to get program info: %s", strerror(err));
 	}
 	prog_id = prog_info.id;
 
@@ -244,6 +289,12 @@ static int cmd_load(const char *obj_path, const char *prog_name, const char *pin
 		err = errno;
 		bpf_object__close(obj);
 		return emit_error(err, "failed to create pin directory %s: %s", pin_dir, strerror(err));
+	}
+
+	/* Validate pin directory is on bpffs */
+	if (!is_bpffs(pin_dir)) {
+		bpf_object__close(obj);
+		return emit_error(EINVAL, "pin directory %s is not on a BPF filesystem", pin_dir);
 	}
 
 	/* Pin the program */
@@ -265,7 +316,7 @@ static int cmd_load(const char *obj_path, const char *prog_name, const char *pin
 	cJSON_AddStringToObject(prog_json, "pinned", pin_path);
 	cJSON_AddItemToObject(root, "program", prog_json);
 
-	/* Pin maps and collect info */
+	/* Pin maps and collect info (fail hard on any error) */
 	bpf_object__for_each_map(map, obj) {
 		int map_fd = bpf_map__fd(map);
 		const char *map_name = bpf_map__name(map);
@@ -276,15 +327,29 @@ static int cmd_load(const char *obj_path, const char *prog_name, const char *pin
 		if (map_fd < 0)
 			continue;
 
-		err = bpf_map_get_info_by_fd(map_fd, &map_info, &map_info_len);
-		if (err)
-			continue;
+		/* Validate map name before using it in pin path */
+		if (!valid_pin_name(map_name)) {
+			cJSON_Delete(root);
+			bpf_object__close(obj);
+			return emit_error(EINVAL, "invalid map name '%s': contains path separator", map_name);
+		}
+
+		/* bpf_map_get_info_by_fd returns -1 and sets errno, not -errno */
+		if (bpf_map_get_info_by_fd(map_fd, &map_info, &map_info_len) < 0) {
+			err = errno;
+			cJSON_Delete(root);
+			bpf_object__close(obj);
+			return emit_error(err, "failed to get map info for '%s': %s", map_name, strerror(err));
+		}
 
 		/* Pin the map */
 		snprintf(pin_path, sizeof(pin_path), "%s/%s", pin_dir, map_name);
 		err = bpf_map__pin(map, pin_path);
-		if (err)
-			continue;
+		if (err) {
+			cJSON_Delete(root);
+			bpf_object__close(obj);
+			return emit_error(-err, "failed to pin map '%s' to %s: %s", map_name, pin_path, strerror(-err));
+		}
 
 		map_json = cJSON_CreateObject();
 		cJSON_AddStringToObject(map_json, "name", map_name);
@@ -303,7 +368,7 @@ static int cmd_load(const char *obj_path, const char *prog_name, const char *pin
 	return 0;
 }
 
-static int cmd_unload(const char *pin_dir)
+static int cmd_unpin(const char *pin_dir)
 {
 	DIR *dir;
 	struct dirent *entry;
@@ -314,7 +379,7 @@ static int cmd_unload(const char *pin_dir)
 	cJSON *root;
 
 	dir = opendir(pin_dir);
-	if (!dir) {
+	if (dir == NULL) {
 		err = errno;
 		return emit_error(err, "failed to open directory %s: %s", pin_dir, strerror(err));
 	}
@@ -352,7 +417,7 @@ int main(int argc, char **argv)
 	libbpf_set_print(libbpf_print_fn);
 
 	if (argc < 2)
-		return emit_error(EINVAL, "usage: %s load <object.o> <program-name> <pin-dir> | unload <pin-dir>", argv[0]);
+		return emit_error(EINVAL, "usage: %s load <object.o> <program-name> <pin-dir> | unpin <pin-dir>", argv[0]);
 
 	if (strcmp(argv[1], "load") == 0) {
 		if (argc != 5)
@@ -360,10 +425,10 @@ int main(int argc, char **argv)
 		return cmd_load(argv[2], argv[3], argv[4]);
 	}
 
-	if (strcmp(argv[1], "unload") == 0) {
+	if (strcmp(argv[1], "unpin") == 0) {
 		if (argc != 3)
-			return emit_error(EINVAL, "usage: %s unload <pin-dir>", argv[0]);
-		return cmd_unload(argv[2]);
+			return emit_error(EINVAL, "usage: %s unpin <pin-dir>", argv[0]);
+		return cmd_unpin(argv[2]);
 	}
 
 	return emit_error(EINVAL, "unknown command '%s'", argv[1]);

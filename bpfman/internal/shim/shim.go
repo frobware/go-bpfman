@@ -32,8 +32,8 @@ type LoadResult struct {
 	Maps    []Map   `json:"maps"`
 }
 
-// UnloadResult is the result of an unload operation.
-type UnloadResult struct {
+// UnpinResult is the result of an unload operation.
+type UnpinResult struct {
 	Unpinned int `json:"unpinned"`
 	Errors   int `json:"errors"`
 }
@@ -113,14 +113,14 @@ func (s *Shim) Load(objectPath, programName, pinDir string) (*LoadResult, error)
 	return &result, nil
 }
 
-// Unload unpins all BPF objects in the given directory.
-func (s *Shim) Unload(pinDir string) (*UnloadResult, error) {
+// Unpin unpins all BPF objects in the given directory.
+func (s *Shim) Unpin(pinDir string) (*UnpinResult, error) {
 	output, err := s.run("unload", pinDir)
 	if err != nil {
 		return nil, err
 	}
 
-	var result UnloadResult
+	var result UnpinResult
 	if err := json.Unmarshal(output, &result); err != nil {
 		return nil, fmt.Errorf("failed to parse unload result: %w", err)
 	}
