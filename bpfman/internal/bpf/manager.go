@@ -347,7 +347,7 @@ func (m *Manager) Load(req *LoadRequest) (*LoadResponse, error) {
 	return resp, nil
 }
 
-// Unload removes a program by its kernel ID.
+// Unload removes a program by its kernel ID (requires in-memory state).
 func (m *Manager) Unload(programID uint32) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -391,6 +391,35 @@ func (m *Manager) Unload(programID uint32) error {
 	}
 
 	delete(m.programs, programID)
+	return nil
+}
+
+// UnloadByPath removes all pins in a directory (stateless unload).
+// Use this when the manager doesn't have in-memory state for the program.
+func (m *Manager) UnloadByPath(mapPinPath string) error {
+	if mapPinPath == "" {
+		return fmt.Errorf("pin path is required")
+	}
+
+	entries, err := os.ReadDir(mapPinPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // Already gone
+		}
+		return fmt.Errorf("failed to read pin directory: %w", err)
+	}
+
+	for _, e := range entries {
+		path := filepath.Join(mapPinPath, e.Name())
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("failed to unpin %s: %w", path, err)
+		}
+	}
+
+	if err := os.Remove(mapPinPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to remove pin directory: %w", err)
+	}
+
 	return nil
 }
 

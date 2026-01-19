@@ -9,9 +9,11 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/frobware/bpffs-csi-driver/bpfman/internal/bpf"
 	pb "github.com/frobware/bpffs-csi-driver/bpfman/internal/gobpfman"
+	"github.com/frobware/bpffs-csi-driver/bpfman/internal/store"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -20,38 +22,23 @@ import (
 const (
 	// DefaultSocketPath is the default Unix socket path for the gRPC server.
 	DefaultSocketPath = "/run/bpfman-sock/bpfman.sock"
+	// DefaultDBPath is the default path for the SQLite database.
+	DefaultDBPath = "/run/bpfman/state.db"
 )
-
-// programState tracks loaded programs with their metadata.
-type programState struct {
-	kernelID   uint32
-	name       string
-	progType   pb.BpfmanProgramType
-	bytecode   *pb.BytecodeLocation
-	metadata   map[string]string
-	globalData map[string][]byte
-	mapPinPath string
-	links      []uint32 // link IDs for attachments
-}
 
 // Server implements the bpfman gRPC service.
 type Server struct {
 	pb.UnimplementedBpfmanServer
 
-	mu       sync.RWMutex
-	manager  *bpf.Manager
-	programs map[uint32]*programState // keyed by kernel program ID
-	links    map[uint32]uint32        // link ID -> program ID
-	nextLink uint32
+	mu      sync.RWMutex
+	manager *bpf.Manager
+	store   *store.Store
 }
 
 // New creates a new bpfman gRPC server.
 func New() *Server {
 	return &Server{
-		manager:  bpf.NewManager(),
-		programs: make(map[uint32]*programState),
-		links:    make(map[uint32]uint32),
-		nextLink: 1,
+		manager: bpf.NewManager(),
 	}
 }
 
@@ -70,7 +57,6 @@ func (s *Server) Load(ctx context.Context, req *pb.LoadRequest) (*pb.LoadRespons
 	case *pb.BytecodeLocation_File:
 		objectPath = loc.File
 	case *pb.BytecodeLocation_Image:
-		// TODO: implement OCI image pulling
 		return nil, status.Error(codes.Unimplemented, "OCI image bytecode not yet supported")
 	default:
 		return nil, status.Error(codes.InvalidArgument, "invalid bytecode location")
@@ -112,24 +98,32 @@ func (s *Server) Load(ctx context.Context, req *pb.LoadRequest) (*pb.LoadRespons
 		return nil, status.Errorf(codes.Internal, "failed to load program: %v", err)
 	}
 
-	// Build response and store state
+	// Build response and persist to SQLite
 	resp := &pb.LoadResponse{
 		Programs: make([]*pb.LoadResponseInfo, len(result.Programs)),
 	}
 
 	for i, prog := range result.Programs {
-		// Store program state
-		state := &programState{
-			kernelID:   prog.KernelInfo.ID,
-			name:       prog.Info.Name,
-			progType:   req.Info[i].ProgramType,
-			bytecode:   req.Bytecode,
-			metadata:   req.Metadata,
-			globalData: req.GlobalData,
-			mapPinPath: prog.Info.MapPinPath,
-			links:      []uint32{},
+		now := time.Now()
+
+		// Persist to SQLite
+		record := &store.ProgramRecord{
+			ID:           prog.KernelInfo.ID,
+			UUID:         uuid,
+			Name:         prog.Info.Name,
+			FuncName:     req.Info[i].Name,
+			ProgramType:  prog.KernelInfo.ProgramType,
+			BytecodePath: objectPath,
+			PinPath:      filepath.Join(prog.Info.MapPinPath, prog.Info.Name),
+			MapPinPath:   prog.Info.MapPinPath,
+			Metadata:     req.Metadata,
+			GlobalData:   req.GlobalData,
+			LoadedAt:     now,
+			MapIDs:       prog.KernelInfo.MapIDs,
 		}
-		s.programs[prog.KernelInfo.ID] = state
+		if err := s.store.SaveProgram(record); err != nil {
+			log.Printf("Warning: failed to persist program %d: %v", prog.KernelInfo.ID, err)
+		}
 
 		resp.Programs[i] = &pb.LoadResponseInfo{
 			Info: &pb.ProgramInfo{
@@ -198,21 +192,30 @@ func (s *Server) Unload(ctx context.Context, req *pb.UnloadRequest) (*pb.UnloadR
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	state, ok := s.programs[req.Id]
-	if !ok {
+	// Check program exists in store
+	prog, err := s.store.GetProgram(req.Id)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to get program: %v", err)
+	}
+	if prog == nil {
 		return nil, status.Errorf(codes.NotFound, "program with ID %d not found", req.Id)
 	}
 
-	// Unload the program using the manager
-	if err := s.manager.Unload(req.Id); err != nil {
+	// Unload by path (works even after restart when manager has no in-memory state)
+	if err := s.manager.UnloadByPath(prog.MapPinPath); err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to unload program: %v", err)
 	}
 
-	// Clean up state
-	for _, linkID := range state.links {
-		delete(s.links, linkID)
+	// Delete links for this program
+	links, _ := s.store.ListLinksByProgram(req.Id)
+	for _, l := range links {
+		s.store.DeleteLink(l.ID)
 	}
-	delete(s.programs, req.Id)
+
+	// Delete from store
+	if err := s.store.DeleteProgram(req.Id); err != nil {
+		log.Printf("Warning: failed to delete program %d from store: %v", req.Id, err)
+	}
 
 	log.Printf("Unloaded program ID %d", req.Id)
 	return &pb.UnloadResponse{}, nil
@@ -223,18 +226,28 @@ func (s *Server) Attach(ctx context.Context, req *pb.AttachRequest) (*pb.AttachR
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	state, ok := s.programs[req.Id]
-	if !ok {
+	// Check program exists
+	prog, err := s.store.GetProgram(req.Id)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to get program: %v", err)
+	}
+	if prog == nil {
 		return nil, status.Errorf(codes.NotFound, "program with ID %d not found", req.Id)
 	}
 
 	// TODO: implement actual attachment based on AttachInfo type
-	// For now, we just track the link
-	linkID := s.nextLink
-	s.nextLink++
+	// For now, generate a link ID and store it
+	linkID := uint32(time.Now().UnixNano() & 0xFFFFFFFF)
 
-	state.links = append(state.links, linkID)
-	s.links[linkID] = req.Id
+	linkRecord := &store.LinkRecord{
+		ID:         linkID,
+		ProgramID:  req.Id,
+		AttachType: 0, // TODO: extract from req.Info
+		AttachInfo: "", // TODO: serialize req.Info
+	}
+	if err := s.store.SaveLink(linkRecord); err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to save link: %v", err)
+	}
 
 	log.Printf("Attached program ID %d, link ID %d", req.Id, linkID)
 	return &pb.AttachResponse{LinkId: linkID}, nil
@@ -245,26 +258,20 @@ func (s *Server) Detach(ctx context.Context, req *pb.DetachRequest) (*pb.DetachR
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	progID, ok := s.links[req.LinkId]
-	if !ok {
+	link, err := s.store.GetLink(req.LinkId)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to get link: %v", err)
+	}
+	if link == nil {
 		return nil, status.Errorf(codes.NotFound, "link with ID %d not found", req.LinkId)
 	}
 
-	state, ok := s.programs[progID]
-	if !ok {
-		return nil, status.Errorf(codes.Internal, "program for link %d not found", req.LinkId)
+	// Delete link from store
+	if err := s.store.DeleteLink(req.LinkId); err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to delete link: %v", err)
 	}
 
-	// Remove link from program state
-	for i, lid := range state.links {
-		if lid == req.LinkId {
-			state.links = append(state.links[:i], state.links[i+1:]...)
-			break
-		}
-	}
-	delete(s.links, req.LinkId)
-
-	log.Printf("Detached link ID %d from program ID %d", req.LinkId, progID)
+	log.Printf("Detached link ID %d from program ID %d", req.LinkId, link.ProgramID)
 	return &pb.DetachResponse{}, nil
 }
 
@@ -273,23 +280,24 @@ func (s *Server) List(ctx context.Context, req *pb.ListRequest) (*pb.ListRespons
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	programs, err := s.store.ListPrograms()
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to list programs: %v", err)
+	}
+
 	var results []*pb.ListResponse_ListResult
 
-	for id, state := range s.programs {
+	for _, p := range programs {
 		// Filter by program type if specified
-		if req.ProgramType != nil {
-			// Convert bpfman program type to kernel type for comparison
-			// This is a simplification - real impl needs proper mapping
-			if *req.ProgramType != uint32(state.progType) {
-				continue
-			}
+		if req.ProgramType != nil && *req.ProgramType != p.ProgramType {
+			continue
 		}
 
 		// Filter by metadata if specified
 		if len(req.MatchMetadata) > 0 {
 			match := true
 			for k, v := range req.MatchMetadata {
-				if state.metadata[k] != v {
+				if p.Metadata[k] != v {
 					match = false
 					break
 				}
@@ -299,24 +307,27 @@ func (s *Server) List(ctx context.Context, req *pb.ListRequest) (*pb.ListRespons
 			}
 		}
 
-		// Skip non-bpfman programs if requested
-		if req.BpfmanProgramsOnly != nil && *req.BpfmanProgramsOnly {
-			// All programs in our map are bpfman-managed
+		// Get links for this program
+		links, _ := s.store.ListLinksByProgram(p.ID)
+		linkIDs := make([]uint32, len(links))
+		for i, l := range links {
+			linkIDs[i] = l.ID
 		}
 
 		results = append(results, &pb.ListResponse_ListResult{
 			Info: &pb.ProgramInfo{
-				Name:       state.name,
-				Bytecode:   state.bytecode,
-				Metadata:   state.metadata,
-				GlobalData: state.globalData,
-				MapPinPath: state.mapPinPath,
-				Links:      state.links,
+				Name:       p.Name,
+				Bytecode:   &pb.BytecodeLocation{Location: &pb.BytecodeLocation_File{File: p.BytecodePath}},
+				Metadata:   p.Metadata,
+				GlobalData: p.GlobalData,
+				MapPinPath: p.MapPinPath,
+				Links:      linkIDs,
 			},
 			KernelInfo: &pb.KernelProgramInfo{
-				Id:          id,
-				Name:        state.name,
-				ProgramType: uint32(state.progType),
+				Id:          p.ID,
+				Name:        p.Name,
+				ProgramType: p.ProgramType,
+				MapIds:      p.MapIDs,
 			},
 		})
 	}
@@ -329,36 +340,54 @@ func (s *Server) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	state, ok := s.programs[req.Id]
-	if !ok {
+	p, err := s.store.GetProgram(req.Id)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to get program: %v", err)
+	}
+	if p == nil {
 		return nil, status.Errorf(codes.NotFound, "program with ID %d not found", req.Id)
+	}
+
+	// Get links for this program
+	links, _ := s.store.ListLinksByProgram(p.ID)
+	linkIDs := make([]uint32, len(links))
+	for i, l := range links {
+		linkIDs[i] = l.ID
 	}
 
 	return &pb.GetResponse{
 		Info: &pb.ProgramInfo{
-			Name:       state.name,
-			Bytecode:   state.bytecode,
-			Metadata:   state.metadata,
-			GlobalData: state.globalData,
-			MapPinPath: state.mapPinPath,
-			Links:      state.links,
+			Name:       p.Name,
+			Bytecode:   &pb.BytecodeLocation{Location: &pb.BytecodeLocation_File{File: p.BytecodePath}},
+			Metadata:   p.Metadata,
+			GlobalData: p.GlobalData,
+			MapPinPath: p.MapPinPath,
+			Links:      linkIDs,
 		},
 		KernelInfo: &pb.KernelProgramInfo{
-			Id:          req.Id,
-			Name:        state.name,
-			ProgramType: uint32(state.progType),
+			Id:          p.ID,
+			Name:        p.Name,
+			ProgramType: p.ProgramType,
+			MapIds:      p.MapIDs,
 		},
 	}, nil
 }
 
 // PullBytecode implements the PullBytecode RPC method.
 func (s *Server) PullBytecode(ctx context.Context, req *pb.PullBytecodeRequest) (*pb.PullBytecodeResponse, error) {
-	// TODO: implement OCI image pulling
 	return nil, status.Error(codes.Unimplemented, "PullBytecode not yet implemented")
 }
 
 // Serve starts the gRPC server on the given socket path.
 func (s *Server) Serve(socketPath string) error {
+	// Open SQLite store
+	st, err := store.Open(DefaultDBPath)
+	if err != nil {
+		return fmt.Errorf("failed to open store: %w", err)
+	}
+	s.store = st
+	defer s.store.Close()
+
 	// Ensure socket directory exists
 	socketDir := filepath.Dir(socketPath)
 	if err := os.MkdirAll(socketDir, 0755); err != nil {
