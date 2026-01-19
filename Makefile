@@ -1,4 +1,4 @@
-.PHONY: build test clean docker-build kind-load deploy-driver delete-driver redeploy logs logs-registrar status deploy-test-pod delete-test-pod
+.PHONY: build test clean docker-build kind-load deploy-driver delete-driver redeploy logs logs-registrar status deploy-test-pod delete-test-pod delete-all
 
 IMAGE_NAME ?= bpffs-csi-driver
 IMAGE_TAG ?= dev
@@ -23,7 +23,6 @@ kind-load: docker-build
 
 deploy-driver: kind-load
 	kubectl apply -f deploy/csidriver.yaml -f deploy/daemonset.yaml
-	kubectl -n $(NAMESPACE) rollout restart daemonset/bpffs-csi-node
 
 delete-driver:
 	kubectl delete -f deploy/csidriver.yaml -f deploy/daemonset.yaml --ignore-not-found
@@ -53,3 +52,5 @@ deploy-test-pod: deploy-driver
 
 delete-test-pod:
 	kubectl delete -f deploy/test-pod.yaml --ignore-not-found
+
+delete-all: delete-test-pod delete-driver
