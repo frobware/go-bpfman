@@ -17,3 +17,4 @@ COPY --from=builder /build/bpfman /usr/local/bin/
 COPY testdata/stats.o /opt/bpf/stats.o
 
 ENTRYPOINT ["/usr/local/bin/bpfman"]
+CMD ["serve"]

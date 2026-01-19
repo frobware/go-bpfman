@@ -18,17 +18,23 @@ spec:
         - name: bpfman
           image: bpfman:dev
           imagePullPolicy: IfNotPresent
-          command: ["sleep", "infinity"]
+          args: ["serve"]
           securityContext:
             privileged: true
           volumeMounts:
             - name: bpffs
               mountPath: /sys/fs/bpf
               mountPropagation: Bidirectional
+            - name: bpfman-sock
+              mountPath: /run/bpfman-sock
       volumes:
         - name: bpffs
           hostPath:
             path: /sys/fs/bpf
+            type: DirectoryOrCreate
+        - name: bpfman-sock
+          hostPath:
+            path: /run/bpfman-sock
             type: DirectoryOrCreate
       tolerations:
         - operator: Exists

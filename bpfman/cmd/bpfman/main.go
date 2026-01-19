@@ -7,17 +7,34 @@ import (
 	"os"
 
 	"github.com/frobware/bpffs-csi-driver/bpfman/internal/bpf"
+	"github.com/frobware/bpffs-csi-driver/bpfman/internal/server"
 )
 
 func usage() {
 	fmt.Fprintf(os.Stderr, "Usage: %s <COMMAND>\n\n", os.Args[0])
 	fmt.Fprintf(os.Stderr, "Commands:\n")
+	fmt.Fprintf(os.Stderr, "  serve   Start the gRPC server\n")
 	fmt.Fprintf(os.Stderr, "  load    Load an eBPF program from an object file\n")
 	fmt.Fprintf(os.Stderr, "  unload  Unload (unpin) an eBPF program\n")
 	fmt.Fprintf(os.Stderr, "  list    List pinned eBPF programs [--maps]\n")
 	fmt.Fprintf(os.Stderr, "  get     Get details of a pinned program\n")
 	fmt.Fprintf(os.Stderr, "  help    Print this message\n")
 	os.Exit(1)
+}
+
+func cmdServe(args []string) error {
+	socketPath := server.DefaultSocketPath
+
+	// Parse optional --socket flag
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--socket" && i+1 < len(args) {
+			socketPath = args[i+1]
+			i++
+		}
+	}
+
+	srv := server.New()
+	return srv.Serve(socketPath)
 }
 
 func cmdLoad(args []string) error {
@@ -30,7 +47,7 @@ func cmdLoad(args []string) error {
 	pinDir := args[2]
 
 	mgr := bpf.NewManager()
-	result, err := mgr.Load(objectPath, programName, pinDir)
+	result, err := mgr.LoadSingle(objectPath, programName, pinDir)
 	if err != nil {
 		return err
 	}
@@ -78,7 +95,7 @@ func cmdList(args []string) error {
 	}
 
 	mgr := bpf.NewManager()
-	result, err := mgr.List(pinDir, includeMaps)
+	result, err := mgr.ListPinDir(pinDir, includeMaps)
 	if err != nil {
 		return err
 	}
@@ -105,7 +122,7 @@ func cmdGet(args []string) error {
 	pinPath := args[0]
 
 	mgr := bpf.NewManager()
-	program, err := mgr.Get(pinPath)
+	program, err := mgr.GetPinned(pinPath)
 	if err != nil {
 		return err
 	}
@@ -126,6 +143,8 @@ func main() {
 
 	var err error
 	switch os.Args[1] {
+	case "serve":
+		err = cmdServe(os.Args[2:])
 	case "load":
 		err = cmdLoad(os.Args[2:])
 	case "unload":
