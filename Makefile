@@ -1,4 +1,4 @@
-.PHONY: build test clean docker-build kind-load deploy-driver delete-driver redeploy logs logs-registrar status deploy-app-pod delete-app-pod delete-all docker-build-bpfman docker-build-bpfman-builder kind-load-bpfman deploy-bpfman delete-bpfman logs-bpfman deploy-bpfman-test delete-bpfman-test
+.PHONY: build test clean docker-build-csi kind-load deploy-driver delete-driver redeploy logs logs-registrar status deploy-app-pod delete-app-pod delete-all docker-build-bpfman docker-build-bpfman-builder kind-load-bpfman deploy-bpfman delete-bpfman logs-bpfman deploy-bpfman-test delete-bpfman-test
 
 IMAGE_NAME ?= bpffs-csi-driver
 IMAGE_TAG ?= dev
@@ -17,10 +17,10 @@ test:
 clean:
 	rm -f csi-driver/$(BINARY_NAME)
 
-docker-build:
-	docker buildx build --quiet --load -t $(IMAGE_NAME):$(IMAGE_TAG) csi-driver/
+docker-build-csi:
+	docker buildx build --builder=default --quiet --load -t $(IMAGE_NAME):$(IMAGE_TAG) csi-driver/
 
-kind-load: docker-build
+kind-load: docker-build-csi
 	kind load docker-image $(IMAGE_NAME):$(IMAGE_TAG) --name $(KIND_CLUSTER)
 
 deploy-driver: kind-load
