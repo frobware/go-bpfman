@@ -26,6 +26,8 @@ func usage() {
 	fmt.Fprintf(os.Stderr, "  load    Load an eBPF program from an object file\n")
 	fmt.Fprintf(os.Stderr, "          [-m KEY=VALUE] metadata to attach to the program\n")
 	fmt.Fprintf(os.Stderr, "          [--db PATH]    SQLite database path (default: %s)\n", server.DefaultDBPath)
+	fmt.Fprintf(os.Stderr, "  attach  Attach a loaded program to a hook\n")
+	fmt.Fprintf(os.Stderr, "          attach tracepoint <prog-pin-path> <group> <name> [--link-pin-path <path>]\n")
 	fmt.Fprintf(os.Stderr, "  unload  Unload (unpin) an eBPF program\n")
 	fmt.Fprintf(os.Stderr, "  list    List pinned eBPF programs [--maps]\n")
 	fmt.Fprintf(os.Stderr, "  get     Get details of a pinned program\n")
@@ -293,6 +295,60 @@ func cmdGet(args []string) error {
 	return nil
 }
 
+func cmdAttach(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: attach <type> ...\n  types: tracepoint")
+	}
+
+	attachType := args[0]
+	switch attachType {
+	case "tracepoint":
+		return cmdAttachTracepoint(args[1:])
+	default:
+		return fmt.Errorf("unknown attach type: %s (supported: tracepoint)", attachType)
+	}
+}
+
+func cmdAttachTracepoint(args []string) error {
+	var progPinPath, group, name, linkPinPath string
+
+	// Parse flags and positional args
+	positional := []string{}
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--link-pin-path":
+			if i+1 < len(args) {
+				linkPinPath = args[i+1]
+				i++
+			}
+		default:
+			positional = append(positional, args[i])
+		}
+	}
+
+	if len(positional) != 3 {
+		return fmt.Errorf("usage: attach tracepoint <prog-pin-path> <group> <name> [--link-pin-path <path>]")
+	}
+
+	progPinPath = positional[0]
+	group = positional[1]
+	name = positional[2]
+
+	kernel := ebpf.New()
+	result, err := kernel.AttachTracepoint(progPinPath, group, name, linkPinPath)
+	if err != nil {
+		return err
+	}
+
+	output, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal result: %w", err)
+	}
+
+	fmt.Println(string(output))
+	return nil
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		usage()
@@ -304,6 +360,8 @@ func main() {
 		err = cmdServe(os.Args[2:])
 	case "load":
 		err = cmdLoad(os.Args[2:])
+	case "attach":
+		err = cmdAttach(os.Args[2:])
 	case "unload":
 		err = cmdUnload(os.Args[2:])
 	case "list":

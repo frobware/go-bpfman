@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 
 	"github.com/cilium/ebpf"
+	"github.com/cilium/ebpf/link"
 
 	"github.com/frobware/go-bpfman/pkg/bpfman/domain"
 )
@@ -439,4 +440,45 @@ func (k *Kernel) Unpin(pinDir string) (int, error) {
 	}
 
 	return count, nil
+}
+
+// AttachTracepoint attaches a pinned program to a tracepoint.
+func (k *Kernel) AttachTracepoint(progPinPath, group, name, linkPinPath string) (*domain.AttachedLink, error) {
+	prog, err := ebpf.LoadPinnedProgram(progPinPath, nil)
+	if err != nil {
+		return nil, fmt.Errorf("load pinned program %s: %w", progPinPath, err)
+	}
+	defer prog.Close()
+
+	lnk, err := link.Tracepoint(group, name, prog, nil)
+	if err != nil {
+		return nil, fmt.Errorf("attach to tracepoint %s:%s: %w", group, name, err)
+	}
+
+	result := &domain.AttachedLink{
+		Type: domain.AttachTracepoint,
+	}
+
+	// Pin the link if a path is provided
+	if linkPinPath != "" {
+		// Ensure parent directory exists
+		if err := os.MkdirAll(filepath.Dir(linkPinPath), 0755); err != nil {
+			lnk.Close()
+			return nil, fmt.Errorf("create link pin directory: %w", err)
+		}
+
+		if err := lnk.Pin(linkPinPath); err != nil {
+			lnk.Close()
+			return nil, fmt.Errorf("pin link to %s: %w", linkPinPath, err)
+		}
+		result.PinPath = linkPinPath
+	}
+
+	// Get link info if available
+	info, err := lnk.Info()
+	if err == nil {
+		result.ID = uint32(info.ID)
+	}
+
+	return result, nil
 }
