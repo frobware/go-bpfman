@@ -10,7 +10,7 @@ type KernelMap struct {
 	MaxEntries uint32
 	Flags      uint32
 	BTFId      uint32
-	Memlock    Option[uint64]
+	Memlock    *uint64 // nil if not available
 	Frozen     bool
 }
 

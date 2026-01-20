@@ -16,8 +16,8 @@ type ProgramMetadata struct {
 	Tags []string
 	// User-supplied key-value metadata
 	UserMetadata map[string]string
-	// Human-readable description
-	Description Option[string]
+	// Human-readable description (empty string means no description)
+	Description string
 	// User or system that loaded this program
 	Owner string
 	// When bpfman loaded this program
@@ -44,7 +44,7 @@ func (p ProgramMetadata) WithDescription(desc string) ProgramMetadata {
 		UUID:         p.UUID,
 		Tags:         slices.Clone(p.Tags),
 		UserMetadata: cloneMap(p.UserMetadata),
-		Description:  Some(desc),
+		Description:  desc,
 		Owner:        p.Owner,
 		CreatedAt:    p.CreatedAt,
 	}

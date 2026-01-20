@@ -3,6 +3,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -18,6 +19,7 @@ import (
 	"github.com/frobware/bpffs-csi-driver/bpfman/domain"
 	pb "github.com/frobware/bpffs-csi-driver/bpfman/internal/server/pb"
 	"github.com/frobware/bpffs-csi-driver/bpfman/interpreter/kernel/ebpf"
+	"github.com/frobware/bpffs-csi-driver/bpfman/interpreter/store"
 	"github.com/frobware/bpffs-csi-driver/bpfman/interpreter/store/sqlite"
 )
 
@@ -150,15 +152,13 @@ func (s *Server) Unload(ctx context.Context, req *pb.UnloadRequest) (*pb.UnloadR
 	defer s.mu.Unlock()
 
 	// Get metadata from store
-	opt, err := s.store.Get(ctx, req.Id)
+	metadata, err := s.store.Get(ctx, req.Id)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, status.Errorf(codes.NotFound, "program with ID %d not found", req.Id)
+	}
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get program: %v", err)
 	}
-	if opt.IsNone() {
-		return nil, status.Errorf(codes.NotFound, "program with ID %d not found", req.Id)
-	}
-
-	metadata := opt.Unwrap()
 
 	// Unload by unpinning the directory
 	if err := s.kernel.Unload(ctx, metadata.LoadSpec.PinPath); err != nil {
@@ -242,15 +242,13 @@ func (s *Server) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	opt, err := s.store.Get(ctx, req.Id)
+	metadata, err := s.store.Get(ctx, req.Id)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, status.Errorf(codes.NotFound, "program with ID %d not found", req.Id)
+	}
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get program: %v", err)
 	}
-	if opt.IsNone() {
-		return nil, status.Errorf(codes.NotFound, "program with ID %d not found", req.Id)
-	}
-
-	metadata := opt.Unwrap()
 
 	return &pb.GetResponse{
 		Info: &pb.ProgramInfo{

@@ -13,6 +13,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 
 	"github.com/frobware/bpffs-csi-driver/bpfman/domain"
+	"github.com/frobware/bpffs-csi-driver/bpfman/interpreter/store"
 )
 
 // Store implements interpreter.ProgramStore using SQLite.
@@ -78,7 +79,8 @@ func (s *Store) migrate() error {
 }
 
 // Get retrieves program metadata by kernel ID.
-func (s *Store) Get(ctx context.Context, kernelID uint32) (domain.Option[domain.ProgramMetadata], error) {
+// Returns store.ErrNotFound if the program does not exist.
+func (s *Store) Get(ctx context.Context, kernelID uint32) (domain.ProgramMetadata, error) {
 	row := s.db.QueryRowContext(ctx,
 		"SELECT metadata FROM managed_programs WHERE kernel_id = ?",
 		kernelID)
@@ -86,18 +88,18 @@ func (s *Store) Get(ctx context.Context, kernelID uint32) (domain.Option[domain.
 	var metadataJSON string
 	err := row.Scan(&metadataJSON)
 	if err == sql.ErrNoRows {
-		return domain.None[domain.ProgramMetadata](), nil
+		return domain.ProgramMetadata{}, fmt.Errorf("program %d: %w", kernelID, store.ErrNotFound)
 	}
 	if err != nil {
-		return domain.None[domain.ProgramMetadata](), err
+		return domain.ProgramMetadata{}, err
 	}
 
 	var metadata domain.ProgramMetadata
 	if err := json.Unmarshal([]byte(metadataJSON), &metadata); err != nil {
-		return domain.None[domain.ProgramMetadata](), fmt.Errorf("failed to unmarshal metadata: %w", err)
+		return domain.ProgramMetadata{}, fmt.Errorf("failed to unmarshal metadata: %w", err)
 	}
 
-	return domain.Some(metadata), nil
+	return metadata, nil
 }
 
 // Save stores program metadata.
@@ -114,7 +116,8 @@ func (s *Store) Save(ctx context.Context, kernelID uint32, metadata domain.Progr
 }
 
 // GetByUUID retrieves program metadata by UUID.
-func (s *Store) GetByUUID(ctx context.Context, uuid string) (domain.Option[domain.ProgramMetadata], uint32, error) {
+// Returns store.ErrNotFound if the program does not exist.
+func (s *Store) GetByUUID(ctx context.Context, uuid string) (domain.ProgramMetadata, uint32, error) {
 	row := s.db.QueryRowContext(ctx,
 		"SELECT kernel_id, metadata FROM managed_programs WHERE uuid = ?",
 		uuid)
@@ -123,18 +126,18 @@ func (s *Store) GetByUUID(ctx context.Context, uuid string) (domain.Option[domai
 	var metadataJSON string
 	err := row.Scan(&kernelID, &metadataJSON)
 	if err == sql.ErrNoRows {
-		return domain.None[domain.ProgramMetadata](), 0, nil
+		return domain.ProgramMetadata{}, 0, fmt.Errorf("uuid %s: %w", uuid, store.ErrNotFound)
 	}
 	if err != nil {
-		return domain.None[domain.ProgramMetadata](), 0, err
+		return domain.ProgramMetadata{}, 0, err
 	}
 
 	var metadata domain.ProgramMetadata
 	if err := json.Unmarshal([]byte(metadataJSON), &metadata); err != nil {
-		return domain.None[domain.ProgramMetadata](), 0, fmt.Errorf("failed to unmarshal metadata: %w", err)
+		return domain.ProgramMetadata{}, 0, fmt.Errorf("failed to unmarshal metadata: %w", err)
 	}
 
-	return domain.Some(metadata), kernelID, nil
+	return metadata, kernelID, nil
 }
 
 // Delete removes program metadata.

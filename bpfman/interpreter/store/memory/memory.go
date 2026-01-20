@@ -4,9 +4,11 @@ package memory
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/frobware/bpffs-csi-driver/bpfman/domain"
+	"github.com/frobware/bpffs-csi-driver/bpfman/interpreter/store"
 )
 
 // Store implements interpreter.ProgramStore in memory.
@@ -23,14 +25,15 @@ func New() *Store {
 }
 
 // Get retrieves program metadata by kernel ID.
-func (s *Store) Get(_ context.Context, kernelID uint32) (domain.Option[domain.ProgramMetadata], error) {
+// Returns store.ErrNotFound if the program does not exist.
+func (s *Store) Get(_ context.Context, kernelID uint32) (domain.ProgramMetadata, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	if m, ok := s.programs[kernelID]; ok {
-		return domain.Some(m), nil
+		return m, nil
 	}
-	return domain.None[domain.ProgramMetadata](), nil
+	return domain.ProgramMetadata{}, fmt.Errorf("program %d: %w", kernelID, store.ErrNotFound)
 }
 
 // Save stores program metadata.

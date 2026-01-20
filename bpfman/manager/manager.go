@@ -4,11 +4,13 @@ package manager
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/frobware/bpffs-csi-driver/bpfman/compute"
 	"github.com/frobware/bpffs-csi-driver/bpfman/domain"
 	"github.com/frobware/bpffs-csi-driver/bpfman/interpreter"
+	"github.com/frobware/bpffs-csi-driver/bpfman/interpreter/store"
 )
 
 // Manager orchestrates BPF program management using fetch/compute/execute.
@@ -37,11 +39,10 @@ func (m *Manager) Load(ctx context.Context, spec domain.LoadSpec, owner string) 
 
 	// COMPUTE - create metadata (pure)
 	metadata := domain.ProgramMetadata{
-		LoadSpec:    spec,
-		Tags:        nil,
-		Description: domain.None[string](),
-		Owner:       owner,
-		CreatedAt:   time.Now(),
+		LoadSpec:  spec,
+		Tags:      nil,
+		Owner:     owner,
+		CreatedAt: time.Now(),
 	}
 
 	// EXECUTE - save metadata to store
@@ -56,14 +57,13 @@ func (m *Manager) Load(ctx context.Context, spec domain.LoadSpec, owner string) 
 // Unload removes a BPF program and its metadata.
 func (m *Manager) Unload(ctx context.Context, kernelID uint32) error {
 	// FETCH - get metadata to find pin path
-	opt, err := m.store.Get(ctx, kernelID)
-	if err != nil {
+	metadata, err := m.store.Get(ctx, kernelID)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return err
 	}
 
-	if opt.IsSome() {
-		metadata := opt.Unwrap()
-		// EXECUTE - unload from kernel
+	// If we have metadata, use it to unload from kernel
+	if err == nil {
 		if err := m.kernel.Unload(ctx, metadata.LoadSpec.PinPath); err != nil {
 			return err
 		}
@@ -119,7 +119,7 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 // ManagedProgram combines kernel and metadata info.
 type ManagedProgram struct {
 	KernelProgram domain.KernelProgram
-	Metadata      domain.Option[domain.ProgramMetadata]
+	Metadata      *domain.ProgramMetadata // nil if not managed by bpfman
 }
 
 // joinManagedPrograms is a pure function that joins kernel and store data.
@@ -134,9 +134,7 @@ func joinManagedPrograms(
 			KernelProgram: kp,
 		}
 		if metadata, ok := stored[kp.ID]; ok {
-			mp.Metadata = domain.Some(metadata)
-		} else {
-			mp.Metadata = domain.None[domain.ProgramMetadata]()
+			mp.Metadata = &metadata
 		}
 		result = append(result, mp)
 	}
@@ -148,7 +146,7 @@ func joinManagedPrograms(
 func FilterManaged(programs []ManagedProgram) []ManagedProgram {
 	var result []ManagedProgram
 	for _, p := range programs {
-		if p.Metadata.IsSome() {
+		if p.Metadata != nil {
 			result = append(result, p)
 		}
 	}
@@ -159,7 +157,7 @@ func FilterManaged(programs []ManagedProgram) []ManagedProgram {
 func FilterUnmanaged(programs []ManagedProgram) []ManagedProgram {
 	var result []ManagedProgram
 	for _, p := range programs {
-		if p.Metadata.IsNone() {
+		if p.Metadata == nil {
 			result = append(result, p)
 		}
 	}

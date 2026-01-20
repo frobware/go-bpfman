@@ -10,8 +10,9 @@ import (
 )
 
 // ProgramReader reads program metadata from the store.
+// Get returns store.ErrNotFound if the program does not exist.
 type ProgramReader interface {
-	Get(ctx context.Context, kernelID uint32) (domain.Option[domain.ProgramMetadata], error)
+	Get(ctx context.Context, kernelID uint32) (domain.ProgramMetadata, error)
 }
 
 // ProgramWriter writes program metadata to the store.

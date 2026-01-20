@@ -81,7 +81,6 @@ Pure data types with no external dependencies. These represent:
 - **KernelMap** - A BPF map as observed in the kernel
 - **ProgramMetadata** - Metadata we store about programs we manage
 - **LoadSpec** - Specification for loading a program
-- **Option[T]** - Explicit optionality (no nil pointers)
 
 Key principle: domain types never perform I/O. They're pure data.
 
@@ -163,7 +162,8 @@ Small, focused interfaces following the Interface Segregation Principle:
 
 ```go
 type ProgramReader interface {
-    Get(ctx context.Context, kernelID uint32) (domain.Option[domain.ProgramMetadata], error)
+    // Get returns store.ErrNotFound if the program does not exist.
+    Get(ctx context.Context, kernelID uint32) (domain.ProgramMetadata, error)
 }
 
 type ProgramWriter interface {

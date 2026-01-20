@@ -46,29 +46,30 @@ func (t ProgramType) String() string {
 }
 
 // ParseProgramType parses a string into a ProgramType.
-func ParseProgramType(s string) Option[ProgramType] {
+// Returns the program type and true if valid, or ProgramTypeUnspecified and false if not.
+func ParseProgramType(s string) (ProgramType, bool) {
 	switch s {
 	case "xdp":
-		return Some(ProgramTypeXDP)
+		return ProgramTypeXDP, true
 	case "tc":
-		return Some(ProgramTypeTC)
+		return ProgramTypeTC, true
 	case "tcx":
-		return Some(ProgramTypeTCX)
+		return ProgramTypeTCX, true
 	case "tracepoint":
-		return Some(ProgramTypeTracepoint)
+		return ProgramTypeTracepoint, true
 	case "kprobe":
-		return Some(ProgramTypeKprobe)
+		return ProgramTypeKprobe, true
 	case "kretprobe":
-		return Some(ProgramTypeKretprobe)
+		return ProgramTypeKretprobe, true
 	case "uprobe":
-		return Some(ProgramTypeUprobe)
+		return ProgramTypeUprobe, true
 	case "uretprobe":
-		return Some(ProgramTypeUretprobe)
+		return ProgramTypeUretprobe, true
 	case "fentry":
-		return Some(ProgramTypeFentry)
+		return ProgramTypeFentry, true
 	case "fexit":
-		return Some(ProgramTypeFexit)
+		return ProgramTypeFexit, true
 	default:
-		return None[ProgramType]()
+		return ProgramTypeUnspecified, false
 	}
 }
