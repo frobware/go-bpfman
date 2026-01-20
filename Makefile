@@ -5,25 +5,16 @@ help:
 	@echo "  docker-build-all            Build all container images"
 	@echo "  test                        Run all tests"
 	@echo ""
-	@echo "bpfman (unified with CSI):"
-	@echo "  bpfman-build                Build bpfman binary (includes CSI support)"
+	@echo "bpfman (with integrated CSI):"
+	@echo "  bpfman-build                Build bpfman binary"
 	@echo "  bpfman-clean                Remove generated files and binary"
 	@echo "  bpfman-delete               Remove bpfman from cluster"
-	@echo "  bpfman-deploy               Deploy bpfman with CSI to kind cluster"
+	@echo "  bpfman-deploy               Deploy bpfman to kind cluster"
 	@echo "  bpfman-logs                 Follow bpfman logs"
 	@echo "  bpfman-proto                Generate protobuf/gRPC stubs"
 	@echo "  bpfman-test-grpc            Run gRPC integration tests"
 	@echo "  docker-build-bpfman         Build bpfman container image"
 	@echo "  docker-build-bpfman-cgo     Build bpfman with CGO (if needed)"
-	@echo ""
-	@echo "Standalone CSI Driver (legacy):"
-	@echo "  csi-build                   Build standalone csi-driver binary"
-	@echo "  csi-delete                  Remove standalone csi-driver from cluster"
-	@echo "  csi-deploy                  Deploy standalone csi-driver to kind cluster"
-	@echo "  csi-logs                    Follow csi-driver logs"
-	@echo "  csi-status                  Show csi-driver status"
-	@echo "  csi-test                    Run csi-driver tests"
-	@echo "  docker-build-csi            Build standalone csi-driver container image"
 	@echo ""
 	@echo "Example stats-reader app:"
 	@echo "  docker-build-stats-reader   Build stats-reader container image"
@@ -37,7 +28,6 @@ help:
 	@echo "Combined:"
 	@echo "  delete-all                  Remove all components"
 
-IMAGE_NAME ?= bpffs-csi-driver
 IMAGE_TAG ?= dev
 BPFMAN_IMAGE ?= bpfman
 BPFMAN_BUILDER_IMAGE ?= bpfman-builder
@@ -47,51 +37,15 @@ STATS_READER_IMAGE ?= stats-reader
 BIN_DIR ?= bin
 
 # Aggregate targets
-build-all: csi-build bpfman-build
+build-all: bpfman-build
 
-docker-build-all: docker-build-csi docker-build-bpfman
+docker-build-all: docker-build-bpfman
 
 clean: bpfman-clean
 	$(RM) -r $(BIN_DIR)
 
 test:
 	go test -v ./...
-
-# CSI Driver targets
-csi-build:
-	go fmt ./...
-	go vet ./...
-	CGO_ENABLED=0 go build -mod=vendor -o $(BIN_DIR)/bpffs-csi-driver ./cmd/csi-driver
-
-csi-test:
-	go test -v ./pkg/csi/...
-
-docker-build-csi:
-	docker buildx build --builder=default --load -t $(IMAGE_NAME):$(IMAGE_TAG) -f Dockerfile.csi-driver .
-
-csi-kind-load: docker-build-csi
-	kind load docker-image $(IMAGE_NAME):$(IMAGE_TAG) --name $(KIND_CLUSTER)
-
-csi-deploy: csi-kind-load
-	kubectl apply -f deploy/csidriver.yaml -f deploy/daemonset.yaml
-
-csi-delete:
-	kubectl delete -f deploy/csidriver.yaml -f deploy/daemonset.yaml --ignore-not-found
-
-csi-redeploy: csi-delete csi-deploy
-
-csi-logs:
-	kubectl -n $(NAMESPACE) logs -l app=bpffs-csi-node -c csi-driver -f
-
-csi-logs-registrar:
-	kubectl -n $(NAMESPACE) logs -l app=bpffs-csi-node -c node-driver-registrar -f
-
-csi-status:
-	@echo "=== CSI Driver Pod ==="
-	kubectl -n $(NAMESPACE) get pods -l app=bpffs-csi-node -o wide
-	@echo ""
-	@echo "=== CSI Drivers ==="
-	kubectl get csidrivers
 
 # bpfman targets
 # Note: bpfman-proto is not a dependency here since pb files are committed.
@@ -200,21 +154,11 @@ delete-all: stats-reader-delete bpfman-delete
 	bpfman-test-grpc \
 	build-all \
 	clean \
-	csi-build \
-	csi-delete \
-	csi-deploy \
-	csi-kind-load \
-	csi-logs \
-	csi-logs-registrar \
-	csi-redeploy \
-	csi-status \
-	csi-test \
 	delete-all \
 	docker-build-all \
 	docker-build-bpfman \
 	docker-build-bpfman-builder \
 	docker-build-bpfman-cgo \
-	docker-build-csi \
 	docker-build-csi-sanity \
 	docker-build-stats-reader \
 	docker-clean-bpfman-builder \
