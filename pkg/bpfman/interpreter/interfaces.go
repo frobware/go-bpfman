@@ -40,12 +40,26 @@ type ProgramLister interface {
 	List(ctx context.Context) (map[uint32]domain.ProgramMetadata, error)
 }
 
+// StateEntry represents a program entry with its kernel ID (if loaded).
+type StateEntry struct {
+	KernelID uint32 // 0 for reservations not yet committed
+	Metadata domain.ProgramMetadata
+}
+
+// StateReader queries programs by lifecycle state.
+type StateReader interface {
+	// ListByState returns all entries with the given state.
+	// Unlike List, this includes loading and error entries.
+	ListByState(ctx context.Context, state domain.ProgramState) ([]StateEntry, error)
+}
+
 // ProgramStore combines all store operations.
 type ProgramStore interface {
 	ProgramReader
 	ProgramWriter
 	ProgramLister
 	ReservationWriter
+	StateReader
 }
 
 // KernelSource provides access to kernel BPF objects.

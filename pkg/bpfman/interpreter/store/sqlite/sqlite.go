@@ -13,6 +13,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/frobware/go-bpfman/pkg/bpfman/domain"
+	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/store"
 )
 
@@ -449,4 +450,36 @@ func (s *Store) DeleteReservation(ctx context.Context, uuid string) error {
 		"DELETE FROM managed_programs WHERE uuid = ?",
 		uuid)
 	return err
+}
+
+// ListByState returns all entries with the given state.
+func (s *Store) ListByState(ctx context.Context, state domain.ProgramState) ([]interpreter.StateEntry, error) {
+	rows, err := s.db.QueryContext(ctx,
+		"SELECT kernel_id, metadata FROM managed_programs WHERE state = ?",
+		string(state))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []interpreter.StateEntry
+	for rows.Next() {
+		var kernelID uint32
+		var metadataJSON string
+		if err := rows.Scan(&kernelID, &metadataJSON); err != nil {
+			return nil, err
+		}
+
+		var metadata domain.ProgramMetadata
+		if err := json.Unmarshal([]byte(metadataJSON), &metadata); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
+		}
+
+		result = append(result, interpreter.StateEntry{
+			KernelID: kernelID,
+			Metadata: metadata,
+		})
+	}
+
+	return result, rows.Err()
 }

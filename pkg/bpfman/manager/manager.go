@@ -263,4 +263,3 @@ func FilterUnmanaged(programs []ManagedProgram) []ManagedProgram {
 	}
 	return result
 }
-

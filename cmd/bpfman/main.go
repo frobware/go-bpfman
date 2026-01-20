@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/frobware/go-bpfman/pkg/bpfman/domain"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/kernel/ebpf"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/store/sqlite"
+	"github.com/frobware/go-bpfman/pkg/bpfman/manager"
 	"github.com/frobware/go-bpfman/pkg/bpfman/server"
 	"github.com/frobware/go-bpfman/pkg/csi/driver"
 )
@@ -31,6 +33,14 @@ func usage() {
 	fmt.Fprintf(os.Stderr, "  unload  Unload (unpin) an eBPF program\n")
 	fmt.Fprintf(os.Stderr, "  list    List pinned eBPF programs [--maps]\n")
 	fmt.Fprintf(os.Stderr, "  get     Get details of a pinned program\n")
+	fmt.Fprintf(os.Stderr, "  gc      Garbage collect stale/orphaned resources (dry-run by default)\n")
+	fmt.Fprintf(os.Stderr, "          [--prune]      Actually delete (default: dry-run)\n")
+	fmt.Fprintf(os.Stderr, "          [--ttl 5m]     Stale loading TTL (default: 5m)\n")
+	fmt.Fprintf(os.Stderr, "          [--loading]    Only stale loading reservations\n")
+	fmt.Fprintf(os.Stderr, "          [--errors]     Only error entries\n")
+	fmt.Fprintf(os.Stderr, "          [--orphans]    Only orphaned pins\n")
+	fmt.Fprintf(os.Stderr, "          [--db PATH]    SQLite database path (default: %s)\n", server.DefaultDBPath)
+	fmt.Fprintf(os.Stderr, "          [--max N]      Maximum deletions (0=unlimited)\n")
 	fmt.Fprintf(os.Stderr, "  help    Print this message\n")
 	os.Exit(1)
 }
@@ -349,6 +359,148 @@ func cmdAttachTracepoint(args []string) error {
 	return nil
 }
 
+func cmdGC(args []string) error {
+	cfg := manager.DefaultGCConfig()
+	dbPath := server.DefaultDBPath
+
+	// If any specific filter is provided, disable all by default
+	hasFilter := false
+	for _, arg := range args {
+		if arg == "--loading" || arg == "--errors" || arg == "--orphans" {
+			hasFilter = true
+			break
+		}
+	}
+	if hasFilter {
+		cfg.IncludeLoading = false
+		cfg.IncludeError = false
+		cfg.IncludeOrphans = false
+	}
+
+	// Parse flags
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--prune":
+			cfg.DryRun = false
+		case "--ttl":
+			if i+1 < len(args) {
+				d, err := time.ParseDuration(args[i+1])
+				if err != nil {
+					return fmt.Errorf("invalid TTL %q: %w", args[i+1], err)
+				}
+				cfg.StaleLoadingTTL = d
+				i++
+			}
+		case "--loading":
+			cfg.IncludeLoading = true
+		case "--errors":
+			cfg.IncludeError = true
+		case "--orphans":
+			cfg.IncludeOrphans = true
+		case "--db":
+			if i+1 < len(args) {
+				dbPath = args[i+1]
+				i++
+			}
+		case "--max":
+			if i+1 < len(args) {
+				n, err := strconv.Atoi(args[i+1])
+				if err != nil {
+					return fmt.Errorf("invalid max %q: %w", args[i+1], err)
+				}
+				cfg.MaxDeletions = n
+				i++
+			}
+		}
+	}
+
+	// Open store and create manager
+	store, err := sqlite.New(dbPath)
+	if err != nil {
+		return fmt.Errorf("failed to open store at %s: %w", dbPath, err)
+	}
+	defer store.Close()
+
+	kernel := ebpf.New()
+	mgr := manager.New(store, kernel)
+
+	ctx := context.Background()
+
+	// Plan GC
+	plan, err := mgr.PlanGC(ctx, cfg)
+	if err != nil {
+		return fmt.Errorf("failed to plan GC: %w", err)
+	}
+
+	// Print plan grouped by reason
+	counts := plan.CountByReason()
+
+	if len(plan.Items) == 0 {
+		fmt.Println("Nothing to clean up.")
+		return nil
+	}
+
+	// Print stale loading
+	if counts[manager.GCStaleLoading] > 0 {
+		fmt.Printf("Stale loading reservations (%d):\n", counts[manager.GCStaleLoading])
+		for _, item := range plan.Items {
+			if item.Reason == manager.GCStaleLoading {
+				fmt.Printf("  uuid=%s  age=%s  pin=%s\n", item.UUID, item.Age.Truncate(time.Second), item.PinPath)
+			}
+		}
+		fmt.Println()
+	}
+
+	// Print error entries
+	if counts[manager.GCStateError] > 0 {
+		fmt.Printf("Error entries (%d):\n", counts[manager.GCStateError])
+		for _, item := range plan.Items {
+			if item.Reason == manager.GCStateError {
+				errMsg := item.ErrorMsg
+				if len(errMsg) > 60 {
+					errMsg = errMsg[:60] + "..."
+				}
+				fmt.Printf("  uuid=%s  error=%q  pin=%s\n", item.UUID, errMsg, item.PinPath)
+			}
+		}
+		fmt.Println()
+	}
+
+	// Print orphan pins
+	if counts[manager.GCOrphanPin] > 0 {
+		fmt.Printf("Orphaned pins (%d):\n", counts[manager.GCOrphanPin])
+		for _, item := range plan.Items {
+			if item.Reason == manager.GCOrphanPin {
+				fmt.Printf("  path=%s  age=%s\n", item.PinPath, item.Age.Truncate(time.Second))
+			}
+		}
+		fmt.Println()
+	}
+
+	// Apply if not dry-run
+	if cfg.DryRun {
+		fmt.Printf("Total: %d items. Run with --prune to delete.\n", len(plan.Items))
+		return nil
+	}
+
+	result, err := mgr.ApplyGC(ctx, plan)
+	if err != nil {
+		return fmt.Errorf("failed to apply GC: %w", err)
+	}
+
+	fmt.Printf("GC complete: %d deleted, %d failed, %d skipped\n",
+		result.Deleted, result.Failed, result.Skipped)
+
+	// Print failures
+	for _, item := range result.Items {
+		if item.Error != nil {
+			fmt.Printf("  FAILED: %s (%s): %v\n", item.Item.UUID, item.Item.Reason, item.Error)
+		}
+	}
+
+	return nil
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		usage()
@@ -368,6 +520,8 @@ func main() {
 		err = cmdList(os.Args[2:])
 	case "get":
 		err = cmdGet(os.Args[2:])
+	case "gc":
+		err = cmdGC(os.Args[2:])
 	case "help", "-h", "--help":
 		usage()
 	default:

@@ -3,11 +3,11 @@ package domain
 // PinnedProgram represents a BPF program pinned on the filesystem.
 // Used for CLI output when scanning bpffs directories.
 type PinnedProgram struct {
-	ID         uint32 `json:"id"`
-	Name       string `json:"name"`
-	Type       string `json:"type"`
-	Tag        string `json:"tag,omitempty"`
-	PinnedPath string `json:"pinned_path"`
+	ID         uint32   `json:"id"`
+	Name       string   `json:"name"`
+	Type       string   `json:"type"`
+	Tag        string   `json:"tag,omitempty"`
+	PinnedPath string   `json:"pinned_path"`
 	MapIDs     []uint32 `json:"map_ids,omitempty"`
 }
 

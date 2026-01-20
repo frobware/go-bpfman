@@ -20,8 +20,8 @@ var (
 	logFormat  = flag.String("log-format", "text", "Log format: text or json")
 
 	// bpfman integration flags
-	dbPath     = flag.String("db", "", "SQLite database path for bpfman integration (enables bpfman-aware mode)")
-	csiFsRoot  = flag.String("csi-fs-root", driver.DefaultCSIFsRoot, "Root directory for per-pod bpffs mounts")
+	dbPath    = flag.String("db", "", "SQLite database path for bpfman integration (enables bpfman-aware mode)")
+	csiFsRoot = flag.String("csi-fs-root", driver.DefaultCSIFsRoot, "Root directory for per-pod bpffs mounts")
 )
 
 func main() {
