@@ -30,7 +30,7 @@ Commands:
           [-m KEY=VALUE] metadata to attach to the program
           [--db PATH]    SQLite database path
   attach  Attach a loaded program to a hook
-          attach tracepoint <prog-pin-path> <group> <name> [--link-pin-path <path>]
+          attach tracepoint --program-id <id> <prog-pin-path> <group> <name> [--link-pin-path <path>]
           [--db PATH]    SQLite database path
   unload  Unload a managed eBPF program by kernel ID
           <program-id>
@@ -318,6 +318,7 @@ func cmdAttach(args []string) error {
 func cmdAttachTracepoint(args []string) error {
 	dbPath := server.DefaultDBPath
 	var progPinPath, group, name, linkPinPath string
+	var programID uint32
 
 	// Parse flags and positional args
 	positional := []string{}
@@ -326,6 +327,15 @@ func cmdAttachTracepoint(args []string) error {
 		case "--link-pin-path":
 			if i+1 < len(args) {
 				linkPinPath = args[i+1]
+				i++
+			}
+		case "--program-id":
+			if i+1 < len(args) {
+				id, err := strconv.ParseUint(args[i+1], 10, 32)
+				if err != nil {
+					return fmt.Errorf("invalid program ID %q: %w", args[i+1], err)
+				}
+				programID = uint32(id)
 				i++
 			}
 		case "--db":
@@ -339,7 +349,11 @@ func cmdAttachTracepoint(args []string) error {
 	}
 
 	if len(positional) != 3 {
-		return fmt.Errorf("usage: attach tracepoint [--db <path>] <prog-pin-path> <group> <name> [--link-pin-path <path>]")
+		return fmt.Errorf("usage: attach tracepoint [--db <path>] --program-id <id> <prog-pin-path> <group> <name> [--link-pin-path <path>]")
+	}
+
+	if programID == 0 {
+		return fmt.Errorf("--program-id is required")
 	}
 
 	progPinPath = positional[0]
@@ -353,7 +367,8 @@ func cmdAttachTracepoint(args []string) error {
 	}
 	defer cleanup()
 
-	result, err := mgr.AttachTracepoint(progPinPath, group, name, linkPinPath)
+	ctx := context.Background()
+	result, err := mgr.AttachTracepoint(ctx, programID, progPinPath, group, name, linkPinPath)
 	if err != nil {
 		return err
 	}

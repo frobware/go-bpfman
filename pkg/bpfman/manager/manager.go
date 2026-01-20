@@ -54,10 +54,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"time"
 
-	"github.com/frobware/go-bpfman/pkg/bpfman"
+	googleuuid "github.com/google/uuid"
+
 	"github.com/frobware/go-bpfman/pkg/bpfman/compute"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/store"
@@ -67,14 +69,14 @@ import (
 
 // Manager orchestrates BPF program management using fetch/compute/execute.
 type Manager struct {
-	store    interpreter.ProgramStore
+	store    interpreter.Store
 	kernel   interpreter.KernelOperations
 	executor *interpreter.Executor
 	logger   *slog.Logger
 }
 
 // New creates a new Manager.
-func New(store interpreter.ProgramStore, kernel interpreter.KernelOperations, logger *slog.Logger) *Manager {
+func New(store interpreter.Store, kernel interpreter.KernelOperations, logger *slog.Logger) *Manager {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -167,12 +169,26 @@ func (m *Manager) Load(ctx context.Context, spec managed.LoadSpec, opts LoadOpts
 	return loaded, nil
 }
 
-// Unload removes a BPF program and its metadata.
+// Unload removes a BPF program, its links, and metadata.
 func (m *Manager) Unload(ctx context.Context, kernelID uint32) error {
 	// FETCH - get metadata to find pin path
 	metadata, err := m.store.Get(ctx, kernelID)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return err
+	}
+
+	// Unpin any links associated with this program
+	links, listErr := m.store.ListLinksByProgram(ctx, kernelID)
+	if listErr == nil {
+		for _, link := range links {
+			if link.PinPath != "" {
+				if err := os.Remove(link.PinPath); err != nil && !os.IsNotExist(err) {
+					m.logger.Warn("failed to unpin link", "uuid", link.UUID, "pin_path", link.PinPath, "error", err)
+				} else if err == nil {
+					m.logger.Info("unpinned link", "uuid", link.UUID, "pin_path", link.PinPath)
+				}
+			}
+		}
 	}
 
 	// If we have metadata, use it to unload from kernel
@@ -182,7 +198,7 @@ func (m *Manager) Unload(ctx context.Context, kernelID uint32) error {
 		}
 	}
 
-	// EXECUTE - remove from store
+	// EXECUTE - remove from store (cascade deletes links)
 	return m.store.Delete(ctx, kernelID)
 }
 
@@ -283,6 +299,74 @@ func (m *Manager) Get(ctx context.Context, kernelID uint32) (managed.Program, er
 }
 
 // AttachTracepoint attaches a pinned program to a tracepoint.
-func (m *Manager) AttachTracepoint(progPinPath, group, name, linkPinPath string) (*bpfman.AttachedLink, error) {
-	return m.kernel.AttachTracepoint(progPinPath, group, name, linkPinPath)
+// programKernelID is required to associate the link with the program in the store.
+func (m *Manager) AttachTracepoint(ctx context.Context, programKernelID uint32, progPinPath, group, name, linkPinPath string) (managed.Attached, error) {
+	// Get program metadata to get the UUID
+	metadata, err := m.store.Get(ctx, programKernelID)
+	if err != nil {
+		return managed.Attached{}, fmt.Errorf("get program %d: %w", programKernelID, err)
+	}
+
+	// Attach to the kernel
+	kernelLink, err := m.kernel.AttachTracepoint(progPinPath, group, name, linkPinPath)
+	if err != nil {
+		return managed.Attached{}, fmt.Errorf("attach tracepoint %s/%s: %w", group, name, err)
+	}
+
+	// Create link metadata
+	linkUUID := googleuuid.New().String()
+	now := time.Now()
+
+	link := managed.Link{
+		ID:          kernelLink.ID,
+		UUID:        linkUUID,
+		ProgramID:   programKernelID,
+		ProgramUUID: metadata.UUID,
+		Type:        managed.LinkTypeTracepoint,
+		PinPath:     kernelLink.PinPath,
+		AttachSpec: managed.AttachSpec{
+			Type:            managed.LinkTypeTracepoint,
+			TracepointGroup: group,
+			TracepointName:  name,
+		},
+		CreatedAt: now,
+	}
+
+	// Save to store
+	if err := m.store.SaveLink(ctx, link); err != nil {
+		m.logger.Error("failed to save link metadata", "uuid", linkUUID, "error", err)
+		// Don't fail the attachment - the link is already created in the kernel
+		// This is a metadata-only failure
+	} else {
+		m.logger.Info("attached tracepoint",
+			"link_uuid", linkUUID,
+			"program_id", programKernelID,
+			"tracepoint", group+"/"+name,
+			"pin_path", kernelLink.PinPath)
+	}
+
+	return managed.Attached{
+		LinkID:      kernelLink.ID,
+		UUID:        linkUUID,
+		ProgramID:   programKernelID,
+		ProgramUUID: metadata.UUID,
+		Type:        managed.LinkTypeTracepoint,
+		PinPath:     kernelLink.PinPath,
+		AttachSpec:  link.AttachSpec,
+	}, nil
+}
+
+// ListLinks returns all managed links.
+func (m *Manager) ListLinks(ctx context.Context) ([]managed.Link, error) {
+	return m.store.ListLinks(ctx)
+}
+
+// ListLinksByProgram returns all links for a given program.
+func (m *Manager) ListLinksByProgram(ctx context.Context, programKernelID uint32) ([]managed.Link, error) {
+	return m.store.ListLinksByProgram(ctx, programKernelID)
+}
+
+// GetLink retrieves a link by UUID.
+func (m *Manager) GetLink(ctx context.Context, uuid string) (managed.Link, error) {
+	return m.store.GetLink(ctx, uuid)
 }

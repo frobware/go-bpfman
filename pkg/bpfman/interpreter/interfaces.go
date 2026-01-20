@@ -11,6 +11,37 @@ import (
 	"github.com/frobware/go-bpfman/pkg/bpfman/managed"
 )
 
+// LinkWriter writes link metadata to the store.
+type LinkWriter interface {
+	SaveLink(ctx context.Context, link managed.Link) error
+	DeleteLink(ctx context.Context, uuid string) error
+}
+
+// LinkReader reads link metadata from the store.
+type LinkReader interface {
+	GetLink(ctx context.Context, uuid string) (managed.Link, error)
+	GetLinkByKernelID(ctx context.Context, kernelLinkID uint32) (managed.Link, error)
+}
+
+// LinkLister lists links from the store.
+type LinkLister interface {
+	ListLinks(ctx context.Context) ([]managed.Link, error)
+	ListLinksByProgram(ctx context.Context, programKernelID uint32) ([]managed.Link, error)
+}
+
+// LinkStore combines all link store operations.
+type LinkStore interface {
+	LinkWriter
+	LinkReader
+	LinkLister
+}
+
+// Store combines program and link store operations.
+type Store interface {
+	ProgramStore
+	LinkStore
+}
+
 // ProgramReader reads program metadata from the store.
 // Get returns store.ErrNotFound if the program does not exist.
 type ProgramReader interface {

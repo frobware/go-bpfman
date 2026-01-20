@@ -100,6 +100,23 @@ func (s *Store) migrate() error {
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_program_metadata_key_value ON program_metadata_index(key, value);
+
+	-- Links table for BPF attachments
+	CREATE TABLE IF NOT EXISTS managed_links (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		uuid TEXT NOT NULL UNIQUE,
+		program_kernel_id INTEGER NOT NULL,
+		program_uuid TEXT NOT NULL,
+		link_type TEXT NOT NULL,
+		kernel_link_id INTEGER,
+		pin_path TEXT,
+		attach_spec TEXT NOT NULL,
+		created_at TEXT NOT NULL,
+		FOREIGN KEY (program_kernel_id) REFERENCES managed_programs(kernel_id) ON DELETE CASCADE
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_managed_links_program ON managed_links(program_kernel_id);
+	CREATE INDEX IF NOT EXISTS idx_managed_links_uuid ON managed_links(uuid);
 	`
 	if _, err := s.db.Exec(schema); err != nil {
 		return err
@@ -524,6 +541,159 @@ func (s *Store) ListByState(ctx context.Context, state managed.State) ([]interpr
 			KernelID: kernelID,
 			Metadata: metadata,
 		})
+	}
+
+	return result, rows.Err()
+}
+
+// SaveLink stores link metadata.
+func (s *Store) SaveLink(ctx context.Context, link managed.Link) error {
+	attachSpecJSON, err := json.Marshal(link.AttachSpec)
+	if err != nil {
+		return fmt.Errorf("failed to marshal attach spec: %w", err)
+	}
+
+	_, err = s.db.ExecContext(ctx,
+		`INSERT INTO managed_links (uuid, program_kernel_id, program_uuid, link_type, kernel_link_id, pin_path, attach_spec, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		link.UUID, link.ProgramID, link.ProgramUUID, string(link.Type), link.ID, link.PinPath, string(attachSpecJSON), link.CreatedAt.Format(time.RFC3339))
+	if err != nil {
+		return fmt.Errorf("failed to insert link: %w", err)
+	}
+
+	s.logger.Debug("saved link", "uuid", link.UUID, "program_id", link.ProgramID, "type", link.Type)
+	return nil
+}
+
+// DeleteLink removes link metadata by UUID.
+func (s *Store) DeleteLink(ctx context.Context, uuid string) error {
+	result, err := s.db.ExecContext(ctx,
+		"DELETE FROM managed_links WHERE uuid = ?",
+		uuid)
+	if err != nil {
+		return fmt.Errorf("failed to delete link: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return fmt.Errorf("link %s: %w", uuid, store.ErrNotFound)
+	}
+
+	s.logger.Debug("deleted link", "uuid", uuid)
+	return nil
+}
+
+// GetLink retrieves link metadata by UUID.
+func (s *Store) GetLink(ctx context.Context, uuid string) (managed.Link, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT uuid, program_kernel_id, program_uuid, link_type, kernel_link_id, pin_path, attach_spec, created_at
+		 FROM managed_links WHERE uuid = ?`, uuid)
+
+	return s.scanLink(row)
+}
+
+// GetLinkByKernelID retrieves link metadata by kernel link ID.
+func (s *Store) GetLinkByKernelID(ctx context.Context, kernelLinkID uint32) (managed.Link, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT uuid, program_kernel_id, program_uuid, link_type, kernel_link_id, pin_path, attach_spec, created_at
+		 FROM managed_links WHERE kernel_link_id = ?`, kernelLinkID)
+
+	return s.scanLink(row)
+}
+
+// ListLinks returns all links.
+func (s *Store) ListLinks(ctx context.Context) ([]managed.Link, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT uuid, program_kernel_id, program_uuid, link_type, kernel_link_id, pin_path, attach_spec, created_at
+		 FROM managed_links`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	return s.scanLinks(rows)
+}
+
+// ListLinksByProgram returns all links for a given program kernel ID.
+func (s *Store) ListLinksByProgram(ctx context.Context, programKernelID uint32) ([]managed.Link, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT uuid, program_kernel_id, program_uuid, link_type, kernel_link_id, pin_path, attach_spec, created_at
+		 FROM managed_links WHERE program_kernel_id = ?`, programKernelID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	return s.scanLinks(rows)
+}
+
+func (s *Store) scanLink(row *sql.Row) (managed.Link, error) {
+	var link managed.Link
+	var linkType string
+	var kernelLinkID sql.NullInt64
+	var pinPath sql.NullString
+	var attachSpecJSON string
+	var createdAtStr string
+
+	err := row.Scan(&link.UUID, &link.ProgramID, &link.ProgramUUID, &linkType, &kernelLinkID, &pinPath, &attachSpecJSON, &createdAtStr)
+	if err == sql.ErrNoRows {
+		return managed.Link{}, fmt.Errorf("link: %w", store.ErrNotFound)
+	}
+	if err != nil {
+		return managed.Link{}, err
+	}
+
+	link.Type = managed.LinkType(linkType)
+	if kernelLinkID.Valid {
+		link.ID = uint32(kernelLinkID.Int64)
+	}
+	if pinPath.Valid {
+		link.PinPath = pinPath.String
+	}
+
+	if err := json.Unmarshal([]byte(attachSpecJSON), &link.AttachSpec); err != nil {
+		return managed.Link{}, fmt.Errorf("failed to unmarshal attach spec: %w", err)
+	}
+
+	link.CreatedAt, _ = time.Parse(time.RFC3339, createdAtStr)
+
+	return link, nil
+}
+
+func (s *Store) scanLinks(rows *sql.Rows) ([]managed.Link, error) {
+	var result []managed.Link
+
+	for rows.Next() {
+		var link managed.Link
+		var linkType string
+		var kernelLinkID sql.NullInt64
+		var pinPath sql.NullString
+		var attachSpecJSON string
+		var createdAtStr string
+
+		err := rows.Scan(&link.UUID, &link.ProgramID, &link.ProgramUUID, &linkType, &kernelLinkID, &pinPath, &attachSpecJSON, &createdAtStr)
+		if err != nil {
+			return nil, err
+		}
+
+		link.Type = managed.LinkType(linkType)
+		if kernelLinkID.Valid {
+			link.ID = uint32(kernelLinkID.Int64)
+		}
+		if pinPath.Valid {
+			link.PinPath = pinPath.String
+		}
+
+		if err := json.Unmarshal([]byte(attachSpecJSON), &link.AttachSpec); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal attach spec for %s: %w", link.UUID, err)
+		}
+
+		link.CreatedAt, _ = time.Parse(time.RFC3339, createdAtStr)
+
+		result = append(result, link)
 	}
 
 	return result, rows.Err()
