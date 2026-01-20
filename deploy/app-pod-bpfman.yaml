@@ -3,7 +3,7 @@
 # Prerequisites:
 # 1. go-bpfman must be running with --csi-support
 # 2. Load a program with metadata:
-#    kubectl -n bpfman exec -it daemonset/go-bpfman -c bpfman -- \
+#    kubectl -n bpfman exec -it daemonset/bpfman-daemon-go -c bpfman -- \
 #      bpfman load -m bpfman.io/ProgramName=my-stats \
 #      /opt/bpf/stats.o count_context_switches /sys/fs/bpf/go-bpfman/my-stats
 apiVersion: v1

@@ -1,20 +1,20 @@
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: go-bpfman
+  name: bpfman-daemon-go
   namespace: bpfman
   labels:
-    app: go-bpfman
+    app: bpfman-daemon-go
 spec:
   selector:
     matchLabels:
-      app: go-bpfman
+      app: bpfman-daemon-go
   template:
     metadata:
       labels:
-        app: go-bpfman
+        app: bpfman-daemon-go
     spec:
-      serviceAccountName: go-bpfman
+      serviceAccountName: bpfman-daemon-go
       containers:
         - name: bpfman
           image: bpfman:dev
@@ -86,5 +86,5 @@ spec:
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: go-bpfman
+  name: bpfman-daemon-go
   namespace: bpfman
