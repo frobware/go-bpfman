@@ -3,7 +3,7 @@ bin/
 
 # Not needed for build
 build/
-deploy/
+manifests/
 scripts/
 *.md
 .git/

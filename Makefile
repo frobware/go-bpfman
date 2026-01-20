@@ -89,21 +89,21 @@ bpfman-kind-load: docker-build-bpfman
 	kind load docker-image $(BPFMAN_IMAGE):$(IMAGE_TAG) --name $(KIND_CLUSTER)
 
 bpfman-deploy: bpfman-kind-load
-	kubectl apply -f deploy/csidriver.yaml -f deploy/bpfman.yaml
+	kubectl apply -f manifests/csidriver.yaml -f manifests/bpfman.yaml
 	kubectl -n $(NAMESPACE) wait --for=condition=Ready pod -l app=bpfman-daemon-go --timeout=60s
 
 bpfman-delete:
-	kubectl delete -f deploy/bpfman.yaml -f deploy/csidriver.yaml --ignore-not-found
+	kubectl delete -f manifests/bpfman.yaml -f manifests/csidriver.yaml --ignore-not-found
 
 bpfman-logs:
 	kubectl -n $(NAMESPACE) logs -l app=bpfman-daemon-go -c bpfman -f
 
 bpfman-deploy-test: bpfman-kind-load
-	kubectl apply -f deploy/bpfman-test-pod.yaml
+	kubectl apply -f manifests/bpfman-test-pod.yaml
 	kubectl wait --for=condition=Ready pod/bpfman-test --timeout=30s
 
 bpfman-delete-test:
-	kubectl delete -f deploy/bpfman-test-pod.yaml --ignore-not-found
+	kubectl delete -f manifests/bpfman-test-pod.yaml --ignore-not-found
 
 bpfman-test-grpc: docker-build-bpfman
 	BPFMAN_IMAGE=$(BPFMAN_IMAGE):$(IMAGE_TAG) scripts/test-grpc.sh
@@ -123,11 +123,11 @@ stats-reader-kind-load: docker-build-stats-reader
 	kind load docker-image $(STATS_READER_IMAGE):$(IMAGE_TAG) --name $(KIND_CLUSTER)
 
 stats-reader-deploy: stats-reader-kind-load
-	kubectl apply -f deploy/stats-reader.yaml
+	kubectl apply -f manifests/stats-reader.yaml
 	kubectl wait --for=condition=Ready pod/stats-reader --timeout=30s
 
 stats-reader-delete:
-	kubectl delete -f deploy/stats-reader.yaml --ignore-not-found
+	kubectl delete -f manifests/stats-reader.yaml --ignore-not-found
 
 stats-reader-logs:
 	kubectl logs -f stats-reader

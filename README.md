@@ -58,7 +58,7 @@ bpffs-csi-driver/
     driver.go             # gRPC server setup
     identity.go           # Identity service (GetPluginInfo, Probe)
     node.go               # Node service (NodePublishVolume, etc.)
-  deploy/
+  manifests/
     csidriver.yaml        # CSIDriver API object
     daemonset.yaml        # DaemonSet with registrar sidecar
     test-pod.yaml         # Example pod using the driver
