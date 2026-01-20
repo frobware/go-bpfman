@@ -3,6 +3,9 @@ package compute
 import (
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/frobware/go-bpfman/pkg/bpfman/action"
 	"github.com/frobware/go-bpfman/pkg/bpfman/kernel"
 	"github.com/frobware/go-bpfman/pkg/bpfman/managed"
@@ -24,22 +27,17 @@ func TestReconcileActions_OrphanedPrograms(t *testing.T) {
 	actions := ReconcileActions(stored, kps)
 
 	// Should have 2 delete actions for IDs 2 and 3
-	if len(actions) != 2 {
-		t.Fatalf("expected 2 actions, got %d", len(actions))
-	}
+	require.Len(t, actions, 2, "expected 2 actions")
 
 	deleteIDs := make(map[uint32]bool)
 	for _, a := range actions {
 		da, ok := a.(action.DeleteProgram)
-		if !ok {
-			t.Fatalf("expected DeleteProgram action, got %T", a)
-		}
+		require.True(t, ok, "expected DeleteProgram action, got %T", a)
 		deleteIDs[da.KernelID] = true
 	}
 
-	if !deleteIDs[2] || !deleteIDs[3] {
-		t.Errorf("expected delete actions for IDs 2 and 3, got %v", deleteIDs)
-	}
+	assert.True(t, deleteIDs[2], "expected delete action for ID 2")
+	assert.True(t, deleteIDs[3], "expected delete action for ID 3")
 }
 
 func TestReconcileActions_NoOrphans(t *testing.T) {
@@ -54,9 +52,7 @@ func TestReconcileActions_NoOrphans(t *testing.T) {
 
 	actions := ReconcileActions(stored, kps)
 
-	if len(actions) != 0 {
-		t.Fatalf("expected 0 actions, got %d", len(actions))
-	}
+	assert.Empty(t, actions, "expected 0 actions")
 }
 
 func TestReconcileActions_EmptyStore(t *testing.T) {
@@ -68,9 +64,7 @@ func TestReconcileActions_EmptyStore(t *testing.T) {
 
 	actions := ReconcileActions(stored, kps)
 
-	if len(actions) != 0 {
-		t.Fatalf("expected 0 actions, got %d", len(actions))
-	}
+	assert.Empty(t, actions, "expected 0 actions")
 }
 
 func TestOrphanedPrograms(t *testing.T) {
@@ -85,13 +79,8 @@ func TestOrphanedPrograms(t *testing.T) {
 
 	orphaned := OrphanedPrograms(stored, kps)
 
-	if len(orphaned) != 1 {
-		t.Fatalf("expected 1 orphaned, got %d", len(orphaned))
-	}
-
-	if orphaned[0] != 2 {
-		t.Errorf("expected orphaned ID 2, got %d", orphaned[0])
-	}
+	require.Len(t, orphaned, 1, "expected 1 orphaned")
+	assert.Equal(t, uint32(2), orphaned[0], "expected orphaned ID 2")
 }
 
 func TestUnmanagedPrograms(t *testing.T) {
@@ -107,7 +96,5 @@ func TestUnmanagedPrograms(t *testing.T) {
 
 	unmanaged := UnmanagedPrograms(stored, kps)
 
-	if len(unmanaged) != 2 {
-		t.Fatalf("expected 2 unmanaged, got %d", len(unmanaged))
-	}
+	assert.Len(t, unmanaged, 2, "expected 2 unmanaged")
 }

@@ -9,6 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/frobware/go-bpfman/pkg/bpfman/managed"
 )
 
@@ -23,9 +26,7 @@ func testLogger() *slog.Logger {
 
 func TestForeignKey_LinkRequiresProgram(t *testing.T) {
 	store, err := NewInMemory(testLogger())
-	if err != nil {
-		t.Fatalf("failed to create store: %v", err)
-	}
+	require.NoError(t, err, "failed to create store")
 	defer store.Close()
 
 	ctx := context.Background()
@@ -41,21 +42,13 @@ func TestForeignKey_LinkRequiresProgram(t *testing.T) {
 	}
 
 	err = store.SaveLink(ctx, link)
-	if err == nil {
-		t.Fatal("expected FK constraint violation, got nil")
-	}
-
-	// SQLite FK violations contain "FOREIGN KEY constraint failed"
-	if !strings.Contains(err.Error(), "FOREIGN KEY constraint failed") {
-		t.Errorf("expected FK constraint error, got: %v", err)
-	}
+	require.Error(t, err, "expected FK constraint violation")
+	assert.True(t, strings.Contains(err.Error(), "FOREIGN KEY constraint failed"), "expected FK constraint error, got: %v", err)
 }
 
 func TestForeignKey_CascadeDeleteRemovesLinks(t *testing.T) {
 	store, err := NewInMemory(testLogger())
-	if err != nil {
-		t.Fatalf("failed to create store: %v", err)
-	}
+	require.NoError(t, err, "failed to create store")
 	defer store.Close()
 
 	ctx := context.Background()
@@ -67,14 +60,10 @@ func TestForeignKey_CascadeDeleteRemovesLinks(t *testing.T) {
 		CreatedAt: time.Now(),
 	}
 
-	if err := store.Reserve(ctx, uuid, prog); err != nil {
-		t.Fatalf("Reserve failed: %v", err)
-	}
+	require.NoError(t, store.Reserve(ctx, uuid, prog), "Reserve failed")
 
 	kernelID := uint32(42)
-	if err := store.CommitReservation(ctx, uuid, kernelID); err != nil {
-		t.Fatalf("CommitReservation failed: %v", err)
-	}
+	require.NoError(t, store.CommitReservation(ctx, uuid, kernelID), "CommitReservation failed")
 
 	// Create two links for that program.
 	for i, linkUUID := range []string{"link-1", "link-2"} {
@@ -90,40 +79,26 @@ func TestForeignKey_CascadeDeleteRemovesLinks(t *testing.T) {
 			ID:        uint32(100 + i),
 			CreatedAt: time.Now(),
 		}
-		if err := store.SaveLink(ctx, link); err != nil {
-			t.Fatalf("SaveLink(%s) failed: %v", linkUUID, err)
-		}
+		require.NoError(t, store.SaveLink(ctx, link), "SaveLink(%s) failed", linkUUID)
 	}
 
 	// Verify links exist.
 	links, err := store.ListLinksByProgram(ctx, kernelID)
-	if err != nil {
-		t.Fatalf("ListLinksByProgram failed: %v", err)
-	}
-	if len(links) != 2 {
-		t.Fatalf("expected 2 links, got %d", len(links))
-	}
+	require.NoError(t, err, "ListLinksByProgram failed")
+	require.Len(t, links, 2, "expected 2 links")
 
 	// Delete the program.
-	if err := store.Delete(ctx, kernelID); err != nil {
-		t.Fatalf("Delete failed: %v", err)
-	}
+	require.NoError(t, store.Delete(ctx, kernelID), "Delete failed")
 
 	// Verify CASCADE removed the links.
 	links, err = store.ListLinksByProgram(ctx, kernelID)
-	if err != nil {
-		t.Fatalf("ListLinksByProgram after delete failed: %v", err)
-	}
-	if len(links) != 0 {
-		t.Errorf("expected 0 links after CASCADE delete, got %d", len(links))
-	}
+	require.NoError(t, err, "ListLinksByProgram after delete failed")
+	assert.Empty(t, links, "expected 0 links after CASCADE delete")
 }
 
 func TestForeignKey_CascadeDeleteRemovesMetadataIndex(t *testing.T) {
 	store, err := NewInMemory(testLogger())
-	if err != nil {
-		t.Fatalf("failed to create store: %v", err)
-	}
+	require.NoError(t, err, "failed to create store")
 	defer store.Close()
 
 	ctx := context.Background()
@@ -139,44 +114,28 @@ func TestForeignKey_CascadeDeleteRemovesMetadataIndex(t *testing.T) {
 		},
 	}
 
-	if err := store.Reserve(ctx, uuid, prog); err != nil {
-		t.Fatalf("Reserve failed: %v", err)
-	}
+	require.NoError(t, store.Reserve(ctx, uuid, prog), "Reserve failed")
 
 	kernelID := uint32(42)
-	if err := store.CommitReservation(ctx, uuid, kernelID); err != nil {
-		t.Fatalf("CommitReservation failed: %v", err)
-	}
+	require.NoError(t, store.CommitReservation(ctx, uuid, kernelID), "CommitReservation failed")
 
 	// Verify we can find by metadata.
 	found, foundID, err := store.FindProgramByMetadata(ctx, "app", "test")
-	if err != nil {
-		t.Fatalf("FindProgramByMetadata failed: %v", err)
-	}
-	if foundID != kernelID {
-		t.Errorf("expected kernel_id %d, got %d", kernelID, foundID)
-	}
-	if found.UUID != uuid {
-		t.Errorf("expected UUID %s, got %s", uuid, found.UUID)
-	}
+	require.NoError(t, err, "FindProgramByMetadata failed")
+	assert.Equal(t, kernelID, foundID, "kernel_id mismatch")
+	assert.Equal(t, uuid, found.UUID, "UUID mismatch")
 
 	// Delete the program.
-	if err := store.Delete(ctx, kernelID); err != nil {
-		t.Fatalf("Delete failed: %v", err)
-	}
+	require.NoError(t, store.Delete(ctx, kernelID), "Delete failed")
 
 	// Verify CASCADE removed the metadata index entries.
 	_, _, err = store.FindProgramByMetadata(ctx, "app", "test")
-	if err == nil {
-		t.Error("expected error after CASCADE delete, got nil")
-	}
+	assert.Error(t, err, "expected error after CASCADE delete")
 }
 
 func TestUniqueIndex_ProgramNameEnforcesUniqueness(t *testing.T) {
 	store, err := NewInMemory(testLogger())
-	if err != nil {
-		t.Fatalf("failed to create store: %v", err)
-	}
+	require.NoError(t, err, "failed to create store")
 	defer store.Close()
 
 	ctx := context.Background()
@@ -190,12 +149,8 @@ func TestUniqueIndex_ProgramNameEnforcesUniqueness(t *testing.T) {
 		},
 	}
 
-	if err := store.Reserve(ctx, prog1.UUID, prog1); err != nil {
-		t.Fatalf("Reserve prog1 failed: %v", err)
-	}
-	if err := store.CommitReservation(ctx, prog1.UUID, 100); err != nil {
-		t.Fatalf("CommitReservation prog1 failed: %v", err)
-	}
+	require.NoError(t, store.Reserve(ctx, prog1.UUID, prog1), "Reserve prog1 failed")
+	require.NoError(t, store.CommitReservation(ctx, prog1.UUID, 100), "CommitReservation prog1 failed")
 
 	// Attempt to create second program with the same name.
 	prog2 := managed.Program{
@@ -206,26 +161,16 @@ func TestUniqueIndex_ProgramNameEnforcesUniqueness(t *testing.T) {
 		},
 	}
 
-	if err := store.Reserve(ctx, prog2.UUID, prog2); err != nil {
-		t.Fatalf("Reserve prog2 failed: %v", err)
-	}
+	require.NoError(t, store.Reserve(ctx, prog2.UUID, prog2), "Reserve prog2 failed")
 
 	err = store.CommitReservation(ctx, prog2.UUID, 200)
-	if err == nil {
-		t.Fatal("expected unique constraint violation, got nil")
-	}
-
-	// SQLite unique violations contain "UNIQUE constraint failed"
-	if !strings.Contains(err.Error(), "UNIQUE constraint failed") {
-		t.Errorf("expected UNIQUE constraint error, got: %v", err)
-	}
+	require.Error(t, err, "expected unique constraint violation")
+	assert.True(t, strings.Contains(err.Error(), "UNIQUE constraint failed"), "expected UNIQUE constraint error, got: %v", err)
 }
 
 func TestUniqueIndex_DifferentNamesAllowed(t *testing.T) {
 	store, err := NewInMemory(testLogger())
-	if err != nil {
-		t.Fatalf("failed to create store: %v", err)
-	}
+	require.NoError(t, err, "failed to create store")
 	defer store.Close()
 
 	ctx := context.Background()
@@ -240,29 +185,19 @@ func TestUniqueIndex_DifferentNamesAllowed(t *testing.T) {
 			},
 		}
 
-		if err := store.Reserve(ctx, prog.UUID, prog); err != nil {
-			t.Fatalf("Reserve %s failed: %v", name, err)
-		}
-		if err := store.CommitReservation(ctx, prog.UUID, uint32(100+i)); err != nil {
-			t.Fatalf("CommitReservation %s failed: %v", name, err)
-		}
+		require.NoError(t, store.Reserve(ctx, prog.UUID, prog), "Reserve %s failed", name)
+		require.NoError(t, store.CommitReservation(ctx, prog.UUID, uint32(100+i)), "CommitReservation %s failed", name)
 	}
 
 	// Verify both exist.
 	programs, err := store.List(ctx)
-	if err != nil {
-		t.Fatalf("List failed: %v", err)
-	}
-	if len(programs) != 2 {
-		t.Errorf("expected 2 programs, got %d", len(programs))
-	}
+	require.NoError(t, err, "List failed")
+	assert.Len(t, programs, 2, "expected 2 programs")
 }
 
 func TestUniqueIndex_NameCanBeReusedAfterDelete(t *testing.T) {
 	store, err := NewInMemory(testLogger())
-	if err != nil {
-		t.Fatalf("failed to create store: %v", err)
-	}
+	require.NoError(t, err, "failed to create store")
 	defer store.Close()
 
 	ctx := context.Background()
@@ -276,17 +211,11 @@ func TestUniqueIndex_NameCanBeReusedAfterDelete(t *testing.T) {
 		},
 	}
 
-	if err := store.Reserve(ctx, prog.UUID, prog); err != nil {
-		t.Fatalf("Reserve failed: %v", err)
-	}
-	if err := store.CommitReservation(ctx, prog.UUID, 100); err != nil {
-		t.Fatalf("CommitReservation failed: %v", err)
-	}
+	require.NoError(t, store.Reserve(ctx, prog.UUID, prog), "Reserve failed")
+	require.NoError(t, store.CommitReservation(ctx, prog.UUID, 100), "CommitReservation failed")
 
 	// Delete it.
-	if err := store.Delete(ctx, 100); err != nil {
-		t.Fatalf("Delete failed: %v", err)
-	}
+	require.NoError(t, store.Delete(ctx, 100), "Delete failed")
 
 	// Create a new program with the same name.
 	prog2 := managed.Program{
@@ -297,22 +226,12 @@ func TestUniqueIndex_NameCanBeReusedAfterDelete(t *testing.T) {
 		},
 	}
 
-	if err := store.Reserve(ctx, prog2.UUID, prog2); err != nil {
-		t.Fatalf("Reserve prog2 failed: %v", err)
-	}
-	if err := store.CommitReservation(ctx, prog2.UUID, 200); err != nil {
-		t.Fatalf("CommitReservation prog2 failed: %v", err)
-	}
+	require.NoError(t, store.Reserve(ctx, prog2.UUID, prog2), "Reserve prog2 failed")
+	require.NoError(t, store.CommitReservation(ctx, prog2.UUID, 200), "CommitReservation prog2 failed")
 
 	// Verify it exists.
 	found, kernelID, err := store.FindProgramByMetadata(ctx, "bpfman.io/ProgramName", "reusable-name")
-	if err != nil {
-		t.Fatalf("FindProgramByMetadata failed: %v", err)
-	}
-	if kernelID != 200 {
-		t.Errorf("expected kernel_id 200, got %d", kernelID)
-	}
-	if found.UUID != "prog-2" {
-		t.Errorf("expected UUID prog-2, got %s", found.UUID)
-	}
+	require.NoError(t, err, "FindProgramByMetadata failed")
+	assert.Equal(t, uint32(200), kernelID, "kernel_id mismatch")
+	assert.Equal(t, "prog-2", found.UUID, "UUID mismatch")
 }
