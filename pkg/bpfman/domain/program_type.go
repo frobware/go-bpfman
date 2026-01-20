@@ -3,6 +3,20 @@ package domain
 // ProgramType represents the type of BPF program.
 type ProgramType uint32
 
+// MarshalText implements encoding.TextMarshaler so ProgramType
+// serialises as its string name in JSON.
+func (t ProgramType) MarshalText() ([]byte, error) {
+	return []byte(t.String()), nil
+}
+
+// UnmarshalText implements encoding.TextUnmarshaler so ProgramType
+// can be parsed from its string name in JSON.
+func (t *ProgramType) UnmarshalText(text []byte) error {
+	parsed, _ := ParseProgramType(string(text))
+	*t = parsed
+	return nil
+}
+
 const (
 	ProgramTypeUnspecified ProgramType = iota
 	ProgramTypeXDP

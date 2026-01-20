@@ -116,9 +116,11 @@ type KernelProgram struct {
 
 // LoadedProgram is the result of successfully loading a program.
 type LoadedProgram struct {
-	ID          uint32
-	Name        string
-	ProgramType ProgramType
-	PinPath     string
-	MapIDs      []uint32
+	ID          uint32      `json:"id"`
+	UUID        string      `json:"uuid,omitempty"`
+	Name        string      `json:"name"`
+	ProgramType ProgramType `json:"type"`
+	PinPath     string      `json:"pin_path"`
+	PinDir      string      `json:"pin_dir,omitempty"`
+	MapIDs      []uint32    `json:"map_ids,omitempty"`
 }

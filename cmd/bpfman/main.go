@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -23,7 +24,7 @@ const usageText = `Usage: bpfman <COMMAND>
 Commands:
   serve   Start the gRPC server
   load    Load an eBPF program from an object file
-          <object.o> <program-name> <pin-dir>
+          <object.o> <program-name>
           [-m KEY=VALUE] metadata to attach to the program
           [--db PATH]    SQLite database path
   attach  Attach a loaded program to a hook
@@ -90,7 +91,7 @@ func cmdServe(args []string) error {
 }
 
 func cmdLoad(args []string) error {
-	var objectPath, programName, pinDir string
+	var objectPath, programName string
 	dbPath := server.DefaultDBPath
 	metadata := make(map[string]string)
 
@@ -118,13 +119,12 @@ func cmdLoad(args []string) error {
 		}
 	}
 
-	if len(positional) != 3 {
-		return fmt.Errorf("usage: load [--db <path>] [-m KEY=VALUE]... <object.o> <program-name> <pin-dir>")
+	if len(positional) != 2 {
+		return fmt.Errorf("usage: load [--db <path>] [-m KEY=VALUE]... <object.o> <program-name>")
 	}
 
 	objectPath = positional[0]
 	programName = positional[1]
-	pinDir = positional[2]
 
 	// Set up manager
 	mgr, cleanup, err := manager.Setup(dbPath)
@@ -133,8 +133,9 @@ func cmdLoad(args []string) error {
 	}
 	defer cleanup()
 
-	// Generate UUID for the load
+	// Generate UUID and derive pin path
 	programUUID := uuid.New().String()
+	pinDir := filepath.Join(server.DefaultBpfmanRoot, programUUID)
 
 	// Build load spec and options
 	spec := manager.LoadSpec{
@@ -154,34 +155,7 @@ func cmdLoad(args []string) error {
 		return err
 	}
 
-	// Build result for output
-	result := struct {
-		Program struct {
-			ID      uint32 `json:"id"`
-			UUID    string `json:"uuid"`
-			Name    string `json:"name"`
-			Type    string `json:"type"`
-			PinPath string `json:"pin_path"`
-		} `json:"program"`
-		PinDir string `json:"pin_dir"`
-	}{
-		Program: struct {
-			ID      uint32 `json:"id"`
-			UUID    string `json:"uuid"`
-			Name    string `json:"name"`
-			Type    string `json:"type"`
-			PinPath string `json:"pin_path"`
-		}{
-			ID:      loaded.ID,
-			UUID:    programUUID,
-			Name:    loaded.Name,
-			Type:    loaded.ProgramType.String(),
-			PinPath: loaded.PinPath,
-		},
-		PinDir: pinDir,
-	}
-
-	output, err := json.MarshalIndent(result, "", "  ")
+	output, err := json.MarshalIndent(loaded, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal result: %w", err)
 	}

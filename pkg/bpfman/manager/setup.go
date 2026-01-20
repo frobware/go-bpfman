@@ -9,6 +9,9 @@ import (
 // LoadSpec is re-exported from domain for CLI convenience.
 type LoadSpec = domain.LoadSpec
 
+// LoadedProgram is re-exported from domain for CLI convenience.
+type LoadedProgram = domain.LoadedProgram
+
 // Setup creates a Manager with default implementations and returns
 // a cleanup function to close the store.
 func Setup(dbPath string) (*Manager, func(), error) {

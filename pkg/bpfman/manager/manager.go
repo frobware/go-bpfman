@@ -149,8 +149,10 @@ func (m *Manager) Load(ctx context.Context, spec domain.LoadSpec, opts LoadOpts)
 		)
 	}
 
-	// Update returned program with final pin path
+	// Update returned program with complete info
+	loaded.UUID = opts.UUID
 	loaded.PinPath = filepath.Join(spec.PinPath, spec.ProgramName)
+	loaded.PinDir = spec.PinPath
 	return loaded, nil
 }
 
