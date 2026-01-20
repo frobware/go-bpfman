@@ -10,6 +10,11 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 COPY cmd/ cmd/
 COPY internal/ internal/
+COPY action/ action/
+COPY compute/ compute/
+COPY domain/ domain/
+COPY interpreter/ interpreter/
+COPY manager/ manager/
 
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
