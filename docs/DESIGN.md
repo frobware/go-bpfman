@@ -62,38 +62,84 @@ This enables:
 ## Package Structure
 
 ```
-bpfman/
-├── domain/           Pure data types (no I/O, no dependencies)
-├── action/           Reified effects as data structures
-├── compute/          Pure functions for business logic
-├── interpreter/      I/O layer: interfaces and implementations
-│   ├── store/        Store implementations (sqlite, memory)
-│   └── kernel/       Kernel adapters (ebpf)
-├── manager/          Orchestration using fetch/compute/execute
-└── cmd/bpfman/       CLI entry point
+pkg/bpfman/
+├── types.go              Shared types (ProgramType, AttachType, etc.)
+├── kernel/               Kernel-observed BPF objects (read-only domain)
+│   ├── program.go
+│   ├── map.go
+│   └── link.go
+├── managed/              bpfman-managed metadata (what we store)
+│   ├── program.go
+│   ├── load.go
+│   └── link.go
+├── action/               Reified effects as data structures
+├── compute/              Pure business logic functions
+├── interpreter/          I/O layer
+│   ├── interfaces.go
+│   ├── executor.go
+│   ├── ebpf/             cilium/ebpf adapter
+│   └── store/            Store implementations
+│       ├── sqlite/
+│       └── memory/
+├── manager/              Orchestration (fetch/compute/execute)
+└── server/               gRPC server
+    └── pb/               Generated protobuf code
 ```
 
-### domain/
+## Dependency Inversion Principle
 
-Pure data types with no external dependencies. These represent:
+The package structure follows a strict dependency rule that keeps pure logic separate from I/O concerns.
 
-- **KernelProgram** - A BPF program as observed in the kernel
-- **KernelMap** - A BPF map as observed in the kernel
-- **ProgramMetadata** - Metadata we store about programs we manage
-- **LoadSpec** - Specification for loading a program
+**Dependency Flow:**
+```
+interpreter/ ──imports──> compute/ ──imports──> kernel/, managed/
+```
 
-Key principle: domain types never perform I/O. They're pure data.
+The pure packages (`kernel/`, `managed/`, `compute/`) have no knowledge of the I/O layer. They work only with pure data types.
+
+**Interfaces defined by consumers, not implementations:**
+- Each consumer declares only what it needs (e.g., `ProgramReader` with one method)
+- The SQLite store satisfies many small interfaces
+- Testing only requires satisfying the few methods actually used
+
+This inversion means:
+- `compute/` defines what operations it needs via interfaces
+- `interpreter/` provides implementations that satisfy those interfaces
+- Pure packages never import `interpreter/`
+
+### kernel/
+
+Types representing what the kernel reports about BPF objects. These are observed, not created by us. Pure data with no I/O.
 
 ```go
-// Pure data - just describes what something is
-type KernelProgram struct {
+// Observed from kernel - we don't create these, we discover them
+type Program struct {
     ID          uint32
     Name        string
-    ProgramType string
+    ProgramType ProgramType
     Tag         string
     MapIDs      []uint32
 }
 ```
+
+### managed/
+
+Metadata we persist about programs we manage. Includes LoadSpec for loading programs, Program state tracking, and Link tracking for attachments.
+
+```go
+// What we store about programs we manage
+type Program struct {
+    KernelID    uint32
+    UUID        string
+    ObjectPath  string
+    ProgramName string
+    State       ProgramState
+}
+```
+
+### types.go
+
+Shared types at the package root representing the capabilities of the bpfman package. These include `ProgramType`, `AttachType`, and other enumerations used across packages.
 
 ### action/
 
@@ -103,8 +149,7 @@ Reified effects - data structures describing what to do:
 type Action interface { isAction() }
 
 type SaveProgram struct {
-    KernelID uint32
-    Metadata domain.ProgramMetadata
+    Program managed.Program
 }
 
 type DeleteProgram struct {
@@ -121,12 +166,12 @@ Pure functions that transform data and make decisions:
 ```go
 // Pure function - no I/O, deterministic, trivially testable
 func ReconcileActions(
-    stored map[uint32]domain.ProgramMetadata,
-    kernel []domain.KernelProgram,
+    stored map[uint32]managed.Program,
+    observed []kernel.Program,
 ) []action.Action {
     var actions []action.Action
     for id := range stored {
-        if !inKernel(id, kernel) {
+        if !inKernel(id, observed) {
             actions = append(actions, action.DeleteProgram{KernelID: id})
         }
     }
@@ -138,10 +183,10 @@ Testing is trivial - no mocks needed:
 
 ```go
 func TestReconcileActions(t *testing.T) {
-    stored := map[uint32]domain.ProgramMetadata{1: {}, 2: {}}
-    kernel := []domain.KernelProgram{{ID: 1}}
+    stored := map[uint32]managed.Program{1: {}, 2: {}}
+    observed := []kernel.Program{{ID: 1}}
 
-    actions := ReconcileActions(stored, kernel)
+    actions := ReconcileActions(stored, observed)
 
     // ID 2 should be deleted (in store but not kernel)
     assert.Len(t, actions, 1)
@@ -163,16 +208,16 @@ Small, focused interfaces following the Interface Segregation Principle:
 ```go
 type ProgramReader interface {
     // Get returns store.ErrNotFound if the program does not exist.
-    Get(ctx context.Context, kernelID uint32) (domain.ProgramMetadata, error)
+    Get(ctx context.Context, kernelID uint32) (managed.Program, error)
 }
 
 type ProgramWriter interface {
-    Save(ctx context.Context, kernelID uint32, metadata domain.ProgramMetadata) error
+    Save(ctx context.Context, program managed.Program) error
     Delete(ctx context.Context, kernelID uint32) error
 }
 
 type KernelSource interface {
-    Programs(ctx context.Context) iter.Seq2[domain.KernelProgram, error]
+    Programs(ctx context.Context) iter.Seq2[kernel.Program, error]
 }
 ```
 
@@ -193,15 +238,15 @@ store := sqlite.Open("/var/lib/bpfman/state.db")
 store := memory.New()
 ```
 
-#### Kernel Adapter
+#### eBPF Adapter
 
-The `kernel/ebpf/` package wraps cilium/ebpf:
+The `interpreter/ebpf/` package wraps cilium/ebpf:
 
 ```go
 type Kernel struct{}
 
-func (k *Kernel) Programs(ctx context.Context) iter.Seq2[domain.KernelProgram, error]
-func (k *Kernel) Load(ctx context.Context, spec domain.LoadSpec) (domain.LoadedProgram, error)
+func (k *Kernel) Programs(ctx context.Context) iter.Seq2[kernel.Program, error]
+func (k *Kernel) Load(ctx context.Context, spec managed.LoadSpec) (managed.Program, error)
 func (k *Kernel) Unload(ctx context.Context, pinPath string) error
 ```
 
@@ -213,7 +258,7 @@ Interprets action types and performs the corresponding I/O:
 func (e *Executor) Execute(ctx context.Context, a action.Action) error {
     switch act := a.(type) {
     case action.SaveProgram:
-        return e.store.Save(ctx, act.KernelID, act.Metadata)
+        return e.store.Save(ctx, act.Program)
     case action.DeleteProgram:
         return e.store.Delete(ctx, act.KernelID)
     }
@@ -234,13 +279,13 @@ type Manager struct {
 func (m *Manager) Reconcile(ctx context.Context) error {
     // FETCH
     stored, _ := m.store.List(ctx)
-    var kernelPrograms []domain.KernelProgram
+    var observed []kernel.Program
     for kp, _ := range m.kernel.Programs(ctx) {
-        kernelPrograms = append(kernelPrograms, kp)
+        observed = append(observed, kp)
     }
 
     // COMPUTE (pure)
-    actions := compute.ReconcileActions(stored, kernelPrograms)
+    actions := compute.ReconcileActions(stored, observed)
 
     // EXECUTE
     return m.executor.ExecuteAll(ctx, actions)
@@ -269,13 +314,14 @@ func (m *Manager) Reconcile(ctx context.Context) error {
           ▼                   ▼                   ▼
 ┌─────────────────┐   ┌─────────────┐   ┌─────────────────┐
 │  interpreter/   │   │  compute/   │   │  interpreter/   │
-│  (kernel, store)│   │  (pure fns) │   │  (executor)     │
+│  (ebpf, store)  │   │  (pure fns) │   │  (executor)     │
 └─────────────────┘   └─────────────┘   └─────────────────┘
           │                   │                   │
           ▼                   ▼                   ▼
 ┌─────────────────┐   ┌─────────────┐   ┌─────────────────┐
-│  domain/        │   │  action/    │   │  domain/        │
-│  (pure types)   │   │  (effects)  │   │  (pure types)   │
+│  kernel/        │   │  action/    │   │  managed/       │
+│  managed/       │   │  (effects)  │   │  kernel/        │
+│  (pure types)   │   │             │   │  (pure types)   │
 └─────────────────┘   └─────────────┘   └─────────────────┘
 ```
 
@@ -287,10 +333,10 @@ Pure functions in `compute/` can be tested without any mocks:
 
 ```go
 func TestOrphanedPrograms(t *testing.T) {
-    stored := map[uint32]domain.ProgramMetadata{1: {}, 2: {}}
-    kernel := []domain.KernelProgram{{ID: 1}}
+    stored := map[uint32]managed.Program{1: {}, 2: {}}
+    observed := []kernel.Program{{ID: 1}}
 
-    orphaned := OrphanedPrograms(stored, kernel)
+    orphaned := OrphanedPrograms(stored, observed)
 
     // Just check the result - no I/O involved
     assert.Equal(t, []uint32{2}, orphaned)
@@ -314,29 +360,17 @@ With effects reified as data:
 ### Modularity
 
 Clear boundaries between:
-- What we know (domain)
-- What we want to do (action)
-- How we decide (compute)
-- How we do it (interpreter)
+- What the kernel tells us (kernel/)
+- What we persist (managed/)
+- What we want to do (action/)
+- How we decide (compute/)
+- How we do it (interpreter/)
 
 ## Migration Status
 
 Migration is complete. All code now uses the FP architecture:
 
-- **CLI** (`cmd/bpfman/`) - Uses `interpreter/kernel/ebpf/` for BPF operations
-- **gRPC server** (`internal/server/`) - Uses `interpreter/kernel/ebpf/` and `interpreter/store/sqlite/`
+- **CLI** (`cmd/bpfman/`) - Uses `interpreter/ebpf/` for BPF operations
+- **gRPC server** (`pkg/bpfman/server/`) - Uses `interpreter/ebpf/` and `interpreter/store/sqlite/`
 
-The legacy `internal/bpf/` and `internal/store/` packages have been removed.
-
-### Internal Packages
-
-The `internal/` directory contains only server-related code:
-
-```
-internal/
-  server/
-    server.go    # gRPC server implementation
-    pb/          # Generated protobuf code (via make bpfman-proto)
-```
-
-The proto stubs are co-located with the server since they're tightly coupled. Generate them with `make bpfman-proto`.
+The proto stubs are co-located with the server in `pkg/bpfman/server/pb/`. Generate them with `make bpfman-proto`.
