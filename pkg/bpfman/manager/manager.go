@@ -1,10 +1,63 @@
 // Package manager provides high-level orchestration using
 // the fetch/compute/execute pattern.
+//
+// # Transactional Load
+//
+// The Manager provides transactional semantics for loading BPF programs.
+// The goal is to ensure that either a program is fully loaded with its
+// metadata persisted, or nothing is left behind (no partial state).
+//
+// The transaction boundary spans two state stores:
+//   - bpffs pins (filesystem objects in /sys/fs/bpf)
+//   - SQLite metadata (database row)
+//
+// True atomic commits across both stores are not possible without a
+// distributed transaction system. Instead, we make failure states safe
+// and recoverable:
+//   - No partial pins visible at the final path
+//   - Metadata only written once pins are committed
+//   - If metadata write fails, pins are rolled back (strict rollback)
+//
+// # Two-Phase Commit for Pins
+//
+// Load uses a two-phase commit with a temporary directory:
+//
+//	temp:  /sys/fs/bpf/bpfman/.tmp/<uuid>-<nonce>
+//	final: /sys/fs/bpf/bpfman/<uuid>
+//
+// The temp directory MUST be on the same filesystem as the final directory
+// for rename() to be atomic. Both directories are on bpffs.
+//
+// Workflow:
+//  1. Create temp directory
+//  2. Load collection and pin program/maps to temp
+//  3. Validate (get program info, map IDs)
+//  4. Atomic commit: rename(temp, final)
+//  5. Persist metadata to SQLite
+//  6. If step 5 fails: rollback by removing final directory
+//
+// # CSI Integration
+//
+// The CSI driver is a consumer of loaded programs, not part of the
+// transaction. It creates per-pod views of maps via re-pinning:
+//
+//	canonical: /sys/fs/bpf/bpfman/<uuid>/<map>     (managed by bpfman)
+//	per-pod:   /run/bpfman/csi/fs/<vol>/<map>      (per-pod bpffs mount)
+//
+// The per-pod path is a separate bpffs mount. Re-pinning creates a new
+// pin from the map's file descriptor - this is not a rename across
+// filesystems, so there are no cross-device issues.
+//
+// CSI cleanup removes the per-pod bpffs mount; canonical pins are
+// unaffected and remain managed by bpfman.
 package manager
 
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/frobware/go-bpfman/pkg/bpfman/compute"
@@ -29,28 +82,91 @@ func New(store interpreter.ProgramStore, kernel interpreter.KernelOperations) *M
 	}
 }
 
-// Load loads a BPF program and stores its metadata.
-func (m *Manager) Load(ctx context.Context, spec domain.LoadSpec, owner string) (domain.LoadedProgram, error) {
-	// EXECUTE - load program into kernel
-	loaded, err := m.kernel.Load(ctx, spec)
+// LoadOpts contains optional metadata for a Load operation.
+type LoadOpts struct {
+	UUID         string
+	UserMetadata map[string]string
+	Owner        string
+}
+
+// Load loads a BPF program and stores its metadata transactionally.
+//
+// See package documentation for details on the two-phase commit design.
+//
+// IMPORTANT: spec.PinPath must be on bpffs (typically /sys/fs/bpf/...).
+// The temp directory is created alongside PinPath and must be on the
+// same filesystem for atomic rename. Do not use paths on tmpfs or other
+// filesystems.
+//
+// On any failure, previously completed steps are rolled back. If metadata
+// persistence fails after pins are committed, the pins are removed
+// (strict rollback) to avoid unmanaged programs.
+func (m *Manager) Load(ctx context.Context, spec domain.LoadSpec, opts LoadOpts) (domain.LoadedProgram, error) {
+	finalDir := spec.PinPath
+
+	// Phase 1: Create temp directory (same filesystem for atomic rename)
+	tmpDir, err := mkTempPinDir(finalDir)
 	if err != nil {
 		return domain.LoadedProgram{}, err
 	}
 
-	// COMPUTE - create metadata (pure)
+	// Track whether we've committed the temp dir to final location.
+	// If not committed by the time we return, clean up temp pins.
+	tmpCommitted := false
+	defer func() {
+		if tmpCommitted {
+			return
+		}
+		// Best-effort cleanup of temp pins. Ignore error here:
+		// the main error return already captures the failure cause.
+		_ = m.kernel.Unload(ctx, tmpDir)
+	}()
+
+	// Phase 2: Load and pin to temp directory
+	tmpSpec := spec
+	tmpSpec.PinPath = tmpDir
+
+	loaded, err := m.kernel.Load(ctx, tmpSpec)
+	if err != nil {
+		return domain.LoadedProgram{}, err
+	}
+
+	// Phase 3: Atomic commit - rename temp to final
+	if err := os.MkdirAll(filepath.Dir(finalDir), 0755); err != nil {
+		return domain.LoadedProgram{}, fmt.Errorf("create final pin parent: %w", err)
+	}
+
+	if err := os.Rename(tmpDir, finalDir); err != nil {
+		// Pins remain in tmpDir; deferred cleanup will remove them
+		return domain.LoadedProgram{}, fmt.Errorf("commit pins: %w", err)
+	}
+	tmpCommitted = true
+
+	// Phase 4: Persist metadata (only after pins are committed)
 	metadata := domain.ProgramMetadata{
-		LoadSpec:  spec,
-		Tags:      nil,
-		Owner:     owner,
-		CreatedAt: time.Now(),
+		LoadSpec:     spec, // Use original spec with final pin path
+		UUID:         opts.UUID,
+		UserMetadata: opts.UserMetadata,
+		Tags:         nil,
+		Owner:        opts.Owner,
+		CreatedAt:    time.Now(),
 	}
 
-	// EXECUTE - save metadata to store
 	if err := m.store.Save(ctx, loaded.ID, metadata); err != nil {
-		// Best effort - program is loaded but metadata save failed
-		return loaded, err
+		// Strict rollback: remove committed pins to avoid unmanaged programs
+		rbErr := m.kernel.Unload(ctx, finalDir)
+		if rbErr == nil {
+			return domain.LoadedProgram{}, fmt.Errorf("persist metadata: %w", err)
+		}
+		// Rollback also failed - return compound error
+		return domain.LoadedProgram{}, errors.Join(
+			fmt.Errorf("persist metadata: %w", err),
+			fmt.Errorf("rollback pins at %q failed: %w", finalDir, rbErr),
+		)
 	}
 
+	// Update returned program with final pin path
+	loaded.PinPath = filepath.Join(finalDir, spec.ProgramName)
 	return loaded, nil
 }
 
@@ -162,4 +278,26 @@ func FilterUnmanaged(programs []ManagedProgram) []ManagedProgram {
 		}
 	}
 	return result
+}
+
+// mkTempPinDir creates a temporary directory alongside the final pin directory.
+// This ensures the temp and final directories are on the same filesystem,
+// allowing atomic rename during commit.
+func mkTempPinDir(finalDir string) (string, error) {
+	parent := filepath.Dir(finalDir)
+	tmpRoot := filepath.Join(parent, ".tmp")
+
+	if err := os.MkdirAll(tmpRoot, 0755); err != nil {
+		return "", fmt.Errorf("create temp pin root: %w", err)
+	}
+
+	// Use final dir name as prefix for easier debugging
+	prefix := filepath.Base(finalDir) + "-"
+
+	tmpDir, err := os.MkdirTemp(tmpRoot, prefix)
+	if err != nil {
+		return "", fmt.Errorf("create temp pin dir: %w", err)
+	}
+
+	return tmpDir, nil
 }

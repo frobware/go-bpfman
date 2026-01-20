@@ -17,10 +17,11 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/frobware/go-bpfman/pkg/bpfman/domain"
-	pb "github.com/frobware/go-bpfman/pkg/bpfman/server/pb"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/kernel/ebpf"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/store"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/store/sqlite"
+	"github.com/frobware/go-bpfman/pkg/bpfman/manager"
+	pb "github.com/frobware/go-bpfman/pkg/bpfman/server/pb"
 )
 
 const (
@@ -39,6 +40,7 @@ type Server struct {
 	mu     sync.RWMutex
 	kernel *ebpf.Kernel
 	store  *sqlite.Store
+	mgr    *manager.Manager
 	root   string
 }
 
@@ -105,7 +107,7 @@ func (s *Server) Load(ctx context.Context, req *pb.LoadRequest) (*pb.LoadRespons
 		Programs: make([]*pb.LoadResponseInfo, 0, len(req.Info)),
 	}
 
-	// Load each requested program
+	// Load each requested program using the manager (transactional)
 	for _, info := range req.Info {
 		spec := domain.LoadSpec{
 			ObjectPath:  objectPath,
@@ -115,22 +117,15 @@ func (s *Server) Load(ctx context.Context, req *pb.LoadRequest) (*pb.LoadRespons
 			GlobalData:  req.GlobalData,
 		}
 
-		loaded, err := s.kernel.Load(ctx, spec)
-		if err != nil {
-			return nil, status.Errorf(codes.Internal, "failed to load program %s: %v", info.Name, err)
-		}
-
-		// Create and store metadata
-		metadata := domain.ProgramMetadata{
-			LoadSpec:     spec,
+		opts := manager.LoadOpts{
 			UUID:         uuid,
 			UserMetadata: req.Metadata,
 			Owner:        "bpfman",
-			CreatedAt:    time.Now(),
 		}
 
-		if err := s.store.Save(ctx, loaded.ID, metadata); err != nil {
-			log.Printf("Warning: failed to persist program %d: %v", loaded.ID, err)
+		loaded, err := s.mgr.Load(ctx, spec, opts)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "failed to load program %s: %v", info.Name, err)
 		}
 
 		resp.Programs = append(resp.Programs, &pb.LoadResponseInfo{
@@ -162,23 +157,11 @@ func (s *Server) Unload(ctx context.Context, req *pb.UnloadRequest) (*pb.UnloadR
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Get metadata from store
-	metadata, err := s.store.Get(ctx, req.Id)
-	if errors.Is(err, store.ErrNotFound) {
-		return nil, status.Errorf(codes.NotFound, "program with ID %d not found", req.Id)
-	}
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to get program: %v", err)
-	}
-
-	// Unload by unpinning the directory
-	if err := s.kernel.Unload(ctx, metadata.LoadSpec.PinPath); err != nil {
+	if err := s.mgr.Unload(ctx, req.Id); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, status.Errorf(codes.NotFound, "program with ID %d not found", req.Id)
+		}
 		return nil, status.Errorf(codes.Internal, "failed to unload program: %v", err)
-	}
-
-	// Delete from store
-	if err := s.store.Delete(ctx, req.Id); err != nil {
-		log.Printf("Warning: failed to delete program %d from store: %v", req.Id, err)
 	}
 
 	log.Printf("Unloaded program ID %d", req.Id)
@@ -297,6 +280,9 @@ func (s *Server) Serve(socketPath string) error {
 	if closeStore {
 		defer s.store.Close()
 	}
+
+	// Create manager for transactional load/unload operations
+	s.mgr = manager.New(s.store, s.kernel)
 
 	// Ensure socket directory exists
 	socketDir := filepath.Dir(socketPath)

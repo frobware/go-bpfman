@@ -189,9 +189,27 @@ func (d *Driver) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolu
 	return &csi.NodePublishVolumeResponse{}, nil
 }
 
+// bpffsMagic is the magic number for bpffs (from statfs).
+const bpffsMagic = 0xcafe4a11
+
 // mountBpffs mounts a bpffs filesystem at the given path.
 func mountBpffs(path string) error {
-	return unix.Mount("bpf", path, "bpf", 0, "")
+	if err := unix.Mount("bpf", path, "bpf", 0, ""); err != nil {
+		return err
+	}
+
+	// Verify the mount is actually bpffs - catches misconfiguration early
+	var stat unix.Statfs_t
+	if err := unix.Statfs(path, &stat); err != nil {
+		unix.Unmount(path, 0)
+		return err
+	}
+	if stat.Type != bpffsMagic {
+		unix.Unmount(path, 0)
+		return unix.EINVAL
+	}
+
+	return nil
 }
 
 // NodeUnpublishVolume unmounts the volume from the target path.

@@ -103,7 +103,20 @@ func (k *Kernel) Links(ctx context.Context) iter.Seq2[domain.KernelLink, error] 
 }
 
 // Load loads a BPF program into the kernel.
+//
+// The caller must create the pin directory before calling Load.
+// This keeps the kernel adapter simple and pushes transaction
+// boundaries up to the manager layer.
 func (k *Kernel) Load(ctx context.Context, spec domain.LoadSpec) (domain.LoadedProgram, error) {
+	// Verify pin directory exists - caller is responsible for creating it
+	st, err := os.Stat(spec.PinPath)
+	if err != nil {
+		return domain.LoadedProgram{}, fmt.Errorf("pin path %q must exist: %w", spec.PinPath, err)
+	}
+	if !st.IsDir() {
+		return domain.LoadedProgram{}, fmt.Errorf("pin path %q is not a directory", spec.PinPath)
+	}
+
 	// Load the collection from the object file
 	collSpec, err := ebpf.LoadCollectionSpec(spec.ObjectPath)
 	if err != nil {
@@ -115,11 +128,6 @@ func (k *Kernel) Load(ctx context.Context, spec domain.LoadSpec) (domain.LoadedP
 		if err := collSpec.RewriteConstants(map[string]interface{}{name: data}); err != nil {
 			// Ignore errors for constants that don't exist
 		}
-	}
-
-	// Create pin path directory
-	if err := os.MkdirAll(spec.PinPath, 0755); err != nil {
-		return domain.LoadedProgram{}, fmt.Errorf("failed to create pin path: %w", err)
 	}
 
 	// Load with pinning
@@ -134,18 +142,19 @@ func (k *Kernel) Load(ctx context.Context, spec domain.LoadSpec) (domain.LoadedP
 	if err != nil {
 		return domain.LoadedProgram{}, fmt.Errorf("failed to load collection: %w", err)
 	}
+	// Always close the collection - pinning creates kernel references
+	// that persist independently of the file descriptors we hold here.
+	defer coll.Close()
 
 	// Find the requested program
 	prog, ok := coll.Programs[spec.ProgramName]
 	if !ok {
-		coll.Close()
 		return domain.LoadedProgram{}, fmt.Errorf("program %q not found in collection", spec.ProgramName)
 	}
 
 	// Pin the program
 	progPinPath := filepath.Join(spec.PinPath, spec.ProgramName)
 	if err := prog.Pin(progPinPath); err != nil {
-		coll.Close()
 		return domain.LoadedProgram{}, fmt.Errorf("failed to pin program: %w", err)
 	}
 
@@ -155,7 +164,6 @@ func (k *Kernel) Load(ctx context.Context, spec domain.LoadSpec) (domain.LoadedP
 		if err := m.Pin(mapPinPath); err != nil {
 			// Ignore if already pinned
 			if !os.IsExist(err) {
-				coll.Close()
 				return domain.LoadedProgram{}, fmt.Errorf("failed to pin map %q: %w", name, err)
 			}
 		}
@@ -163,7 +171,6 @@ func (k *Kernel) Load(ctx context.Context, spec domain.LoadSpec) (domain.LoadedP
 
 	info, err := prog.Info()
 	if err != nil {
-		coll.Close()
 		return domain.LoadedProgram{}, fmt.Errorf("failed to get program info: %w", err)
 	}
 
@@ -174,7 +181,6 @@ func (k *Kernel) Load(ctx context.Context, spec domain.LoadSpec) (domain.LoadedP
 		mapIDs[i] = uint32(mid)
 	}
 
-	// Don't close the collection - programs are pinned
 	return domain.LoadedProgram{
 		ID:          uint32(progID),
 		Name:        spec.ProgramName,
@@ -339,7 +345,14 @@ func (k *Kernel) GetPinned(pinPath string) (*domain.PinnedProgram, error) {
 }
 
 // LoadSingle loads a single program and returns CLI-friendly output.
+// This is a convenience method for CLI usage that creates the pin directory
+// if it doesn't exist. For transactional loads, use Manager.Load instead.
 func (k *Kernel) LoadSingle(ctx context.Context, objectPath, programName, pinDir string) (*domain.LoadResult, error) {
+	// Create pin directory for CLI convenience
+	if err := os.MkdirAll(pinDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create pin directory: %w", err)
+	}
+
 	spec := domain.LoadSpec{
 		ObjectPath:  objectPath,
 		ProgramName: programName,
