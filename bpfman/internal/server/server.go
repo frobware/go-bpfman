@@ -11,12 +11,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/frobware/bpffs-csi-driver/bpfman/internal/bpf"
-	pb "github.com/frobware/bpffs-csi-driver/bpfman/internal/gobpfman"
-	"github.com/frobware/bpffs-csi-driver/bpfman/internal/store"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"github.com/frobware/bpffs-csi-driver/bpfman/domain"
+	pb "github.com/frobware/bpffs-csi-driver/bpfman/internal/server/pb"
+	"github.com/frobware/bpffs-csi-driver/bpfman/interpreter/kernel/ebpf"
+	"github.com/frobware/bpffs-csi-driver/bpfman/interpreter/store/sqlite"
 )
 
 const (
@@ -24,21 +26,25 @@ const (
 	DefaultSocketPath = "/run/bpfman-sock/bpfman.sock"
 	// DefaultDBPath is the default path for the SQLite database.
 	DefaultDBPath = "/run/bpfman/state.db"
+	// DefaultBpfmanRoot is the default root directory for bpfman pins.
+	DefaultBpfmanRoot = "/sys/fs/bpf/bpfman"
 )
 
 // Server implements the bpfman gRPC service.
 type Server struct {
 	pb.UnimplementedBpfmanServer
 
-	mu      sync.RWMutex
-	manager *bpf.Manager
-	store   *store.Store
+	mu     sync.RWMutex
+	kernel *ebpf.Kernel
+	store  *sqlite.Store
+	root   string
 }
 
 // New creates a new bpfman gRPC server.
 func New() *Server {
 	return &Server{
-		manager: bpf.NewManager(),
+		kernel: ebpf.New(),
+		root:   DefaultBpfmanRoot,
 	}
 }
 
@@ -74,117 +80,68 @@ func (s *Server) Load(ctx context.Context, req *pb.LoadRequest) (*pb.LoadRespons
 		uuid = u
 	}
 
-	// Convert proto program infos to library format
-	programs := make([]bpf.ProgramLoadInfo, len(req.Info))
-	for i, info := range req.Info {
-		programs[i] = bpf.ProgramLoadInfo{
-			Name:       info.Name,
-			Type:       protoToBpfmanType(info.ProgramType),
-			AttachFunc: getAttachFunc(info),
-		}
+	// Determine pin directory
+	var pinDir string
+	if uuid != "" {
+		pinDir = filepath.Join(s.root, uuid)
+	} else {
+		pinDir = filepath.Join(s.root, fmt.Sprintf("%d", time.Now().UnixNano()))
 	}
 
-	// Load programs using our manager
-	loadReq := &bpf.LoadRequest{
-		ObjectPath: objectPath,
-		Programs:   programs,
-		Metadata:   req.Metadata,
-		GlobalData: req.GlobalData,
-		UUID:       uuid,
-	}
-
-	result, err := s.manager.Load(loadReq)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to load program: %v", err)
-	}
-
-	// Build response and persist to SQLite
 	resp := &pb.LoadResponse{
-		Programs: make([]*pb.LoadResponseInfo, len(result.Programs)),
+		Programs: make([]*pb.LoadResponseInfo, 0, len(req.Info)),
 	}
 
-	for i, prog := range result.Programs {
-		now := time.Now()
+	// Load each requested program
+	for _, info := range req.Info {
+		spec := domain.LoadSpec{
+			ObjectPath:  objectPath,
+			ProgramName: info.Name,
+			ProgramType: protoToDomainType(info.ProgramType),
+			PinPath:     pinDir,
+			GlobalData:  req.GlobalData,
+		}
 
-		// Persist to SQLite
-		record := &store.ProgramRecord{
-			ID:           prog.KernelInfo.ID,
+		loaded, err := s.kernel.Load(ctx, spec)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "failed to load program %s: %v", info.Name, err)
+		}
+
+		// Create and store metadata
+		metadata := domain.ProgramMetadata{
+			LoadSpec:     spec,
 			UUID:         uuid,
-			Name:         prog.Info.Name,
-			FuncName:     req.Info[i].Name,
-			ProgramType:  prog.KernelInfo.ProgramType,
-			BytecodePath: objectPath,
-			PinPath:      filepath.Join(prog.Info.MapPinPath, prog.Info.Name),
-			MapPinPath:   prog.Info.MapPinPath,
-			Metadata:     req.Metadata,
-			GlobalData:   req.GlobalData,
-			LoadedAt:     now,
-			MapIDs:       prog.KernelInfo.MapIDs,
-		}
-		if err := s.store.SaveProgram(record); err != nil {
-			log.Printf("Warning: failed to persist program %d: %v", prog.KernelInfo.ID, err)
+			UserMetadata: req.Metadata,
+			Owner:        "bpfman",
+			CreatedAt:    time.Now(),
 		}
 
-		resp.Programs[i] = &pb.LoadResponseInfo{
+		if err := s.store.Save(ctx, loaded.ID, metadata); err != nil {
+			log.Printf("Warning: failed to persist program %d: %v", loaded.ID, err)
+		}
+
+		resp.Programs = append(resp.Programs, &pb.LoadResponseInfo{
 			Info: &pb.ProgramInfo{
-				Name:       prog.Info.Name,
+				Name:       info.Name,
 				Bytecode:   req.Bytecode,
 				Metadata:   req.Metadata,
 				GlobalData: req.GlobalData,
-				MapPinPath: prog.Info.MapPinPath,
+				MapPinPath: pinDir,
 			},
 			KernelInfo: &pb.KernelProgramInfo{
-				Id:            prog.KernelInfo.ID,
-				Name:          prog.KernelInfo.Name,
-				ProgramType:   prog.KernelInfo.ProgramType,
-				GplCompatible: prog.KernelInfo.GplCompatible,
-				Jited:         prog.KernelInfo.Jited,
-				MapIds:        prog.KernelInfo.MapIDs,
+				Id:            loaded.ID,
+				Name:          loaded.Name,
+				ProgramType:   uint32(loaded.ProgramType),
+				GplCompatible: true,
+				Jited:         true,
+				MapIds:        loaded.MapIDs,
 			},
-		}
+		})
 
-		log.Printf("Loaded program %q (ID: %d) pinned at %s", prog.Info.Name, prog.KernelInfo.ID, prog.Info.MapPinPath)
+		log.Printf("Loaded program %q (ID: %d) pinned at %s", info.Name, loaded.ID, pinDir)
 	}
 
 	return resp, nil
-}
-
-// getAttachFunc extracts the attach function name from LoadInfo.
-func getAttachFunc(info *pb.LoadInfo) string {
-	if info.Info == nil {
-		return ""
-	}
-	if fentry := info.Info.GetFentryLoadInfo(); fentry != nil {
-		return fentry.FnName
-	}
-	if fexit := info.Info.GetFexitLoadInfo(); fexit != nil {
-		return fexit.FnName
-	}
-	return ""
-}
-
-// protoToBpfmanType converts proto program type to library type.
-func protoToBpfmanType(pt pb.BpfmanProgramType) bpf.BpfmanProgramType {
-	switch pt {
-	case pb.BpfmanProgramType_XDP:
-		return bpf.ProgramTypeXDP
-	case pb.BpfmanProgramType_TC:
-		return bpf.ProgramTypeTC
-	case pb.BpfmanProgramType_TRACEPOINT:
-		return bpf.ProgramTypeTracepoint
-	case pb.BpfmanProgramType_KPROBE:
-		return bpf.ProgramTypeKprobe
-	case pb.BpfmanProgramType_UPROBE:
-		return bpf.ProgramTypeUprobe
-	case pb.BpfmanProgramType_FENTRY:
-		return bpf.ProgramTypeFentry
-	case pb.BpfmanProgramType_FEXIT:
-		return bpf.ProgramTypeFexit
-	case pb.BpfmanProgramType_TCX:
-		return bpf.ProgramTypeTCX
-	default:
-		return bpf.ProgramTypeXDP
-	}
 }
 
 // Unload implements the Unload RPC method.
@@ -192,28 +149,24 @@ func (s *Server) Unload(ctx context.Context, req *pb.UnloadRequest) (*pb.UnloadR
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Check program exists in store
-	prog, err := s.store.GetProgram(req.Id)
+	// Get metadata from store
+	opt, err := s.store.Get(ctx, req.Id)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get program: %v", err)
 	}
-	if prog == nil {
+	if opt.IsNone() {
 		return nil, status.Errorf(codes.NotFound, "program with ID %d not found", req.Id)
 	}
 
-	// Unload by path (works even after restart when manager has no in-memory state)
-	if err := s.manager.UnloadByPath(prog.MapPinPath); err != nil {
+	metadata := opt.Unwrap()
+
+	// Unload by unpinning the directory
+	if err := s.kernel.Unload(ctx, metadata.LoadSpec.PinPath); err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to unload program: %v", err)
 	}
 
-	// Delete links for this program
-	links, _ := s.store.ListLinksByProgram(req.Id)
-	for _, l := range links {
-		s.store.DeleteLink(l.ID)
-	}
-
 	// Delete from store
-	if err := s.store.DeleteProgram(req.Id); err != nil {
+	if err := s.store.Delete(ctx, req.Id); err != nil {
 		log.Printf("Warning: failed to delete program %d from store: %v", req.Id, err)
 	}
 
@@ -223,56 +176,14 @@ func (s *Server) Unload(ctx context.Context, req *pb.UnloadRequest) (*pb.UnloadR
 
 // Attach implements the Attach RPC method.
 func (s *Server) Attach(ctx context.Context, req *pb.AttachRequest) (*pb.AttachResponse, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	// Check program exists
-	prog, err := s.store.GetProgram(req.Id)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to get program: %v", err)
-	}
-	if prog == nil {
-		return nil, status.Errorf(codes.NotFound, "program with ID %d not found", req.Id)
-	}
-
-	// TODO: implement actual attachment based on AttachInfo type
-	// For now, generate a link ID and store it
-	linkID := uint32(time.Now().UnixNano() & 0xFFFFFFFF)
-
-	linkRecord := &store.LinkRecord{
-		ID:         linkID,
-		ProgramID:  req.Id,
-		AttachType: 0, // TODO: extract from req.Info
-		AttachInfo: "", // TODO: serialize req.Info
-	}
-	if err := s.store.SaveLink(linkRecord); err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to save link: %v", err)
-	}
-
-	log.Printf("Attached program ID %d, link ID %d", req.Id, linkID)
-	return &pb.AttachResponse{LinkId: linkID}, nil
+	// Attachment is not yet implemented in the new architecture
+	return nil, status.Error(codes.Unimplemented, "Attach not yet implemented")
 }
 
 // Detach implements the Detach RPC method.
 func (s *Server) Detach(ctx context.Context, req *pb.DetachRequest) (*pb.DetachResponse, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	link, err := s.store.GetLink(req.LinkId)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to get link: %v", err)
-	}
-	if link == nil {
-		return nil, status.Errorf(codes.NotFound, "link with ID %d not found", req.LinkId)
-	}
-
-	// Delete link from store
-	if err := s.store.DeleteLink(req.LinkId); err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to delete link: %v", err)
-	}
-
-	log.Printf("Detached link ID %d from program ID %d", req.LinkId, link.ProgramID)
-	return &pb.DetachResponse{}, nil
+	// Detachment is not yet implemented in the new architecture
+	return nil, status.Error(codes.Unimplemented, "Detach not yet implemented")
 }
 
 // List implements the List RPC method.
@@ -280,16 +191,16 @@ func (s *Server) List(ctx context.Context, req *pb.ListRequest) (*pb.ListRespons
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	programs, err := s.store.ListPrograms()
+	stored, err := s.store.List(ctx)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to list programs: %v", err)
 	}
 
 	var results []*pb.ListResponse_ListResult
 
-	for _, p := range programs {
+	for kernelID, metadata := range stored {
 		// Filter by program type if specified
-		if req.ProgramType != nil && *req.ProgramType != p.ProgramType {
+		if req.ProgramType != nil && *req.ProgramType != uint32(metadata.LoadSpec.ProgramType) {
 			continue
 		}
 
@@ -297,7 +208,7 @@ func (s *Server) List(ctx context.Context, req *pb.ListRequest) (*pb.ListRespons
 		if len(req.MatchMetadata) > 0 {
 			match := true
 			for k, v := range req.MatchMetadata {
-				if p.Metadata[k] != v {
+				if metadata.UserMetadata[k] != v {
 					match = false
 					break
 				}
@@ -307,27 +218,18 @@ func (s *Server) List(ctx context.Context, req *pb.ListRequest) (*pb.ListRespons
 			}
 		}
 
-		// Get links for this program
-		links, _ := s.store.ListLinksByProgram(p.ID)
-		linkIDs := make([]uint32, len(links))
-		for i, l := range links {
-			linkIDs[i] = l.ID
-		}
-
 		results = append(results, &pb.ListResponse_ListResult{
 			Info: &pb.ProgramInfo{
-				Name:       p.Name,
-				Bytecode:   &pb.BytecodeLocation{Location: &pb.BytecodeLocation_File{File: p.BytecodePath}},
-				Metadata:   p.Metadata,
-				GlobalData: p.GlobalData,
-				MapPinPath: p.MapPinPath,
-				Links:      linkIDs,
+				Name:       metadata.LoadSpec.ProgramName,
+				Bytecode:   &pb.BytecodeLocation{Location: &pb.BytecodeLocation_File{File: metadata.LoadSpec.ObjectPath}},
+				Metadata:   metadata.UserMetadata,
+				GlobalData: metadata.LoadSpec.GlobalData,
+				MapPinPath: metadata.LoadSpec.PinPath,
 			},
 			KernelInfo: &pb.KernelProgramInfo{
-				Id:          p.ID,
-				Name:        p.Name,
-				ProgramType: p.ProgramType,
-				MapIds:      p.MapIDs,
+				Id:          kernelID,
+				Name:        metadata.LoadSpec.ProgramName,
+				ProgramType: uint32(metadata.LoadSpec.ProgramType),
 			},
 		})
 	}
@@ -340,35 +242,28 @@ func (s *Server) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	p, err := s.store.GetProgram(req.Id)
+	opt, err := s.store.Get(ctx, req.Id)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get program: %v", err)
 	}
-	if p == nil {
+	if opt.IsNone() {
 		return nil, status.Errorf(codes.NotFound, "program with ID %d not found", req.Id)
 	}
 
-	// Get links for this program
-	links, _ := s.store.ListLinksByProgram(p.ID)
-	linkIDs := make([]uint32, len(links))
-	for i, l := range links {
-		linkIDs[i] = l.ID
-	}
+	metadata := opt.Unwrap()
 
 	return &pb.GetResponse{
 		Info: &pb.ProgramInfo{
-			Name:       p.Name,
-			Bytecode:   &pb.BytecodeLocation{Location: &pb.BytecodeLocation_File{File: p.BytecodePath}},
-			Metadata:   p.Metadata,
-			GlobalData: p.GlobalData,
-			MapPinPath: p.MapPinPath,
-			Links:      linkIDs,
+			Name:       metadata.LoadSpec.ProgramName,
+			Bytecode:   &pb.BytecodeLocation{Location: &pb.BytecodeLocation_File{File: metadata.LoadSpec.ObjectPath}},
+			Metadata:   metadata.UserMetadata,
+			GlobalData: metadata.LoadSpec.GlobalData,
+			MapPinPath: metadata.LoadSpec.PinPath,
 		},
 		KernelInfo: &pb.KernelProgramInfo{
-			Id:          p.ID,
-			Name:        p.Name,
-			ProgramType: p.ProgramType,
-			MapIds:      p.MapIDs,
+			Id:          req.Id,
+			Name:        metadata.LoadSpec.ProgramName,
+			ProgramType: uint32(metadata.LoadSpec.ProgramType),
 		},
 	}, nil
 }
@@ -381,7 +276,7 @@ func (s *Server) PullBytecode(ctx context.Context, req *pb.PullBytecodeRequest) 
 // Serve starts the gRPC server on the given socket path.
 func (s *Server) Serve(socketPath string) error {
 	// Open SQLite store
-	st, err := store.Open(DefaultDBPath)
+	st, err := sqlite.New(DefaultDBPath)
 	if err != nil {
 		return fmt.Errorf("failed to open store: %w", err)
 	}
@@ -417,4 +312,28 @@ func (s *Server) Serve(socketPath string) error {
 
 	log.Printf("bpfman gRPC server listening on %s", socketPath)
 	return grpcServer.Serve(listener)
+}
+
+// protoToDomainType converts proto program type to domain type.
+func protoToDomainType(pt pb.BpfmanProgramType) domain.ProgramType {
+	switch pt {
+	case pb.BpfmanProgramType_XDP:
+		return domain.ProgramTypeXDP
+	case pb.BpfmanProgramType_TC:
+		return domain.ProgramTypeTC
+	case pb.BpfmanProgramType_TRACEPOINT:
+		return domain.ProgramTypeTracepoint
+	case pb.BpfmanProgramType_KPROBE:
+		return domain.ProgramTypeKprobe
+	case pb.BpfmanProgramType_UPROBE:
+		return domain.ProgramTypeUprobe
+	case pb.BpfmanProgramType_FENTRY:
+		return domain.ProgramTypeFentry
+	case pb.BpfmanProgramType_FEXIT:
+		return domain.ProgramTypeFexit
+	case pb.BpfmanProgramType_TCX:
+		return domain.ProgramTypeTCX
+	default:
+		return domain.ProgramTypeUnspecified
+	}
 }

@@ -225,3 +225,181 @@ func infoToKernelMap(info *ebpf.MapInfo, id uint32) domain.KernelMap {
 		Flags:      uint32(info.Flags),
 	}
 }
+
+// ============================================================================
+// CLI helpers - filesystem-based operations for scanning bpffs
+// ============================================================================
+
+// ListPinDir scans a bpffs directory and returns its contents.
+func (k *Kernel) ListPinDir(pinDir string, includeMaps bool) (*domain.PinDirContents, error) {
+	entries, err := os.ReadDir(pinDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read pin directory: %w", err)
+	}
+
+	result := &domain.PinDirContents{}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		path := filepath.Join(pinDir, entry.Name())
+
+		// Try to load as program first
+		prog, err := ebpf.LoadPinnedProgram(path, nil)
+		if err == nil {
+			info, _ := prog.Info()
+			if info != nil {
+				id, _ := info.ID()
+				ebpfMapIDs, _ := info.MapIDs()
+				mapIDs := make([]uint32, len(ebpfMapIDs))
+				for i, mid := range ebpfMapIDs {
+					mapIDs[i] = uint32(mid)
+				}
+				result.Programs = append(result.Programs, domain.PinnedProgram{
+					ID:         uint32(id),
+					Name:       info.Name,
+					Type:       prog.Type().String(),
+					Tag:        info.Tag,
+					PinnedPath: path,
+					MapIDs:     mapIDs,
+				})
+			}
+			prog.Close()
+			continue
+		}
+
+		// Try as map if includeMaps
+		if includeMaps {
+			mp, err := ebpf.LoadPinnedMap(path, nil)
+			if err == nil {
+				info, _ := mp.Info()
+				if info != nil {
+					id, _ := info.ID()
+					result.Maps = append(result.Maps, domain.PinnedMap{
+						ID:         uint32(id),
+						Name:       info.Name,
+						Type:       info.Type.String(),
+						KeySize:    info.KeySize,
+						ValueSize:  info.ValueSize,
+						MaxEntries: info.MaxEntries,
+						PinnedPath: path,
+					})
+				}
+				mp.Close()
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// GetPinned loads and returns info about a pinned program.
+func (k *Kernel) GetPinned(pinPath string) (*domain.PinnedProgram, error) {
+	prog, err := ebpf.LoadPinnedProgram(pinPath, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load pinned program: %w", err)
+	}
+	defer prog.Close()
+
+	info, err := prog.Info()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get program info: %w", err)
+	}
+
+	id, _ := info.ID()
+	ebpfMapIDs, _ := info.MapIDs()
+	mapIDs := make([]uint32, len(ebpfMapIDs))
+	for i, mid := range ebpfMapIDs {
+		mapIDs[i] = uint32(mid)
+	}
+
+	return &domain.PinnedProgram{
+		ID:         uint32(id),
+		Name:       info.Name,
+		Type:       prog.Type().String(),
+		Tag:        info.Tag,
+		PinnedPath: pinPath,
+		MapIDs:     mapIDs,
+	}, nil
+}
+
+// LoadSingle loads a single program and returns CLI-friendly output.
+func (k *Kernel) LoadSingle(ctx context.Context, objectPath, programName, pinDir string) (*domain.LoadResult, error) {
+	spec := domain.LoadSpec{
+		ObjectPath:  objectPath,
+		ProgramName: programName,
+		PinPath:     pinDir,
+	}
+
+	loaded, err := k.Load(ctx, spec)
+	if err != nil {
+		return nil, err
+	}
+
+	// Get map info from the pin directory
+	var maps []domain.PinnedMap
+	entries, _ := os.ReadDir(pinDir)
+	for _, entry := range entries {
+		if entry.IsDir() || entry.Name() == programName {
+			continue
+		}
+		path := filepath.Join(pinDir, entry.Name())
+		mp, err := ebpf.LoadPinnedMap(path, nil)
+		if err == nil {
+			info, _ := mp.Info()
+			if info != nil {
+				id, _ := info.ID()
+				maps = append(maps, domain.PinnedMap{
+					ID:         uint32(id),
+					Name:       info.Name,
+					Type:       info.Type.String(),
+					KeySize:    info.KeySize,
+					ValueSize:  info.ValueSize,
+					MaxEntries: info.MaxEntries,
+					PinnedPath: path,
+				})
+			}
+			mp.Close()
+		}
+	}
+
+	return &domain.LoadResult{
+		Program: domain.PinnedProgram{
+			ID:         loaded.ID,
+			Name:       loaded.Name,
+			Type:       loaded.ProgramType.String(),
+			PinnedPath: loaded.PinPath,
+			MapIDs:     loaded.MapIDs,
+		},
+		Maps:   maps,
+		PinDir: pinDir,
+	}, nil
+}
+
+// Unpin removes all pins from a directory.
+func (k *Kernel) Unpin(pinDir string) (int, error) {
+	entries, err := os.ReadDir(pinDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("failed to read pin directory: %w", err)
+	}
+
+	count := 0
+	for _, entry := range entries {
+		path := filepath.Join(pinDir, entry.Name())
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return count, fmt.Errorf("failed to unpin %s: %w", path, err)
+		}
+		count++
+	}
+
+	if err := os.Remove(pinDir); err != nil && !os.IsNotExist(err) {
+		return count, fmt.Errorf("failed to remove pin directory: %w", err)
+	}
+
+	return count, nil
+}

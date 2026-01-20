@@ -66,9 +66,12 @@ func (s *Store) migrate() error {
 	schema := `
 	CREATE TABLE IF NOT EXISTS managed_programs (
 		kernel_id INTEGER PRIMARY KEY,
+		uuid TEXT,
 		metadata TEXT NOT NULL,
 		created_at TEXT NOT NULL
 	);
+
+	CREATE INDEX IF NOT EXISTS idx_managed_programs_uuid ON managed_programs(uuid);
 	`
 	_, err := s.db.Exec(schema)
 	return err
@@ -105,9 +108,33 @@ func (s *Store) Save(ctx context.Context, kernelID uint32, metadata domain.Progr
 	}
 
 	_, err = s.db.ExecContext(ctx,
-		"INSERT OR REPLACE INTO managed_programs (kernel_id, metadata, created_at) VALUES (?, ?, ?)",
-		kernelID, string(metadataJSON), time.Now().Format(time.RFC3339))
+		"INSERT OR REPLACE INTO managed_programs (kernel_id, uuid, metadata, created_at) VALUES (?, ?, ?, ?)",
+		kernelID, metadata.UUID, string(metadataJSON), time.Now().Format(time.RFC3339))
 	return err
+}
+
+// GetByUUID retrieves program metadata by UUID.
+func (s *Store) GetByUUID(ctx context.Context, uuid string) (domain.Option[domain.ProgramMetadata], uint32, error) {
+	row := s.db.QueryRowContext(ctx,
+		"SELECT kernel_id, metadata FROM managed_programs WHERE uuid = ?",
+		uuid)
+
+	var kernelID uint32
+	var metadataJSON string
+	err := row.Scan(&kernelID, &metadataJSON)
+	if err == sql.ErrNoRows {
+		return domain.None[domain.ProgramMetadata](), 0, nil
+	}
+	if err != nil {
+		return domain.None[domain.ProgramMetadata](), 0, err
+	}
+
+	var metadata domain.ProgramMetadata
+	if err := json.Unmarshal([]byte(metadataJSON), &metadata); err != nil {
+		return domain.None[domain.ProgramMetadata](), 0, fmt.Errorf("failed to unmarshal metadata: %w", err)
+	}
+
+	return domain.Some(metadata), kernelID, nil
 }
 
 // Delete removes program metadata.

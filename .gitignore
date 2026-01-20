@@ -1,5 +1,5 @@
-csi-driver/bpffs-csi-driver
-bpfman/bpfman
+bin/
 bpfman/testdata/
+bpfman/internal/server/pb/
 archive/bpfman-kernel/bpfman-kernel
 .direnv/

@@ -2,12 +2,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 
-	"github.com/frobware/bpffs-csi-driver/bpfman/internal/bpf"
 	"github.com/frobware/bpffs-csi-driver/bpfman/internal/server"
+	"github.com/frobware/bpffs-csi-driver/bpfman/interpreter/kernel/ebpf"
 )
 
 func usage() {
@@ -46,8 +47,8 @@ func cmdLoad(args []string) error {
 	programName := args[1]
 	pinDir := args[2]
 
-	mgr := bpf.NewManager()
-	result, err := mgr.LoadSingle(objectPath, programName, pinDir)
+	kernel := ebpf.New()
+	result, err := kernel.LoadSingle(context.Background(), objectPath, programName, pinDir)
 	if err != nil {
 		return err
 	}
@@ -68,8 +69,8 @@ func cmdUnload(args []string) error {
 
 	pinDir := args[0]
 
-	mgr := bpf.NewManager()
-	unpinned, err := mgr.Unpin(pinDir)
+	kernel := ebpf.New()
+	unpinned, err := kernel.Unpin(pinDir)
 	if err != nil {
 		return err
 	}
@@ -94,8 +95,8 @@ func cmdList(args []string) error {
 		return fmt.Errorf("usage: list [--maps] <pin-dir>")
 	}
 
-	mgr := bpf.NewManager()
-	result, err := mgr.ListPinDir(pinDir, includeMaps)
+	kernel := ebpf.New()
+	result, err := kernel.ListPinDir(pinDir, includeMaps)
 	if err != nil {
 		return err
 	}
@@ -121,8 +122,8 @@ func cmdGet(args []string) error {
 
 	pinPath := args[0]
 
-	mgr := bpf.NewManager()
-	program, err := mgr.GetPinned(pinPath)
+	kernel := ebpf.New()
+	program, err := kernel.GetPinned(pinPath)
 	if err != nil {
 		return err
 	}

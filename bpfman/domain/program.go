@@ -10,8 +10,12 @@ import (
 type ProgramMetadata struct {
 	// Original load specification
 	LoadSpec LoadSpec
+	// UUID for gRPC API identification
+	UUID string
 	// User-defined tags for categorisation
 	Tags []string
+	// User-supplied key-value metadata
+	UserMetadata map[string]string
 	// Human-readable description
 	Description Option[string]
 	// User or system that loaded this program
@@ -23,23 +27,38 @@ type ProgramMetadata struct {
 // WithTag returns a new ProgramMetadata with the tag added.
 func (p ProgramMetadata) WithTag(tag string) ProgramMetadata {
 	return ProgramMetadata{
-		LoadSpec:    p.LoadSpec,
-		Tags:        append(slices.Clone(p.Tags), tag),
-		Description: p.Description,
-		Owner:       p.Owner,
-		CreatedAt:   p.CreatedAt,
+		LoadSpec:     p.LoadSpec,
+		UUID:         p.UUID,
+		Tags:         append(slices.Clone(p.Tags), tag),
+		UserMetadata: cloneMap(p.UserMetadata),
+		Description:  p.Description,
+		Owner:        p.Owner,
+		CreatedAt:    p.CreatedAt,
 	}
 }
 
 // WithDescription returns a new ProgramMetadata with the description set.
 func (p ProgramMetadata) WithDescription(desc string) ProgramMetadata {
 	return ProgramMetadata{
-		LoadSpec:    p.LoadSpec,
-		Tags:        slices.Clone(p.Tags),
-		Description: Some(desc),
-		Owner:       p.Owner,
-		CreatedAt:   p.CreatedAt,
+		LoadSpec:     p.LoadSpec,
+		UUID:         p.UUID,
+		Tags:         slices.Clone(p.Tags),
+		UserMetadata: cloneMap(p.UserMetadata),
+		Description:  Some(desc),
+		Owner:        p.Owner,
+		CreatedAt:    p.CreatedAt,
 	}
+}
+
+func cloneMap[K comparable, V any](m map[K]V) map[K]V {
+	if m == nil {
+		return nil
+	}
+	result := make(map[K]V, len(m))
+	for k, v := range m {
+		result[k] = v
+	}
+	return result
 }
 
 // LoadSpec describes how to load a BPF program.

@@ -1,4 +1,4 @@
-.PHONY: build test clean docker-build-csi kind-load deploy-driver delete-driver redeploy logs logs-registrar status deploy-app-pod delete-app-pod delete-all docker-build-bpfman docker-build-bpfman-builder docker-clean-bpfman-builder kind-load-bpfman deploy-bpfman delete-bpfman logs-bpfman deploy-bpfman-test delete-bpfman-test
+.PHONY: build test clean docker-build-csi kind-load deploy-driver delete-driver redeploy logs logs-registrar status deploy-app-pod delete-app-pod delete-all docker-build-bpfman docker-build-bpfman-builder docker-clean-bpfman-builder kind-load-bpfman deploy-bpfman delete-bpfman logs-bpfman deploy-bpfman-test delete-bpfman-test bpfman-proto bpfman-clean bpfman-build bpfman-test-grpc
 
 IMAGE_NAME ?= bpffs-csi-driver
 IMAGE_TAG ?= dev
@@ -6,16 +6,23 @@ BPFMAN_IMAGE ?= bpfman
 BPFMAN_BUILDER_IMAGE ?= bpfman-builder
 KIND_CLUSTER ?= bpfman-deployment
 NAMESPACE ?= kube-system
-BINARY_NAME ?= bpffs-csi-driver
+BIN_DIR ?= bin
 
 build:
-	cd csi-driver && go build -o $(BINARY_NAME) .
+	cd csi-driver && go build -o ../$(BIN_DIR)/bpffs-csi-driver .
 
 test:
 	cd csi-driver && go test -v ./...
 
-clean:
-	rm -f csi-driver/$(BINARY_NAME)
+clean: bpfman-clean
+	$(RM) -r $(BIN_DIR)
+
+bpfman-clean:
+	$(RM) -r bpfman/internal/server/pb/
+	$(RM) $(BIN_DIR)/bpfman
+
+bpfman-build: bpfman-proto
+	cd bpfman && go build -o ../$(BIN_DIR)/bpfman ./cmd/bpfman
 
 docker-build-csi:
 	docker buildx build --builder=default --load -t $(IMAGE_NAME):$(IMAGE_TAG) csi-driver/
@@ -51,7 +58,20 @@ docker-build-bpfman-builder:
 docker-clean-bpfman-builder:
 	-docker rmi $(BPFMAN_BUILDER_IMAGE):$(IMAGE_TAG)
 
-docker-build-bpfman: docker-build-bpfman-builder bpfman/testdata/stats.o
+# Proto generation for bpfman gRPC API
+BPFMAN_PROTO_DIR := bpfman/proto
+BPFMAN_PB_DIR := bpfman/internal/server/pb
+
+bpfman-proto: $(BPFMAN_PB_DIR)/bpfman.pb.go $(BPFMAN_PB_DIR)/bpfman_grpc.pb.go
+
+$(BPFMAN_PB_DIR)/bpfman.pb.go $(BPFMAN_PB_DIR)/bpfman_grpc.pb.go: $(BPFMAN_PROTO_DIR)/bpfman.proto
+	mkdir -p $(BPFMAN_PB_DIR)
+	protoc --go_out=$(BPFMAN_PB_DIR) --go_opt=paths=source_relative \
+		--go-grpc_out=$(BPFMAN_PB_DIR) --go-grpc_opt=paths=source_relative \
+		--proto_path=$(BPFMAN_PROTO_DIR) \
+		$<
+
+docker-build-bpfman: docker-build-bpfman-builder bpfman/testdata/stats.o bpfman-proto
 	docker buildx build --builder=default --load --build-arg BUILDER_IMAGE=$(BPFMAN_BUILDER_IMAGE):$(IMAGE_TAG) -t $(BPFMAN_IMAGE):$(IMAGE_TAG) bpfman/
 
 kind-load-bpfman: docker-build-bpfman
@@ -93,3 +113,6 @@ deploy-bpfman-test: kind-load-bpfman
 
 delete-bpfman-test:
 	kubectl delete -f bpfman/deploy/test-pod.yaml --ignore-not-found
+
+bpfman-test-grpc: docker-build-bpfman
+	BPFMAN_IMAGE=$(BPFMAN_IMAGE):$(IMAGE_TAG) bpfman/scripts/test-grpc.sh
