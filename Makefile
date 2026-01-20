@@ -1,4 +1,4 @@
-.PHONY: help build-all docker-build-all clean test csi-build csi-test docker-build-csi csi-kind-load csi-deploy csi-delete csi-redeploy csi-logs csi-logs-registrar csi-status bpfman-build bpfman-proto bpfman-clean docker-build-bpfman docker-build-bpfman-builder docker-clean-bpfman-builder bpfman-kind-load bpfman-deploy bpfman-delete bpfman-logs bpfman-deploy-test bpfman-delete-test bpfman-test-grpc docker-build-stats-reader stats-reader-deploy stats-reader-delete stats-reader-logs delete-all
+.PHONY: help build-all docker-build-all clean test csi-build csi-test docker-build-csi csi-kind-load csi-deploy csi-delete csi-redeploy csi-logs csi-logs-registrar csi-status bpfman-build bpfman-proto bpfman-clean docker-build-bpfman docker-build-bpfman-builder docker-build-bpfman-cgo docker-clean-bpfman-builder bpfman-kind-load bpfman-deploy bpfman-delete bpfman-logs bpfman-deploy-test bpfman-delete-test bpfman-test-grpc docker-build-stats-reader stats-reader-deploy stats-reader-delete stats-reader-logs docker-build-csi-sanity delete-all
 
 help:
 	@echo "Build:"
@@ -111,15 +111,19 @@ $(BPFMAN_PB_DIR)/bpfman.pb.go $(BPFMAN_PB_DIR)/bpfman_grpc.pb.go: $(BPFMAN_PROTO
 		--proto_path=$(BPFMAN_PROTO_DIR) \
 		$<
 
+docker-build-bpfman: testdata/stats.o
+	docker buildx build --builder=default --load -t $(BPFMAN_IMAGE):$(IMAGE_TAG) -f Dockerfile.bpfman .
+
+# CGO builder image (for future use if CGO is needed again)
+# Usage: make docker-build-bpfman-builder && make docker-build-bpfman-cgo
 docker-build-bpfman-builder:
-	docker image inspect $(BPFMAN_BUILDER_IMAGE):$(IMAGE_TAG) >/dev/null 2>&1 || \
-		docker buildx build --builder=default --load -t $(BPFMAN_BUILDER_IMAGE):$(IMAGE_TAG) -f Dockerfile.bpfman-builder .
+	docker buildx build --builder=default --load -t $(BPFMAN_BUILDER_IMAGE):$(IMAGE_TAG) -f Dockerfile.bpfman-builder .
+
+docker-build-bpfman-cgo: docker-build-bpfman-builder testdata/stats.o
+	docker buildx build --builder=default --load --build-arg BUILDER_IMAGE=$(BPFMAN_BUILDER_IMAGE):$(IMAGE_TAG) -t $(BPFMAN_IMAGE):$(IMAGE_TAG) -f Dockerfile.bpfman .
 
 docker-clean-bpfman-builder:
 	-docker rmi $(BPFMAN_BUILDER_IMAGE):$(IMAGE_TAG)
-
-docker-build-bpfman: docker-build-bpfman-builder testdata/stats.o
-	docker buildx build --builder=default --load --build-arg BUILDER_IMAGE=$(BPFMAN_BUILDER_IMAGE):$(IMAGE_TAG) -t $(BPFMAN_IMAGE):$(IMAGE_TAG) -f Dockerfile.bpfman .
 
 bpfman-kind-load: docker-build-bpfman
 	kind load docker-image $(BPFMAN_IMAGE):$(IMAGE_TAG) --name $(KIND_CLUSTER)
@@ -167,6 +171,12 @@ stats-reader-delete:
 
 stats-reader-logs:
 	kubectl logs -f stats-reader
+
+# CSI conformance testing
+CSI_SANITY_IMAGE ?= csi-sanity
+
+docker-build-csi-sanity:
+	docker buildx build --builder=default --load -t $(CSI_SANITY_IMAGE):$(IMAGE_TAG) -f Dockerfile.csi-sanity .
 
 # Combined targets
 delete-all: stats-reader-delete bpfman-delete

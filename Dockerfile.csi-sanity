@@ -1,0 +1,11 @@
+# Build csi-sanity tool
+FROM registry.access.redhat.com/ubi9/go-toolset:1.24 AS builder
+
+RUN CGO_ENABLED=0 go install github.com/kubernetes-csi/csi-test/v5/cmd/csi-sanity@latest
+
+# Runtime image
+FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
+
+COPY --from=builder /opt/app-root/src/go/bin/csi-sanity /usr/local/bin/
+
+ENTRYPOINT ["/usr/local/bin/csi-sanity"]
