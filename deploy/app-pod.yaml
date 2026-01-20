@@ -17,7 +17,7 @@ spec:
   volumes:
     - name: bpf-volume
       csi:
-        driver: csi.bpfman.io
+        driver: csi.go-bpfman.io
         volumeAttributes:
           # Legacy mode: bind-mount an existing bpffs path
           mapPath: "/sys/fs/bpf/test"

@@ -148,6 +148,18 @@ func (k *Kernel) Load(ctx context.Context, spec domain.LoadSpec) (domain.LoadedP
 		return domain.LoadedProgram{}, fmt.Errorf("failed to pin program: %w", err)
 	}
 
+	// Explicitly pin all maps
+	for name, m := range coll.Maps {
+		mapPinPath := filepath.Join(spec.PinPath, name)
+		if err := m.Pin(mapPinPath); err != nil {
+			// Ignore if already pinned
+			if !os.IsExist(err) {
+				coll.Close()
+				return domain.LoadedProgram{}, fmt.Errorf("failed to pin map %q: %w", name, err)
+			}
+		}
+	}
+
 	info, err := prog.Info()
 	if err != nil {
 		coll.Close()
@@ -387,7 +399,17 @@ func (k *Kernel) RepinMap(srcPath, dstPath string) error {
 	}
 	defer m.Close()
 
-	if err := m.Pin(dstPath); err != nil {
+	// Clone the map FD to get a map without pin path tracking.
+	// This avoids the "invalid cross-device link" error when pinning
+	// to a different bpffs instance, since cilium/ebpf tries to
+	// rename/move the old pin when Pin() is called on an already-pinned map.
+	cloned, err := m.Clone()
+	if err != nil {
+		return fmt.Errorf("clone map: %w", err)
+	}
+	defer cloned.Close()
+
+	if err := cloned.Pin(dstPath); err != nil {
 		return fmt.Errorf("re-pin map to %s: %w", dstPath, err)
 	}
 	return nil

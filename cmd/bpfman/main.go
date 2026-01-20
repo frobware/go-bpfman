@@ -8,8 +8,11 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
+	"time"
 
+	"github.com/frobware/go-bpfman/pkg/bpfman/domain"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/kernel/ebpf"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/store/sqlite"
 	"github.com/frobware/go-bpfman/pkg/bpfman/server"
@@ -21,6 +24,8 @@ func usage() {
 	fmt.Fprintf(os.Stderr, "Commands:\n")
 	fmt.Fprintf(os.Stderr, "  serve   Start the gRPC server\n")
 	fmt.Fprintf(os.Stderr, "  load    Load an eBPF program from an object file\n")
+	fmt.Fprintf(os.Stderr, "          [-m KEY=VALUE] metadata to attach to the program\n")
+	fmt.Fprintf(os.Stderr, "          [--db PATH]    SQLite database path (default: %s)\n", server.DefaultDBPath)
 	fmt.Fprintf(os.Stderr, "  unload  Unload (unpin) an eBPF program\n")
 	fmt.Fprintf(os.Stderr, "  list    List pinned eBPF programs [--maps]\n")
 	fmt.Fprintf(os.Stderr, "  get     Get details of a pinned program\n")
@@ -33,7 +38,7 @@ const (
 	// DefaultCSISocketPath is the default Unix socket path for the CSI driver.
 	DefaultCSISocketPath = "/run/bpfman/csi/csi.sock"
 	// DefaultCSIDriverName is the default CSI driver name.
-	DefaultCSIDriverName = "csi.bpfman.io"
+	DefaultCSIDriverName = "csi.go-bpfman.io"
 	// DefaultCSIVersion is the default CSI driver version.
 	DefaultCSIVersion = "0.1.0"
 )
@@ -132,18 +137,76 @@ func cmdServe(args []string) error {
 }
 
 func cmdLoad(args []string) error {
-	if len(args) != 3 {
-		return fmt.Errorf("usage: load <object.o> <program-name> <pin-dir>")
+	var objectPath, programName, pinDir string
+	var dbPath string
+	metadata := make(map[string]string)
+
+	// Parse flags and positional args
+	positional := []string{}
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "-m", "--metadata":
+			if i+1 < len(args) {
+				kv := args[i+1]
+				if idx := strings.Index(kv, "="); idx > 0 {
+					metadata[kv[:idx]] = kv[idx+1:]
+				} else {
+					return fmt.Errorf("invalid metadata format %q, expected KEY=VALUE", kv)
+				}
+				i++
+			}
+		case "--db":
+			if i+1 < len(args) {
+				dbPath = args[i+1]
+				i++
+			}
+		default:
+			positional = append(positional, args[i])
+		}
 	}
 
-	objectPath := args[0]
-	programName := args[1]
-	pinDir := args[2]
+	if len(positional) != 3 {
+		return fmt.Errorf("usage: load [--db <path>] [-m KEY=VALUE]... <object.o> <program-name> <pin-dir>")
+	}
 
+	objectPath = positional[0]
+	programName = positional[1]
+	pinDir = positional[2]
+
+	// Load the program into the kernel
 	kernel := ebpf.New()
 	result, err := kernel.LoadSingle(context.Background(), objectPath, programName, pinDir)
 	if err != nil {
 		return err
+	}
+
+	// Store metadata if any was provided or if db path was specified
+	if len(metadata) > 0 || dbPath != "" {
+		if dbPath == "" {
+			dbPath = server.DefaultDBPath
+		}
+
+		store, err := sqlite.New(dbPath)
+		if err != nil {
+			return fmt.Errorf("failed to open store at %s: %w", dbPath, err)
+		}
+		defer store.Close()
+
+		programMetadata := domain.ProgramMetadata{
+			LoadSpec: domain.LoadSpec{
+				ObjectPath:  objectPath,
+				ProgramName: programName,
+				PinPath:     pinDir,
+			},
+			UserMetadata: metadata,
+			CreatedAt:    time.Now(),
+		}
+
+		if err := store.Save(context.Background(), result.Program.ID, programMetadata); err != nil {
+			return fmt.Errorf("failed to save metadata: %w", err)
+		}
+
+		fmt.Fprintf(os.Stderr, "Stored metadata for program ID %d\n", result.Program.ID)
 	}
 
 	output, err := json.MarshalIndent(result, "", "  ")

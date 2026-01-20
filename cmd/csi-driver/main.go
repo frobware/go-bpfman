@@ -13,7 +13,7 @@ import (
 )
 
 var (
-	driverName = flag.String("driver-name", "csi.bpfman.io", "CSI driver name")
+	driverName = flag.String("driver-name", "csi.go-bpfman.io", "CSI driver name")
 	endpoint   = flag.String("endpoint", "unix:///csi/csi.sock", "CSI endpoint")
 	nodeID     = flag.String("node-id", "", "Node ID (defaults to hostname)")
 	version    = flag.String("version", "0.1.0", "Driver version")
