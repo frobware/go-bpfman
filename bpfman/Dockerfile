@@ -15,9 +15,9 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=1 go build -o bpfman ./cmd/bpfman
 
 # Runtime image
-FROM fedora:latest
+FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
 
-RUN dnf install -y sqlite-libs && dnf clean all
+RUN microdnf install -y sqlite-libs && microdnf clean all
 
 COPY --from=builder /build/bpfman /usr/local/bin/
 COPY testdata/stats.o /opt/bpf/stats.o
