@@ -23,6 +23,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -128,9 +130,7 @@ func (f *fakeKernel) AttachTracepoint(progPinPath, group, name, linkPinPath stri
 func newTestServer(t *testing.T) *Server {
 	t.Helper()
 	store, err := sqlite.NewInMemory(testLogger())
-	if err != nil {
-		t.Fatalf("failed to create store: %v", err)
-	}
+	require.NoError(t, err, "failed to create store")
 	t.Cleanup(func() { store.Close() })
 	return NewForTest(store, newFakeKernel(), testLogger())
 }
@@ -139,7 +139,7 @@ func newTestServer(t *testing.T) *Server {
 //
 //	Given an empty server with no programs loaded,
 //	When I load a program with valid bytecode and metadata,
-//	Then the load succeeds and the program is retrievable via Get.
+//	Then the load succeeds with all fields correctly populated.
 func TestLoadProgram_WithValidRequest_Succeeds(t *testing.T) {
 	srv := newTestServer(t)
 	ctx := context.Background()
@@ -154,27 +154,146 @@ func TestLoadProgram_WithValidRequest_Succeeds(t *testing.T) {
 		Uuid: strPtr("test-uuid-1"),
 		Metadata: map[string]string{
 			"bpfman.io/ProgramName": "my-program",
+			"app":                   "test-app",
 		},
 	}
+
 	resp, err := srv.Load(ctx, req)
+	require.NoError(t, err, "Load failed")
+	require.Len(t, resp.Programs, 1, "expected 1 program")
 
-	if err != nil {
-		t.Fatalf("Load failed: %v", err)
-	}
-	if len(resp.Programs) != 1 {
-		t.Fatalf("expected 1 program, got %d", len(resp.Programs))
-	}
-	if resp.Programs[0].KernelInfo.Name != "my_prog" {
-		t.Errorf("expected name 'my_prog', got %q", resp.Programs[0].KernelInfo.Name)
+	prog := resp.Programs[0]
+
+	// Verify ProgramInfo fields
+	assert.Equal(t, "my_prog", prog.Info.Name, "Info.Name")
+	require.NotNil(t, prog.Info.Bytecode, "Info.Bytecode")
+	file, ok := prog.Info.Bytecode.Location.(*pb.BytecodeLocation_File)
+	require.True(t, ok, "expected BytecodeLocation_File")
+	assert.Equal(t, "/path/to/prog.o", file.File, "Info.Bytecode.File")
+	assert.Equal(t, "my-program", prog.Info.Metadata["bpfman.io/ProgramName"], "Info.Metadata[bpfman.io/ProgramName]")
+	assert.Equal(t, "test-app", prog.Info.Metadata["app"], "Info.Metadata[app]")
+	assert.NotEmpty(t, prog.Info.MapPinPath, "Info.MapPinPath")
+
+	// Verify KernelProgramInfo fields
+	assert.NotZero(t, prog.KernelInfo.Id, "KernelInfo.Id")
+	assert.Equal(t, "my_prog", prog.KernelInfo.Name, "KernelInfo.Name")
+	assert.Equal(t, uint32(bpfman.ProgramTypeTracepoint), prog.KernelInfo.ProgramType, "KernelInfo.ProgramType")
+}
+
+// TestGetProgram_ReturnsAllFields verifies that:
+//
+//	Given a program loaded with specific metadata,
+//	When I retrieve it via Get,
+//	Then all fields match what was provided at load time.
+func TestGetProgram_ReturnsAllFields(t *testing.T) {
+	srv := newTestServer(t)
+	ctx := context.Background()
+
+	req := &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_File{File: "/path/to/prog.o"},
+		},
+		Info: []*pb.LoadInfo{
+			{Name: "get_test_prog", ProgramType: pb.BpfmanProgramType_KPROBE},
+		},
+		Uuid: strPtr("get-test-uuid"),
+		Metadata: map[string]string{
+			"bpfman.io/ProgramName": "get-test-program",
+			"environment":           "testing",
+			"version":               "1.0.0",
+		},
 	}
 
-	getResp, err := srv.Get(ctx, &pb.GetRequest{Id: resp.Programs[0].KernelInfo.Id})
-	if err != nil {
-		t.Fatalf("Get failed: %v", err)
+	loadResp, err := srv.Load(ctx, req)
+	require.NoError(t, err, "Load failed")
+	kernelID := loadResp.Programs[0].KernelInfo.Id
+
+	getResp, err := srv.Get(ctx, &pb.GetRequest{Id: kernelID})
+	require.NoError(t, err, "Get failed")
+
+	// Verify ProgramInfo fields
+	assert.Equal(t, "get_test_prog", getResp.Info.Name, "Info.Name")
+	require.NotNil(t, getResp.Info.Bytecode, "Info.Bytecode")
+	file, ok := getResp.Info.Bytecode.Location.(*pb.BytecodeLocation_File)
+	require.True(t, ok, "expected BytecodeLocation_File")
+	assert.Equal(t, "/path/to/prog.o", file.File, "Info.Bytecode.File")
+	assert.Equal(t, "get-test-program", getResp.Info.Metadata["bpfman.io/ProgramName"], "Info.Metadata[bpfman.io/ProgramName]")
+	assert.Equal(t, "testing", getResp.Info.Metadata["environment"], "Info.Metadata[environment]")
+	assert.Equal(t, "1.0.0", getResp.Info.Metadata["version"], "Info.Metadata[version]")
+	assert.NotEmpty(t, getResp.Info.MapPinPath, "Info.MapPinPath")
+
+	// Verify KernelProgramInfo fields
+	assert.Equal(t, kernelID, getResp.KernelInfo.Id, "KernelInfo.Id")
+	assert.Equal(t, "get_test_prog", getResp.KernelInfo.Name, "KernelInfo.Name")
+	assert.Equal(t, uint32(bpfman.ProgramTypeKprobe), getResp.KernelInfo.ProgramType, "KernelInfo.ProgramType")
+}
+
+// TestListPrograms_ReturnsAllFields verifies that:
+//
+//	Given multiple programs loaded with different metadata,
+//	When I list all programs,
+//	Then each result contains correctly populated Info and KernelInfo.
+func TestListPrograms_ReturnsAllFields(t *testing.T) {
+	srv := newTestServer(t)
+	ctx := context.Background()
+
+	// Load two programs with distinct metadata
+	programs := []struct {
+		name        string
+		programName string
+		programType pb.BpfmanProgramType
+		uuid        string
+		app         string
+	}{
+		{"prog_one", "program-one", pb.BpfmanProgramType_TRACEPOINT, "uuid-1", "frontend"},
+		{"prog_two", "program-two", pb.BpfmanProgramType_XDP, "uuid-2", "backend"},
 	}
-	if getResp.Info.Name != "my_prog" {
-		t.Errorf("Get returned wrong name: %q", getResp.Info.Name)
+
+	expectedIDs := make(map[string]uint32)
+	for _, p := range programs {
+		req := &pb.LoadRequest{
+			Bytecode: &pb.BytecodeLocation{
+				Location: &pb.BytecodeLocation_File{File: "/path/to/" + p.name + ".o"},
+			},
+			Info: []*pb.LoadInfo{
+				{Name: p.name, ProgramType: p.programType},
+			},
+			Uuid: strPtr(p.uuid),
+			Metadata: map[string]string{
+				"bpfman.io/ProgramName": p.programName,
+				"app":                   p.app,
+			},
+		}
+		resp, err := srv.Load(ctx, req)
+		require.NoError(t, err, "Load %s failed", p.name)
+		expectedIDs[p.programName] = resp.Programs[0].KernelInfo.Id
 	}
+
+	listResp, err := srv.List(ctx, &pb.ListRequest{})
+	require.NoError(t, err, "List failed")
+	require.Len(t, listResp.Results, 2, "expected 2 results")
+
+	// Build a map for easier lookup
+	resultsByName := make(map[string]*pb.ListResponse_ListResult)
+	for _, r := range listResp.Results {
+		resultsByName[r.Info.Metadata["bpfman.io/ProgramName"]] = r
+	}
+
+	// Verify program-one
+	r1, ok := resultsByName["program-one"]
+	require.True(t, ok, "program-one not found in list results")
+	assert.Equal(t, "prog_one", r1.Info.Name, "program-one Info.Name")
+	assert.Equal(t, "frontend", r1.Info.Metadata["app"], "program-one Info.Metadata[app]")
+	assert.Equal(t, expectedIDs["program-one"], r1.KernelInfo.Id, "program-one KernelInfo.Id")
+	assert.Equal(t, uint32(bpfman.ProgramTypeTracepoint), r1.KernelInfo.ProgramType, "program-one KernelInfo.ProgramType")
+
+	// Verify program-two
+	r2, ok := resultsByName["program-two"]
+	require.True(t, ok, "program-two not found in list results")
+	assert.Equal(t, "prog_two", r2.Info.Name, "program-two Info.Name")
+	assert.Equal(t, "backend", r2.Info.Metadata["app"], "program-two Info.Metadata[app]")
+	assert.Equal(t, expectedIDs["program-two"], r2.KernelInfo.Id, "program-two KernelInfo.Id")
+	assert.Equal(t, uint32(bpfman.ProgramTypeXDP), r2.KernelInfo.ProgramType, "program-two KernelInfo.ProgramType")
 }
 
 // TestLoadProgram_WithDuplicateName_IsRejected verifies that:
@@ -199,9 +318,7 @@ func TestLoadProgram_WithDuplicateName_IsRejected(t *testing.T) {
 		},
 	}
 	_, err := srv.Load(ctx, firstReq)
-	if err != nil {
-		t.Fatalf("setup: first Load failed: %v", err)
-	}
+	require.NoError(t, err, "first Load failed")
 
 	secondReq := &pb.LoadRequest{
 		Bytecode: &pb.BytecodeLocation{
@@ -217,16 +334,10 @@ func TestLoadProgram_WithDuplicateName_IsRejected(t *testing.T) {
 	}
 	_, err = srv.Load(ctx, secondReq)
 
-	if err == nil {
-		t.Fatal("expected duplicate name to be rejected, got nil error")
-	}
+	require.Error(t, err, "expected duplicate name to be rejected")
 	st, ok := status.FromError(err)
-	if !ok {
-		t.Fatalf("expected gRPC status error, got: %v", err)
-	}
-	if st.Code() != codes.Internal {
-		t.Errorf("expected Internal code, got %v", st.Code())
-	}
+	require.True(t, ok, "expected gRPC status error")
+	assert.Equal(t, codes.Internal, st.Code(), "expected Internal code")
 }
 
 // TestLoadProgram_WithDifferentNames_BothSucceed verifies that:
@@ -252,18 +363,12 @@ func TestLoadProgram_WithDifferentNames_BothSucceed(t *testing.T) {
 			},
 		}
 		_, err := srv.Load(ctx, req)
-		if err != nil {
-			t.Fatalf("Load %s failed: %v", name, err)
-		}
+		require.NoError(t, err, "Load %s failed", name)
 	}
 
 	listResp, err := srv.List(ctx, &pb.ListRequest{})
-	if err != nil {
-		t.Fatalf("List failed: %v", err)
-	}
-	if len(listResp.Results) != 2 {
-		t.Errorf("expected 2 programs, got %d", len(listResp.Results))
-	}
+	require.NoError(t, err, "List failed")
+	assert.Len(t, listResp.Results, 2, "expected 2 programs")
 }
 
 // TestUnloadProgram_WhenProgramExists_RemovesIt verifies that:
@@ -288,24 +393,16 @@ func TestUnloadProgram_WhenProgramExists_RemovesIt(t *testing.T) {
 		},
 	}
 	loadResp, err := srv.Load(ctx, loadReq)
-	if err != nil {
-		t.Fatalf("setup: Load failed: %v", err)
-	}
+	require.NoError(t, err, "Load failed")
 	kernelID := loadResp.Programs[0].KernelInfo.Id
 
 	_, err = srv.Unload(ctx, &pb.UnloadRequest{Id: kernelID})
-	if err != nil {
-		t.Fatalf("Unload failed: %v", err)
-	}
+	require.NoError(t, err, "Unload failed")
 
 	_, err = srv.Get(ctx, &pb.GetRequest{Id: kernelID})
-	if err == nil {
-		t.Error("expected Get after unload to fail")
-	}
+	require.Error(t, err, "expected Get after unload to fail")
 	st, _ := status.FromError(err)
-	if st.Code() != codes.NotFound {
-		t.Errorf("expected NotFound, got %v", st.Code())
-	}
+	assert.Equal(t, codes.NotFound, st.Code(), "expected NotFound")
 }
 
 // TestUnloadProgram_WhenProgramDoesNotExist_IsIdempotent verifies that:
@@ -318,9 +415,7 @@ func TestUnloadProgram_WhenProgramDoesNotExist_IsIdempotent(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := srv.Unload(ctx, &pb.UnloadRequest{Id: 999})
-	if err != nil {
-		t.Errorf("Unload of non-existent program should succeed, got: %v", err)
-	}
+	assert.NoError(t, err, "Unload of non-existent program should succeed")
 }
 
 // TestLoadProgram_AfterUnload_NameBecomesAvailable verifies that:
@@ -345,13 +440,10 @@ func TestLoadProgram_AfterUnload_NameBecomesAvailable(t *testing.T) {
 		},
 	}
 	loadResp, err := srv.Load(ctx, firstReq)
-	if err != nil {
-		t.Fatalf("setup: first Load failed: %v", err)
-	}
+	require.NoError(t, err, "first Load failed")
+
 	_, err = srv.Unload(ctx, &pb.UnloadRequest{Id: loadResp.Programs[0].KernelInfo.Id})
-	if err != nil {
-		t.Fatalf("setup: Unload failed: %v", err)
-	}
+	require.NoError(t, err, "Unload failed")
 
 	secondReq := &pb.LoadRequest{
 		Bytecode: &pb.BytecodeLocation{
@@ -366,9 +458,7 @@ func TestLoadProgram_AfterUnload_NameBecomesAvailable(t *testing.T) {
 		},
 	}
 	_, err = srv.Load(ctx, secondReq)
-	if err != nil {
-		t.Fatalf("second Load with reused name failed: %v", err)
-	}
+	assert.NoError(t, err, "second Load with reused name should succeed")
 }
 
 // TestListPrograms_WithMetadataFilter_ReturnsOnlyMatching verifies that:
@@ -395,23 +485,15 @@ func TestListPrograms_WithMetadataFilter_ReturnsOnlyMatching(t *testing.T) {
 			},
 		}
 		_, err := srv.Load(ctx, req)
-		if err != nil {
-			t.Fatalf("setup: Load %s failed: %v", app, err)
-		}
+		require.NoError(t, err, "Load %s failed", app)
 	}
 
 	filteredResp, err := srv.List(ctx, &pb.ListRequest{
 		MatchMetadata: map[string]string{"app": "frontend"},
 	})
-	if err != nil {
-		t.Fatalf("List failed: %v", err)
-	}
-	if len(filteredResp.Results) != 1 {
-		t.Fatalf("expected 1 filtered program, got %d", len(filteredResp.Results))
-	}
-	if filteredResp.Results[0].Info.Metadata["app"] != "frontend" {
-		t.Errorf("wrong program returned: %v", filteredResp.Results[0].Info.Metadata)
-	}
+	require.NoError(t, err, "List failed")
+	require.Len(t, filteredResp.Results, 1, "expected 1 filtered program")
+	assert.Equal(t, "frontend", filteredResp.Results[0].Info.Metadata["app"], "wrong program returned")
 }
 
 func strPtr(s string) *string {
