@@ -1,135 +1,157 @@
-# bpffs-csi-driver
+# bpfman
 
-A minimal CSI (Container Storage Interface) driver for learning and experimentation. Currently creates empty volumes; designed to evolve toward mounting bpffs and exposing pinned BPF maps to containers.
+A minimal BPF program manager for Kubernetes with an integrated CSI driver. Loads BPF programs, pins them to bpffs, and exposes maps to containers via CSI volumes.
 
-## What is CSI?
+## Overview
 
-CSI is a standardised gRPC API that lets Kubernetes delegate storage operations to external drivers. Instead of Kubernetes knowing how to talk to every storage system, it speaks one protocol and the driver translates.
+bpfman runs as a DaemonSet on each node, providing:
 
-### The players
+- **gRPC API** for loading/unloading BPF programs
+- **CSI driver** for exposing BPF maps to pods
+- **SQLite store** for tracking managed programs
+- **Garbage collection** for cleaning up stale resources
 
-- **Kubelet** - the node agent that runs pods
-- **Our driver** - listens on a Unix socket, answers gRPC calls
-- **Node-driver-registrar** - sidecar that introduces our driver to kubelet
-
-### What happens at startup
-
-1. Our DaemonSet starts on each node
-2. The registrar sidecar tells kubelet: "There's a driver called `bpffs.csi.frobware.io` at this socket"
-3. Kubelet notes this down in its plugin registry
-
-### What happens when a pod wants a volume
+### How it works
 
 ```
-Pod spec says:
-  "I want a volume from bpffs.csi.frobware.io"
-       │
-       ▼
-Kubelet sees this, calls our driver:
-  "NodePublishVolume please, put it at /var/lib/kubelet/pods/<pod-id>/volumes/..."
-       │
-       ▼
-Our driver does something at that path
-  (currently: creates empty dir + marker file)
-  (future: mount bpffs, expose BPF maps)
-       │
-       ▼
-Kubelet bind-mounts that path into the container
-       │
-       ▼
-Container sees files at the mount point
-```
-
-### When the pod dies
-
-```
-Kubelet calls: "NodeUnpublishVolume please"
-       │
-       ▼
-Our driver cleans up the directory
+1. Load BPF program via gRPC
+   bpfman load --object stats.o --program count_sched_switch
+        │
+        ▼
+2. Program pinned to bpffs
+   /sys/fs/bpf/bpfman/<uuid>/count_sched_switch
+   /sys/fs/bpf/bpfman/<uuid>/stats_map
+        │
+        ▼
+3. Pod requests CSI volume with metadata selector
+   volumes:
+     - name: bpf-maps
+       csi:
+         driver: csi.go-bpfman.io
+         volumeAttributes:
+           bpfman.io/application: stats
+        │
+        ▼
+4. CSI driver re-pins matching maps to pod's volume
+   Container sees: /bpf/stats_map
 ```
 
 ## Project structure
 
 ```
-bpffs-csi-driver/
-  main.go                 # Entry point, flag parsing, signal handling
-  pkg/driver/
-    driver.go             # gRPC server setup
-    identity.go           # Identity service (GetPluginInfo, Probe)
-    node.go               # Node service (NodePublishVolume, etc.)
-  manifests/
-    csidriver.yaml        # CSIDriver API object
-    daemonset.yaml        # DaemonSet with registrar sidecar
-    test-pod.yaml         # Example pod using the driver
-  Dockerfile
-  Makefile
+bpfman/
+├── cmd/bpfman/           CLI and daemon entry point
+├── pkg/
+│   ├── bpfman/
+│   │   ├── domain/       Pure data types
+│   │   ├── action/       Reified effects
+│   │   ├── compute/      Pure business logic
+│   │   ├── interpreter/  I/O implementations
+│   │   │   ├── store/    SQLite, in-memory stores
+│   │   │   └── kernel/   cilium/ebpf adapter
+│   │   ├── manager/      Orchestration layer
+│   │   └── server/       gRPC server
+│   └── csi/driver/       CSI implementation
+├── manifests/            Kubernetes manifests
+├── examples/             Example applications
+└── proto/                gRPC service definitions
 ```
 
 ## Building and deploying
 
-Requires a Kubernetes cluster. For local development, use kind:
+Requires a kind cluster named `bpfman-deployment`:
 
 ```bash
-# Deploy driver to cluster (builds and loads image automatically)
-make deploy-driver
-
-# Check status
-make status
-
-# View driver logs
-make logs
-
-# Rebuild and redeploy
-make redeploy
-
-# Remove driver
-make delete-driver
+kind create cluster --name bpfman-deployment
 ```
 
-## Testing
+Build and deploy:
 
 ```bash
-# Deploy test pod and verify volume
-make deploy-test-pod
-
-# Clean up test pod
-make delete-test-pod
+make bpfman-deploy    # Build image, load to kind, deploy
+make bpfman-logs      # Follow logs
+make bpfman-delete    # Remove from cluster
 ```
 
-## CSI services implemented
+Run `make` to see all available targets.
 
-### Identity service
+## Usage
 
-| Method | Purpose |
-|--------|---------|
-| `GetPluginInfo` | Returns driver name and version |
-| `GetPluginCapabilities` | Advertises what the driver supports |
-| `Probe` | Health check |
+### Loading a BPF program
 
-### Node service
+```bash
+# Exec into bpfman pod
+kubectl exec -it -n bpfman deploy/bpfman-daemon-go -c bpfman -- sh
 
-| Method | Purpose |
-|--------|---------|
-| `NodeGetInfo` | Returns the node ID |
-| `NodeGetCapabilities` | Advertises node-level capabilities |
-| `NodePublishVolume` | "Mount" the volume at target path |
-| `NodeUnpublishVolume` | Clean up when pod is removed |
+# Load program with metadata for CSI matching
+bpfman load \
+  --object /opt/bpf/stats.o \
+  --program count_sched_switch \
+  --metadata bpfman.io/application=stats
+```
 
-## Configuration
+### Consuming BPF maps in a pod
 
-The driver accepts these flags:
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: stats-reader
+spec:
+  containers:
+    - name: reader
+      image: stats-reader:dev
+      volumeMounts:
+        - name: bpf-maps
+          mountPath: /bpf
+  volumes:
+    - name: bpf-maps
+      csi:
+        driver: csi.go-bpfman.io
+        volumeAttributes:
+          bpfman.io/application: stats
+```
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--driver-name` | `bpffs.csi.frobware.io` | CSI driver name |
-| `--endpoint` | `unix:///csi/csi.sock` | gRPC endpoint |
-| `--node-id` | hostname | Node identifier |
-| `--log-format` | `text` | Log format: text or json |
+### Listing programs
 
-## Future work
+```bash
+bpfman list           # List managed programs
+bpfman list --all     # Include kernel programs
+```
 
-- Mount actual bpffs instead of empty directories
-- Expose specific pinned BPF maps based on volumeAttributes
-- Implement staging (STAGE_UNSTAGE_VOLUME capability) for shared BPF resources
-- Report volume health via VOLUME_CONDITION capability
+### Garbage collection
+
+```bash
+bpfman gc             # Show what would be cleaned (dry-run)
+bpfman gc --prune     # Actually clean up
+```
+
+## gRPC API
+
+bpfman exposes a gRPC API on `/run/bpfman-sock/bpfman.sock`:
+
+| Method | Description |
+|--------|-------------|
+| `Load` | Load and pin a BPF program |
+| `Unload` | Unpin and remove a program |
+| `List` | List managed programs |
+| `Get` | Get program details |
+
+## Key paths
+
+| Path | Description |
+|------|-------------|
+| `/run/bpfman-sock/bpfman.sock` | gRPC socket |
+| `/run/bpfman/state.db` | SQLite state |
+| `/sys/fs/bpf/bpfman/` | BPF pins |
+| `/var/lib/kubelet/plugins/csi.go-bpfman.io/csi.sock` | CSI socket |
+
+## Design
+
+bpfman follows functional programming principles:
+
+- **SANS-IO**: Core logic performs no I/O; effects are reified as data
+- **Fetch/Compute/Execute**: Clear separation of phases
+- **Interface segregation**: Small, focused interfaces
+
+See [CLAUDE.md](CLAUDE.md) for detailed design documentation.
