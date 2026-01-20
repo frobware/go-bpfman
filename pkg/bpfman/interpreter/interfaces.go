@@ -52,6 +52,9 @@ type ProgramReader interface {
 type ProgramWriter interface {
 	Save(ctx context.Context, kernelID uint32, metadata managed.Program) error
 	Delete(ctx context.Context, kernelID uint32) error
+	// MarkUnloading transitions a program to unloading state.
+	// This is phase 1 of unload 2PC.
+	MarkUnloading(ctx context.Context, kernelID uint32) error
 }
 
 // ReservationWriter handles the reservation phase of transactional loads.

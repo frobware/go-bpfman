@@ -23,10 +23,15 @@ type GCConfig struct {
 	// before being considered stale. Default: 5 minutes.
 	StaleLoadingTTL time.Duration
 
+	// StaleUnloadingTTL is how long an unloading entry can exist
+	// before being considered stale. Default: 5 minutes.
+	StaleUnloadingTTL time.Duration
+
 	// Which classes of garbage to include.
-	IncludeLoading bool
-	IncludeError   bool
-	IncludeOrphans bool
+	IncludeLoading   bool
+	IncludeUnloading bool
+	IncludeError     bool
+	IncludeOrphans   bool
 
 	// DryRun prevents any modifications when true.
 	DryRun bool
@@ -43,14 +48,16 @@ type GCConfig struct {
 // DefaultGCConfig returns a GCConfig with sensible defaults.
 func DefaultGCConfig() GCConfig {
 	return GCConfig{
-		Now:             time.Now(),
-		StaleLoadingTTL: 5 * time.Minute,
-		IncludeLoading:  true,
-		IncludeError:    true,
-		IncludeOrphans:  true,
-		DryRun:          true, // Safe by default
-		MaxDeletions:    0,
-		BpfmanRoot:      "/sys/fs/bpf/bpfman",
+		Now:               time.Now(),
+		StaleLoadingTTL:   5 * time.Minute,
+		StaleUnloadingTTL: 5 * time.Minute,
+		IncludeLoading:    true,
+		IncludeUnloading:  true,
+		IncludeError:      true,
+		IncludeOrphans:    true,
+		DryRun:            true, // Safe by default
+		MaxDeletions:      0,
+		BpfmanRoot:        "/sys/fs/bpf/bpfman",
 	}
 }
 
@@ -61,6 +68,10 @@ const (
 	// GCStaleLoading indicates a reservation that has been in loading
 	// state longer than the TTL.
 	GCStaleLoading GCReason = "stale_loading"
+
+	// GCStaleUnloading indicates an entry that has been in unloading
+	// state longer than the TTL (interrupted unload 2PC).
+	GCStaleUnloading GCReason = "stale_unloading"
 
 	// GCStateError indicates a reservation that failed and was marked
 	// as error state.
@@ -140,6 +151,15 @@ func (m *Manager) PlanGC(ctx context.Context, cfg GCConfig) (GCPlan, error) {
 		plan.Items = append(plan.Items, items...)
 	}
 
+	// Collect stale unloading entries (interrupted 2PC)
+	if cfg.IncludeUnloading {
+		items, err := m.planStaleUnloading(ctx, cfg)
+		if err != nil {
+			return plan, fmt.Errorf("plan stale unloading: %w", err)
+		}
+		plan.Items = append(plan.Items, items...)
+	}
+
 	// Collect error entries
 	if cfg.IncludeError {
 		items, err := m.planErrorEntries(ctx, cfg)
@@ -174,6 +194,31 @@ func (m *Manager) planStaleLoading(ctx context.Context, cfg GCConfig) ([]GCItem,
 		if e.Metadata.UpdatedAt.Before(cutoff) {
 			items = append(items, GCItem{
 				Reason:    GCStaleLoading,
+				UUID:      e.Metadata.UUID,
+				PinPath:   e.Metadata.LoadSpec.PinPath,
+				State:     e.Metadata.State,
+				UpdatedAt: e.Metadata.UpdatedAt,
+				Age:       cfg.Now.Sub(e.Metadata.UpdatedAt),
+			})
+		}
+	}
+
+	return items, nil
+}
+
+func (m *Manager) planStaleUnloading(ctx context.Context, cfg GCConfig) ([]GCItem, error) {
+	entries, err := m.store.ListByState(ctx, managed.StateUnloading)
+	if err != nil {
+		return nil, err
+	}
+
+	cutoff := cfg.Now.Add(-cfg.StaleUnloadingTTL)
+	var items []GCItem
+
+	for _, e := range entries {
+		if e.Metadata.UpdatedAt.Before(cutoff) {
+			items = append(items, GCItem{
+				Reason:    GCStaleUnloading,
 				UUID:      e.Metadata.UUID,
 				PinPath:   e.Metadata.LoadSpec.PinPath,
 				State:     e.Metadata.State,
@@ -221,9 +266,13 @@ func (m *Manager) planOrphanPins(ctx context.Context, cfg GCConfig) ([]GCItem, e
 		knownPaths[meta.LoadSpec.PinPath] = true
 	}
 
-	// Also include loading/error entries (we don't want to double-report)
+	// Also include loading/unloading/error entries (we don't want to double-report)
 	loading, _ := m.store.ListByState(ctx, managed.StateLoading)
 	for _, e := range loading {
+		knownPaths[e.Metadata.LoadSpec.PinPath] = true
+	}
+	unloading, _ := m.store.ListByState(ctx, managed.StateUnloading)
+	for _, e := range unloading {
 		knownPaths[e.Metadata.LoadSpec.PinPath] = true
 	}
 	errors, _ := m.store.ListByState(ctx, managed.StateError)
@@ -304,7 +353,7 @@ func (m *Manager) ApplyGC(ctx context.Context, plan GCPlan) (GCResult, error) {
 
 		var err error
 		switch item.Reason {
-		case GCStaleLoading, GCStateError:
+		case GCStaleLoading, GCStaleUnloading, GCStateError:
 			err = m.cleanupDBEntry(ctx, item)
 		case GCOrphanPin:
 			err = m.cleanupOrphanPin(ctx, item)

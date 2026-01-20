@@ -13,7 +13,9 @@ const (
 	StateLoading State = "loading"
 	// StateLoaded indicates the program is fully loaded with pins and metadata.
 	StateLoaded State = "loaded"
-	// StateError indicates a failed load that could not be fully rolled back.
+	// StateUnloading indicates an unload is in progress.
+	StateUnloading State = "unloading"
+	// StateError indicates a failed operation that could not be fully rolled back.
 	StateError State = "error"
 )
 

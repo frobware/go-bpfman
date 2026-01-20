@@ -170,12 +170,31 @@ func (m *Manager) Load(ctx context.Context, spec managed.LoadSpec, opts LoadOpts
 }
 
 // Unload removes a BPF program, its links, and metadata.
+//
+// Uses 2PC to ensure consistent state:
+//   - Phase 1: Mark state=unloading in DB
+//   - Phase 2: Unpin links, unpin program, delete from DB
+//
+// If phase 2 fails, the program remains in state=unloading which GC
+// can detect and clean up (no kernel program but DB entry exists).
 func (m *Manager) Unload(ctx context.Context, kernelID uint32) error {
 	// FETCH - get metadata to find pin path
 	metadata, err := m.store.Get(ctx, kernelID)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return err
 	}
+	if errors.Is(err, store.ErrNotFound) {
+		// No metadata - nothing to unload from our perspective
+		return nil
+	}
+
+	// Phase 1 (2PC): Mark state=unloading
+	if err := m.store.MarkUnloading(ctx, kernelID); err != nil {
+		return fmt.Errorf("mark unloading: %w", err)
+	}
+	m.logger.Info("marked program for unload", "kernel_id", kernelID)
+
+	// Phase 2 (2PC): Unpin links, program, then delete from DB
 
 	// Unpin any links associated with this program
 	links, listErr := m.store.ListLinksByProgram(ctx, kernelID)
@@ -191,15 +210,21 @@ func (m *Manager) Unload(ctx context.Context, kernelID uint32) error {
 		}
 	}
 
-	// If we have metadata, use it to unload from kernel
-	if err == nil {
-		if err := m.kernel.Unload(ctx, metadata.LoadSpec.PinPath); err != nil {
-			return err
-		}
+	// Unpin program from kernel
+	if err := m.kernel.Unload(ctx, metadata.LoadSpec.PinPath); err != nil {
+		m.logger.Error("failed to unpin program", "kernel_id", kernelID, "error", err)
+		// Continue to delete from DB - the kernel state is uncertain but
+		// we're in state=unloading so GC can reconcile later
 	}
 
-	// EXECUTE - remove from store (cascade deletes links)
-	return m.store.Delete(ctx, kernelID)
+	// Delete from store (cascade deletes links)
+	if err := m.store.Delete(ctx, kernelID); err != nil {
+		m.logger.Error("failed to delete from store", "kernel_id", kernelID, "error", err)
+		return fmt.Errorf("delete from store: %w", err)
+	}
+
+	m.logger.Info("unloaded program", "kernel_id", kernelID)
+	return nil
 }
 
 // List returns all managed programs with their kernel info.

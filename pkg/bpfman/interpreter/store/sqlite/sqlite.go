@@ -271,6 +271,31 @@ func (s *Store) Delete(ctx context.Context, kernelID uint32) error {
 	return err
 }
 
+// MarkUnloading transitions a program to unloading state.
+func (s *Store) MarkUnloading(ctx context.Context, kernelID uint32) error {
+	now := time.Now().Format(time.RFC3339)
+
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE managed_programs
+		 SET state = ?, updated_at = ?
+		 WHERE kernel_id = ? AND state = ?`,
+		string(managed.StateUnloading), now, kernelID, string(managed.StateLoaded))
+	if err != nil {
+		return fmt.Errorf("failed to mark unloading: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return fmt.Errorf("program %d: %w", kernelID, store.ErrNotFound)
+	}
+
+	s.logger.Debug("marked unloading", "kernel_id", kernelID)
+	return nil
+}
+
 // List returns all program metadata.
 // Only returns programs with state=loaded.
 func (s *Store) List(ctx context.Context) (map[uint32]managed.Program, error) {
