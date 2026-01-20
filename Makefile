@@ -1,10 +1,11 @@
-.PHONY: help build-all docker-build-all clean csi-build csi-test docker-build-csi csi-kind-load csi-deploy csi-delete csi-redeploy csi-logs csi-logs-registrar csi-status bpfman-build bpfman-proto bpfman-clean docker-build-bpfman docker-build-bpfman-builder docker-clean-bpfman-builder bpfman-kind-load bpfman-deploy bpfman-delete bpfman-logs bpfman-deploy-test bpfman-delete-test bpfman-test-grpc deploy-app-pod delete-app-pod delete-all
+.PHONY: help build-all docker-build-all clean test csi-build csi-test docker-build-csi csi-kind-load csi-deploy csi-delete csi-redeploy csi-logs csi-logs-registrar csi-status bpfman-build bpfman-proto bpfman-clean docker-build-bpfman docker-build-bpfman-builder docker-clean-bpfman-builder bpfman-kind-load bpfman-deploy bpfman-delete bpfman-logs bpfman-deploy-test bpfman-delete-test bpfman-test-grpc deploy-app-pod delete-app-pod delete-all
 
 help:
 	@echo "Build:"
 	@echo "  build-all          Build all binaries"
 	@echo "  docker-build-all   Build all container images"
 	@echo "  clean              Remove all build artifacts"
+	@echo "  test               Run all tests"
 	@echo ""
 	@echo "CSI Driver:"
 	@echo "  csi-build          Build csi-driver binary"
@@ -45,15 +46,18 @@ docker-build-all: docker-build-csi docker-build-bpfman
 clean: bpfman-clean
 	$(RM) -r $(BIN_DIR)
 
+test:
+	go test -v ./...
+
 # CSI Driver targets
 csi-build:
-	cd csi-driver && go build -o ../$(BIN_DIR)/bpffs-csi-driver .
+	go build -o $(BIN_DIR)/bpffs-csi-driver ./cmd/csi-driver
 
 csi-test:
-	cd csi-driver && go test -v ./...
+	go test -v ./pkg/csi/...
 
 docker-build-csi:
-	docker buildx build --builder=default --load -t $(IMAGE_NAME):$(IMAGE_TAG) csi-driver/
+	docker buildx build --builder=default --load -t $(IMAGE_NAME):$(IMAGE_TAG) -f Dockerfile.csi-driver .
 
 csi-kind-load: docker-build-csi
 	kind load docker-image $(IMAGE_NAME):$(IMAGE_TAG) --name $(KIND_CLUSTER)
@@ -81,15 +85,15 @@ csi-status:
 
 # bpfman targets
 bpfman-build: bpfman-proto
-	cd bpfman && go build -o ../$(BIN_DIR)/bpfman ./cmd/bpfman
+	go build -o $(BIN_DIR)/bpfman ./cmd/bpfman
 
 bpfman-clean:
-	$(RM) -r bpfman/internal/server/pb/
+	$(RM) -r pkg/bpfman/server/pb/
 	$(RM) $(BIN_DIR)/bpfman
 
 # Proto generation for bpfman gRPC API
-BPFMAN_PROTO_DIR := bpfman/proto
-BPFMAN_PB_DIR := bpfman/internal/server/pb
+BPFMAN_PROTO_DIR := proto
+BPFMAN_PB_DIR := pkg/bpfman/server/pb
 
 bpfman-proto: $(BPFMAN_PB_DIR)/bpfman.pb.go $(BPFMAN_PB_DIR)/bpfman_grpc.pb.go
 
@@ -102,13 +106,13 @@ $(BPFMAN_PB_DIR)/bpfman.pb.go $(BPFMAN_PB_DIR)/bpfman_grpc.pb.go: $(BPFMAN_PROTO
 
 docker-build-bpfman-builder:
 	docker image inspect $(BPFMAN_BUILDER_IMAGE):$(IMAGE_TAG) >/dev/null 2>&1 || \
-		docker buildx build --builder=default --load -t $(BPFMAN_BUILDER_IMAGE):$(IMAGE_TAG) -f bpfman/Dockerfile.builder bpfman/
+		docker buildx build --builder=default --load -t $(BPFMAN_BUILDER_IMAGE):$(IMAGE_TAG) -f Dockerfile.bpfman-builder .
 
 docker-clean-bpfman-builder:
 	-docker rmi $(BPFMAN_BUILDER_IMAGE):$(IMAGE_TAG)
 
-docker-build-bpfman: docker-build-bpfman-builder bpfman/testdata/stats.o bpfman-proto
-	docker buildx build --builder=default --load --build-arg BUILDER_IMAGE=$(BPFMAN_BUILDER_IMAGE):$(IMAGE_TAG) -t $(BPFMAN_IMAGE):$(IMAGE_TAG) bpfman/
+docker-build-bpfman: docker-build-bpfman-builder testdata/stats.o bpfman-proto
+	docker buildx build --builder=default --load --build-arg BUILDER_IMAGE=$(BPFMAN_BUILDER_IMAGE):$(IMAGE_TAG) -t $(BPFMAN_IMAGE):$(IMAGE_TAG) -f Dockerfile.bpfman .
 
 bpfman-kind-load: docker-build-bpfman
 	kind load docker-image $(BPFMAN_IMAGE):$(IMAGE_TAG) --name $(KIND_CLUSTER)
@@ -124,20 +128,20 @@ bpfman-logs:
 	kubectl -n $(NAMESPACE) logs -l app=bpfman -f
 
 bpfman-deploy-test: bpfman-kind-load
-	kubectl apply -f bpfman/deploy/test-pod.yaml
+	kubectl apply -f deploy/bpfman-test-pod.yaml
 	kubectl wait --for=condition=Ready pod/bpfman-test --timeout=30s
 
 bpfman-delete-test:
-	kubectl delete -f bpfman/deploy/test-pod.yaml --ignore-not-found
+	kubectl delete -f deploy/bpfman-test-pod.yaml --ignore-not-found
 
 bpfman-test-grpc: docker-build-bpfman
-	BPFMAN_IMAGE=$(BPFMAN_IMAGE):$(IMAGE_TAG) bpfman/scripts/test-grpc.sh
+	BPFMAN_IMAGE=$(BPFMAN_IMAGE):$(IMAGE_TAG) scripts/test-grpc.sh
 
 # bpfman testdata
 BPFMAN_HACKS_DIR ?= $(HOME)/src/github.com/frobware/bpfman-hacks
 
-bpfman/testdata/stats.o: $(BPFMAN_HACKS_DIR)/stats/bpf/stats.o
-	mkdir -p bpfman/testdata
+testdata/stats.o: $(BPFMAN_HACKS_DIR)/stats/bpf/stats.o
+	mkdir -p testdata
 	cp $< $@
 
 # Combined targets

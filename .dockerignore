@@ -1,0 +1,12 @@
+# Build output
+bin/
+
+# Not needed for build
+build/
+deploy/
+scripts/
+proto/
+*.md
+Makefile
+.git/
+.gitignore
