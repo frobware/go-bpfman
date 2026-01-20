@@ -1,16 +1,9 @@
 package manager
 
 import (
-	"github.com/frobware/go-bpfman/pkg/bpfman/domain"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/kernel/ebpf"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/store/sqlite"
 )
-
-// LoadSpec is re-exported from domain for CLI convenience.
-type LoadSpec = domain.LoadSpec
-
-// LoadedProgram is re-exported from domain for CLI convenience.
-type LoadedProgram = domain.LoadedProgram
 
 // Setup creates a Manager with default implementations and returns
 // a cleanup function to close the store.

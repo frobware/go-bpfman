@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/frobware/go-bpfman/pkg/bpfman/domain"
 	"github.com/frobware/go-bpfman/pkg/bpfman/manager"
 	"github.com/frobware/go-bpfman/pkg/bpfman/server"
 )
@@ -34,12 +35,9 @@ Commands:
           <program-id>
           [--db PATH]    SQLite database path
   list    List managed eBPF programs
-          [--pin-dir <dir>] Raw inspection mode (list pins in directory)
-          [--maps]       Include maps (raw inspection mode only)
           [--db PATH]    SQLite database path
-  get     Get details of a program
-          <program-id>   Get managed program by kernel ID
-          [--pin-path <path>] Raw inspection mode (get pinned program)
+  get     Get details of a managed program by kernel ID
+          <program-id>
           [--db PATH]    SQLite database path
   gc      Garbage collect stale/orphaned resources (dry-run by default)
           [--prune]      Actually delete (default: dry-run)
@@ -138,7 +136,7 @@ func cmdLoad(args []string) error {
 	pinDir := filepath.Join(server.DefaultBpfmanRoot, programUUID)
 
 	// Build load spec and options
-	spec := manager.LoadSpec{
+	spec := domain.LoadSpec{
 		ObjectPath:  objectPath,
 		ProgramName: programName,
 		PinPath:     pinDir,
@@ -211,19 +209,10 @@ func cmdUnload(args []string) error {
 
 func cmdList(args []string) error {
 	dbPath := server.DefaultDBPath
-	includeMaps := false
-	var pinDir string
 
 	// Parse flags
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
-		case "--maps":
-			includeMaps = true
-		case "--pin-dir":
-			if i+1 < len(args) {
-				pinDir = args[i+1]
-				i++
-			}
 		case "--db":
 			if i+1 < len(args) {
 				dbPath = args[i+1]
@@ -239,28 +228,6 @@ func cmdList(args []string) error {
 	}
 	defer cleanup()
 
-	// Raw inspection mode if --pin-dir is specified
-	if pinDir != "" {
-		result, err := mgr.ListPinDir(pinDir, includeMaps)
-		if err != nil {
-			return err
-		}
-
-		if len(result.Programs) == 0 && len(result.Maps) == 0 {
-			fmt.Println("No objects found")
-			return nil
-		}
-
-		output, err := json.MarshalIndent(result, "", "  ")
-		if err != nil {
-			return fmt.Errorf("failed to marshal result: %w", err)
-		}
-
-		fmt.Println(string(output))
-		return nil
-	}
-
-	// Default: list managed programs
 	ctx := context.Background()
 	programs, err := mgr.List(ctx)
 	if err != nil {
@@ -286,17 +253,11 @@ func cmdList(args []string) error {
 
 func cmdGet(args []string) error {
 	dbPath := server.DefaultDBPath
-	var pinPath string
 
 	// Parse flags and positional args
 	positional := []string{}
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
-		case "--pin-path":
-			if i+1 < len(args) {
-				pinPath = args[i+1]
-				i++
-			}
 		case "--db":
 			if i+1 < len(args) {
 				dbPath = args[i+1]
@@ -307,32 +268,8 @@ func cmdGet(args []string) error {
 		}
 	}
 
-	// Set up manager
-	mgr, cleanup, err := manager.Setup(dbPath)
-	if err != nil {
-		return fmt.Errorf("failed to set up manager: %w", err)
-	}
-	defer cleanup()
-
-	// Raw inspection mode if --pin-path is specified
-	if pinPath != "" {
-		program, err := mgr.GetPinned(pinPath)
-		if err != nil {
-			return err
-		}
-
-		output, err := json.MarshalIndent(program, "", "  ")
-		if err != nil {
-			return fmt.Errorf("failed to marshal result: %w", err)
-		}
-
-		fmt.Println(string(output))
-		return nil
-	}
-
-	// Get by program ID
 	if len(positional) != 1 {
-		return fmt.Errorf("usage: get [--db <path>] <program-id> or get --pin-path <path>")
+		return fmt.Errorf("usage: get [--db <path>] <program-id>")
 	}
 
 	id, err := strconv.ParseUint(positional[0], 10, 32)
@@ -340,6 +277,13 @@ func cmdGet(args []string) error {
 		return fmt.Errorf("invalid program ID %q: %w", positional[0], err)
 	}
 	programID := uint32(id)
+
+	// Set up manager
+	mgr, cleanup, err := manager.Setup(dbPath)
+	if err != nil {
+		return fmt.Errorf("failed to set up manager: %w", err)
+	}
+	defer cleanup()
 
 	ctx := context.Background()
 	metadata, err := mgr.Get(ctx, programID)
