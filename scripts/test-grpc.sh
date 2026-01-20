@@ -27,9 +27,22 @@ grpcurl_cmd() {
         "unix:$SOCKET_PATH" "$@"
 }
 
+# Ensure bpffs is mounted on the host
+if ! mount | grep -q "^bpf on /sys/fs/bpf"; then
+    echo "Mounting bpffs on host..."
+    sudo mount -t bpf bpf /sys/fs/bpf || {
+        echo "ERROR: Failed to mount bpffs. Run: sudo mount -t bpf bpf /sys/fs/bpf"
+        exit 1
+    }
+fi
+
+# Get the bpf group ID from the bpffs mount
+BPF_GID=$(stat -c '%g' /sys/fs/bpf)
+
 echo "=== Starting bpfman server ==="
 docker run -d --name "$CONTAINER_NAME" --rm --privileged \
-    -v /sys/fs/bpf:/sys/fs/bpf \
+    --group-add "$BPF_GID" \
+    -v /sys/fs/bpf:/sys/fs/bpf:rshared \
     -v "$SOCKET_DIR:$SOCKET_DIR" \
     "$BPFMAN_IMAGE" serve
 

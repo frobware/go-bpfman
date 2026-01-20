@@ -21,6 +21,20 @@ type ProgramWriter interface {
 	Delete(ctx context.Context, kernelID uint32) error
 }
 
+// ReservationWriter handles the reservation phase of transactional loads.
+type ReservationWriter interface {
+	// Reserve creates a loading reservation (state=loading) keyed by UUID.
+	// Returns an error if a reservation with this UUID already exists.
+	Reserve(ctx context.Context, uuid string, metadata domain.ProgramMetadata) error
+	// CommitReservation transitions a reservation from loading to loaded,
+	// updating the primary key from UUID to kernel ID.
+	CommitReservation(ctx context.Context, uuid string, kernelID uint32) error
+	// MarkError transitions a reservation to error state with a message.
+	MarkError(ctx context.Context, uuid string, errMsg string) error
+	// DeleteReservation removes a reservation by UUID (for cleanup).
+	DeleteReservation(ctx context.Context, uuid string) error
+}
+
 // ProgramLister lists all program metadata from the store.
 type ProgramLister interface {
 	List(ctx context.Context) (map[uint32]domain.ProgramMetadata, error)
@@ -31,6 +45,7 @@ type ProgramStore interface {
 	ProgramReader
 	ProgramWriter
 	ProgramLister
+	ReservationWriter
 }
 
 // KernelSource provides access to kernel BPF objects.

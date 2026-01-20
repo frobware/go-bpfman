@@ -5,6 +5,18 @@ import (
 	"time"
 )
 
+// ProgramState represents the lifecycle state of a managed program.
+type ProgramState string
+
+const (
+	// StateLoading indicates a load is in progress (reservation exists).
+	StateLoading ProgramState = "loading"
+	// StateLoaded indicates the program is fully loaded with pins and metadata.
+	StateLoaded ProgramState = "loaded"
+	// StateError indicates a failed load that could not be fully rolled back.
+	StateError ProgramState = "error"
+)
+
 // ProgramMetadata contains metadata for programs managed by bpfman.
 // This is what we store - the kernel is the source of truth for runtime state.
 type ProgramMetadata struct {
@@ -22,6 +34,12 @@ type ProgramMetadata struct {
 	Owner string
 	// When bpfman loaded this program
 	CreatedAt time.Time
+	// State of the program in the load lifecycle
+	State ProgramState
+	// Error message if State is StateError
+	ErrorMessage string
+	// When the record was last updated
+	UpdatedAt time.Time
 }
 
 // WithTag returns a new ProgramMetadata with the tag added.
@@ -34,6 +52,9 @@ func (p ProgramMetadata) WithTag(tag string) ProgramMetadata {
 		Description:  p.Description,
 		Owner:        p.Owner,
 		CreatedAt:    p.CreatedAt,
+		State:        p.State,
+		ErrorMessage: p.ErrorMessage,
+		UpdatedAt:    p.UpdatedAt,
 	}
 }
 
@@ -47,6 +68,9 @@ func (p ProgramMetadata) WithDescription(desc string) ProgramMetadata {
 		Description:  desc,
 		Owner:        p.Owner,
 		CreatedAt:    p.CreatedAt,
+		State:        p.State,
+		ErrorMessage: p.ErrorMessage,
+		UpdatedAt:    p.UpdatedAt,
 	}
 }
 

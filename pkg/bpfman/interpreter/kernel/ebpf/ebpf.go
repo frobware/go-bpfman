@@ -104,17 +104,13 @@ func (k *Kernel) Links(ctx context.Context) iter.Seq2[domain.KernelLink, error] 
 
 // Load loads a BPF program into the kernel.
 //
-// The caller must create the pin directory before calling Load.
-// This keeps the kernel adapter simple and pushes transaction
-// boundaries up to the manager layer.
+// Creates the pin directory if it doesn't exist. On bpffs, directory
+// creation typically works with appropriate privileges (CAP_SYS_ADMIN
+// or mount with allow_other).
 func (k *Kernel) Load(ctx context.Context, spec domain.LoadSpec) (domain.LoadedProgram, error) {
-	// Verify pin directory exists - caller is responsible for creating it
-	st, err := os.Stat(spec.PinPath)
-	if err != nil {
-		return domain.LoadedProgram{}, fmt.Errorf("pin path %q must exist: %w", spec.PinPath, err)
-	}
-	if !st.IsDir() {
-		return domain.LoadedProgram{}, fmt.Errorf("pin path %q is not a directory", spec.PinPath)
+	// Create pin directory if it doesn't exist
+	if err := os.MkdirAll(spec.PinPath, 0755); err != nil {
+		return domain.LoadedProgram{}, fmt.Errorf("create pin directory %q: %w", spec.PinPath, err)
 	}
 
 	// Load the collection from the object file

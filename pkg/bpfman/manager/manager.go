@@ -12,29 +12,26 @@
 //   - SQLite metadata (database row)
 //
 // True atomic commits across both stores are not possible without a
-// distributed transaction system. Instead, we make failure states safe
-// and recoverable:
-//   - No partial pins visible at the final path
-//   - Metadata only written once pins are committed
-//   - If metadata write fails, pins are rolled back (strict rollback)
+// distributed transaction system. Instead, we use a DB-first reservation
+// pattern that makes failure states safe and recoverable.
 //
-// # Two-Phase Commit for Pins
+// # DB-First Reservation Pattern
 //
-// Load uses a two-phase commit with a temporary directory:
-//
-//	temp:  /sys/fs/bpf/bpfman/.tmp/<uuid>-<nonce>
-//	final: /sys/fs/bpf/bpfman/<uuid>
-//
-// The temp directory MUST be on the same filesystem as the final directory
-// for rename() to be atomic. Both directories are on bpffs.
+// bpffs does not support mkdir - directories are only created implicitly
+// when BPF objects are pinned. This means we cannot use a temp directory
+// and rename approach. Instead, we use database reservations:
 //
 // Workflow:
-//  1. Create temp directory
-//  2. Load collection and pin program/maps to temp
-//  3. Validate (get program info, map IDs)
-//  4. Atomic commit: rename(temp, final)
-//  5. Persist metadata to SQLite
-//  6. If step 5 fails: rollback by removing final directory
+//  1. Write reservation row (state=loading) with UUID
+//  2. Load collection and pin to final path directly
+//  3. Commit reservation (state=loaded) with kernel ID
+//  4. If pinning fails: delete reservation
+//  5. If commit fails: unpin + mark error (or delete reservation)
+//
+// The reservation pattern ensures:
+//   - Normal List/Get only returns state=loaded programs
+//   - Loading programs are invisible to normal operations
+//   - Reconcile can clean up stale loading/error reservations
 //
 // # CSI Integration
 //
@@ -56,7 +53,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"time"
 
@@ -91,82 +87,70 @@ type LoadOpts struct {
 
 // Load loads a BPF program and stores its metadata transactionally.
 //
-// See package documentation for details on the two-phase commit design.
+// See package documentation for details on the DB-first reservation pattern.
 //
 // IMPORTANT: spec.PinPath must be on bpffs (typically /sys/fs/bpf/...).
-// The temp directory is created alongside PinPath and must be on the
-// same filesystem for atomic rename. Do not use paths on tmpfs or other
-// filesystems.
+// bpffs does not support mkdir - directories are created implicitly when
+// BPF objects are pinned.
 //
-// On any failure, previously completed steps are rolled back. If metadata
-// persistence fails after pins are committed, the pins are removed
-// (strict rollback) to avoid unmanaged programs.
+// On any failure, previously completed steps are rolled back:
+//   - If pinning fails: delete reservation
+//   - If commit fails: unpin + mark error (or delete reservation)
 func (m *Manager) Load(ctx context.Context, spec domain.LoadSpec, opts LoadOpts) (domain.LoadedProgram, error) {
-	finalDir := spec.PinPath
+	now := time.Now()
 
-	// Phase 1: Create temp directory (same filesystem for atomic rename)
-	tmpDir, err := mkTempPinDir(finalDir)
-	if err != nil {
-		return domain.LoadedProgram{}, err
-	}
-
-	// Track whether we've committed the temp dir to final location.
-	// If not committed by the time we return, clean up temp pins.
-	tmpCommitted := false
-	defer func() {
-		if tmpCommitted {
-			return
-		}
-		// Best-effort cleanup of temp pins. Ignore error here:
-		// the main error return already captures the failure cause.
-		_ = m.kernel.Unload(ctx, tmpDir)
-	}()
-
-	// Phase 2: Load and pin to temp directory
-	tmpSpec := spec
-	tmpSpec.PinPath = tmpDir
-
-	loaded, err := m.kernel.Load(ctx, tmpSpec)
-	if err != nil {
-		return domain.LoadedProgram{}, err
-	}
-
-	// Phase 3: Atomic commit - rename temp to final
-	if err := os.MkdirAll(filepath.Dir(finalDir), 0755); err != nil {
-		return domain.LoadedProgram{}, fmt.Errorf("create final pin parent: %w", err)
-	}
-
-	if err := os.Rename(tmpDir, finalDir); err != nil {
-		// Pins remain in tmpDir; deferred cleanup will remove them
-		return domain.LoadedProgram{}, fmt.Errorf("commit pins: %w", err)
-	}
-	tmpCommitted = true
-
-	// Phase 4: Persist metadata (only after pins are committed)
+	// Phase 1: Write reservation (state=loading)
 	metadata := domain.ProgramMetadata{
-		LoadSpec:     spec, // Use original spec with final pin path
+		LoadSpec:     spec,
 		UUID:         opts.UUID,
 		UserMetadata: opts.UserMetadata,
 		Tags:         nil,
 		Owner:        opts.Owner,
-		CreatedAt:    time.Now(),
+		CreatedAt:    now,
+		State:        domain.StateLoading,
+		UpdatedAt:    now,
 	}
 
-	if err := m.store.Save(ctx, loaded.ID, metadata); err != nil {
-		// Strict rollback: remove committed pins to avoid unmanaged programs
-		rbErr := m.kernel.Unload(ctx, finalDir)
-		if rbErr == nil {
-			return domain.LoadedProgram{}, fmt.Errorf("persist metadata: %w", err)
+	if err := m.store.Reserve(ctx, opts.UUID, metadata); err != nil {
+		return domain.LoadedProgram{}, fmt.Errorf("create reservation: %w", err)
+	}
+
+	// Track whether pinning succeeded for cleanup
+	pinned := false
+	defer func() {
+		if pinned {
+			return
 		}
-		// Rollback also failed - return compound error
+		// Pinning failed or we're returning early - delete reservation
+		_ = m.store.DeleteReservation(ctx, opts.UUID)
+	}()
+
+	// Phase 2: Load and pin to final path directly
+	loaded, err := m.kernel.Load(ctx, spec)
+	if err != nil {
+		return domain.LoadedProgram{}, fmt.Errorf("load program %s: %w", spec.ProgramName, err)
+	}
+	pinned = true
+
+	// Phase 3: Commit reservation (state=loaded)
+	if err := m.store.CommitReservation(ctx, opts.UUID, loaded.ID); err != nil {
+		// Commit failed - unpin and mark error
+		rbErr := m.kernel.Unload(ctx, spec.PinPath)
+		if rbErr == nil {
+			// Rollback succeeded - delete reservation
+			_ = m.store.DeleteReservation(ctx, opts.UUID)
+			return domain.LoadedProgram{}, fmt.Errorf("commit reservation: %w", err)
+		}
+		// Rollback also failed - mark as error for reconciliation
+		_ = m.store.MarkError(ctx, opts.UUID, fmt.Sprintf("commit failed: %v; rollback failed: %v", err, rbErr))
 		return domain.LoadedProgram{}, errors.Join(
-			fmt.Errorf("persist metadata: %w", err),
-			fmt.Errorf("rollback pins at %q failed: %w", finalDir, rbErr),
+			fmt.Errorf("commit reservation: %w", err),
+			fmt.Errorf("rollback pins at %q failed: %w", spec.PinPath, rbErr),
 		)
 	}
 
 	// Update returned program with final pin path
-	loaded.PinPath = filepath.Join(finalDir, spec.ProgramName)
+	loaded.PinPath = filepath.Join(spec.PinPath, spec.ProgramName)
 	return loaded, nil
 }
 
@@ -280,24 +264,3 @@ func FilterUnmanaged(programs []ManagedProgram) []ManagedProgram {
 	return result
 }
 
-// mkTempPinDir creates a temporary directory alongside the final pin directory.
-// This ensures the temp and final directories are on the same filesystem,
-// allowing atomic rename during commit.
-func mkTempPinDir(finalDir string) (string, error) {
-	parent := filepath.Dir(finalDir)
-	tmpRoot := filepath.Join(parent, ".tmp")
-
-	if err := os.MkdirAll(tmpRoot, 0755); err != nil {
-		return "", fmt.Errorf("create temp pin root: %w", err)
-	}
-
-	// Use final dir name as prefix for easier debugging
-	prefix := filepath.Base(finalDir) + "-"
-
-	tmpDir, err := os.MkdirTemp(tmpRoot, prefix)
-	if err != nil {
-		return "", fmt.Errorf("create temp pin dir: %w", err)
-	}
-
-	return tmpDir, nil
-}
