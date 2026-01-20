@@ -366,6 +366,49 @@ Clear boundaries between:
 - How we decide (compute/)
 - How we do it (interpreter/)
 
+## Testing Philosophy
+
+The SANS-IO architecture enables a layered testing strategy. The principle is: **test at the level where the behaviour is defined**.
+
+### Test Levels
+
+**Server tests** (`pkg/bpfman/server/server_test.go`) - The primary test suite. These are behaviour specifications written in BDD style with Given/When/Then structure. They drive requests through the gRPC layer using a fake kernel and real in-memory SQLite, exercising the full request path without mocks.
+
+```go
+// TestLoadProgram_WithDuplicateName_IsRejected verifies that:
+//
+//     Given a server with one program already loaded using a name,
+//     When I attempt to load another program with the same name,
+//     Then the load fails with a unique constraint error.
+func TestLoadProgram_WithDuplicateName_IsRejected(t *testing.T) {
+    srv := newTestServer(t)
+    // ...
+}
+```
+
+**SQLite constraint tests** (`pkg/bpfman/interpreter/store/sqlite/sqlite_test.go`) - Verify schema correctness directly. Foreign key constraints and unique indexes are database-level guarantees; testing them at the store level provides clear failure messages when schema invariants are violated.
+
+**Pure function tests** (`pkg/bpfman/compute/`) - Test pure logic in isolation. These are trivially testable with no setup, no state, just input/output verification.
+
+### What We Don't Test
+
+**Manager-level integration tests** - The server tests already exercise the manager through the gRPC layer. Adding tests at the manager level would duplicate coverage and couple tests to an internal interface.
+
+**Mocked unit tests** - The SANS-IO architecture lets us test with real implementations (fake kernel + real SQLite). Mocking the store or kernel defeats the purpose of the architecture.
+
+### Test Helpers
+
+Tests use a `testLogger` helper that discards log output by default. Set `BPFMAN_TEST_VERBOSE=1` to enable structured logging during test runs for debugging.
+
+```go
+func testLogger() *slog.Logger {
+    if os.Getenv("BPFMAN_TEST_VERBOSE") != "" {
+        return slog.New(slog.NewTextHandler(os.Stderr, nil))
+    }
+    return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+```
+
 ## Migration Status
 
 Migration is complete. All code now uses the FP architecture:
