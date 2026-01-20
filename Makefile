@@ -93,7 +93,7 @@ csi-status:
 # Note: bpfman-proto is not a dependency here since pb files are committed.
 # Run 'make bpfman-proto' explicitly after modifying proto/bpfman.proto.
 bpfman-build:
-	CGO_ENABLED=1 go build -mod=vendor -o $(BIN_DIR)/bpfman ./cmd/bpfman
+	CGO_ENABLED=0 go build -mod=vendor -o $(BIN_DIR)/bpfman ./cmd/bpfman
 
 bpfman-clean:
 	$(RM) $(BIN_DIR)/bpfman
@@ -169,4 +169,4 @@ stats-reader-logs:
 	kubectl logs -f stats-reader
 
 # Combined targets
-delete-all: stats-reader-delete bpfman-delete csi-delete
+delete-all: stats-reader-delete bpfman-delete

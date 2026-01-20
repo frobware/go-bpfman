@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.4
-# Build stage for Go binary (uses cilium/ebpf and SQLite with CGO)
+# Build stage for Go binary (uses cilium/ebpf)
 ARG BUILDER_IMAGE=bpfman-builder:dev
 FROM ${BUILDER_IMAGE} AS builder
 
@@ -14,8 +14,6 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 
 # Runtime image
 FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
-
-RUN microdnf install -y sqlite-libs && microdnf clean all
 
 COPY --from=builder /build/bin/bpfman /usr/local/bin/
 COPY testdata/stats.o /opt/bpf/stats.o
