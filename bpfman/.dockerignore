@@ -1,1 +1,11 @@
+# Build output
 bpfman
+bin/
+
+# Not needed for build
+deploy/
+scripts/
+proto/
+*.md
+Makefile
+Dockerfile*
