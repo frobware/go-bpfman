@@ -66,6 +66,35 @@ type Attached struct {
 	AttachSpec  AttachSpec `json:"attach_spec"`
 }
 
+// ParseLinkType parses a string into a LinkType.
+// Returns the LinkType and true if valid, or empty string and false if invalid.
+func ParseLinkType(s string) (LinkType, bool) {
+	switch s {
+	case "tracepoint":
+		return LinkTypeTracepoint, true
+	case "kprobe":
+		return LinkTypeKprobe, true
+	case "kretprobe":
+		return LinkTypeKretprobe, true
+	case "uprobe":
+		return LinkTypeUprobe, true
+	case "uretprobe":
+		return LinkTypeUretprobe, true
+	case "fentry":
+		return LinkTypeFentry, true
+	case "fexit":
+		return LinkTypeFexit, true
+	case "xdp":
+		return LinkTypeXDP, true
+	case "tc":
+		return LinkTypeTC, true
+	case "tcx":
+		return LinkTypeTCX, true
+	default:
+		return "", false
+	}
+}
+
 // ToAttachType converts LinkType to bpfman.AttachType for backward compatibility.
 func (t LinkType) ToAttachType() bpfman.AttachType {
 	switch t {
