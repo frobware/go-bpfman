@@ -125,8 +125,8 @@ func (s *Store) migrate() error {
 // Only returns programs with state=loaded.
 func (s *Store) Get(ctx context.Context, kernelID uint32) (domain.ProgramMetadata, error) {
 	row := s.db.QueryRowContext(ctx,
-		"SELECT metadata FROM managed_programs WHERE kernel_id = ? AND state = 'loaded'",
-		kernelID)
+		"SELECT metadata FROM managed_programs WHERE kernel_id = ? AND state = ?",
+		kernelID, string(domain.StateLoaded))
 
 	var metadataJSON string
 	err := row.Scan(&metadataJSON)
@@ -191,8 +191,8 @@ func (s *Store) Save(ctx context.Context, kernelID uint32, metadata domain.Progr
 // Only returns programs with state=loaded.
 func (s *Store) GetByUUID(ctx context.Context, uuid string) (domain.ProgramMetadata, uint32, error) {
 	row := s.db.QueryRowContext(ctx,
-		"SELECT kernel_id, metadata FROM managed_programs WHERE uuid = ? AND state = 'loaded'",
-		uuid)
+		"SELECT kernel_id, metadata FROM managed_programs WHERE uuid = ? AND state = ?",
+		uuid, string(domain.StateLoaded))
 
 	var kernelID uint32
 	var metadataJSON string
@@ -224,7 +224,8 @@ func (s *Store) Delete(ctx context.Context, kernelID uint32) error {
 // Only returns programs with state=loaded.
 func (s *Store) List(ctx context.Context) (map[uint32]domain.ProgramMetadata, error) {
 	rows, err := s.db.QueryContext(ctx,
-		"SELECT kernel_id, metadata FROM managed_programs WHERE state = 'loaded'")
+		"SELECT kernel_id, metadata FROM managed_programs WHERE state = ?",
+		string(domain.StateLoaded))
 	if err != nil {
 		return nil, err
 	}
@@ -257,9 +258,9 @@ func (s *Store) FindProgramByMetadata(ctx context.Context, key, value string) (d
 		SELECT m.kernel_id, m.metadata
 		FROM managed_programs m
 		JOIN program_metadata_index i ON m.kernel_id = i.kernel_id
-		WHERE i.key = ? AND i.value = ? AND m.state = 'loaded'
+		WHERE i.key = ? AND i.value = ? AND m.state = ?
 		LIMIT 1
-	`, key, value)
+	`, key, value, string(domain.StateLoaded))
 
 	var kernelID uint32
 	var metadataJSON string
@@ -289,8 +290,8 @@ func (s *Store) FindAllProgramsByMetadata(ctx context.Context, key, value string
 		SELECT m.kernel_id, m.metadata
 		FROM managed_programs m
 		JOIN program_metadata_index i ON m.kernel_id = i.kernel_id
-		WHERE i.key = ? AND i.value = ? AND m.state = 'loaded'
-	`, key, value)
+		WHERE i.key = ? AND i.value = ? AND m.state = ?
+	`, key, value, string(domain.StateLoaded))
 	if err != nil {
 		return nil, err
 	}
@@ -338,15 +339,16 @@ func (s *Store) Reserve(ctx context.Context, uuid string, metadata domain.Progra
 
 	// Use kernel_id = 0 as placeholder for reservations.
 	// We'll update it when committing.
+	stateLoading := string(domain.StateLoading)
 	_, err = s.db.ExecContext(ctx,
 		`INSERT INTO managed_programs (kernel_id, uuid, metadata, created_at, state, updated_at, error_message)
-		 VALUES (0, ?, ?, ?, 'loading', ?, '')
+		 VALUES (0, ?, ?, ?, ?, ?, '')
 		 ON CONFLICT(kernel_id) DO UPDATE SET
 		   uuid = excluded.uuid,
 		   metadata = excluded.metadata,
-		   state = 'loading',
+		   state = ?,
 		   updated_at = excluded.updated_at`,
-		uuid, string(metadataJSON), now, now)
+		uuid, string(metadataJSON), now, stateLoading, now, stateLoading)
 	if err != nil {
 		return fmt.Errorf("failed to create reservation: %w", err)
 	}
@@ -368,8 +370,8 @@ func (s *Store) CommitReservation(ctx context.Context, uuid string, kernelID uin
 	// Get the existing metadata
 	var metadataJSON string
 	err = tx.QueryRowContext(ctx,
-		"SELECT metadata FROM managed_programs WHERE uuid = ? AND state = 'loading'",
-		uuid).Scan(&metadataJSON)
+		"SELECT metadata FROM managed_programs WHERE uuid = ? AND state = ?",
+		uuid, string(domain.StateLoading)).Scan(&metadataJSON)
 	if err == sql.ErrNoRows {
 		return fmt.Errorf("reservation %s: %w", uuid, store.ErrNotFound)
 	}
@@ -401,8 +403,8 @@ func (s *Store) CommitReservation(ctx context.Context, uuid string, kernelID uin
 
 	_, err = tx.ExecContext(ctx,
 		`INSERT INTO managed_programs (kernel_id, uuid, metadata, created_at, state, updated_at, error_message)
-		 VALUES (?, ?, ?, ?, 'loaded', ?, '')`,
-		kernelID, uuid, string(updatedJSON), metadata.CreatedAt.Format(time.RFC3339), now)
+		 VALUES (?, ?, ?, ?, ?, ?, '')`,
+		kernelID, uuid, string(updatedJSON), metadata.CreatedAt.Format(time.RFC3339), string(domain.StateLoaded), now)
 	if err != nil {
 		return fmt.Errorf("failed to insert committed program: %w", err)
 	}
@@ -426,9 +428,9 @@ func (s *Store) MarkError(ctx context.Context, uuid string, errMsg string) error
 
 	result, err := s.db.ExecContext(ctx,
 		`UPDATE managed_programs
-		 SET state = 'error', error_message = ?, updated_at = ?
+		 SET state = ?, error_message = ?, updated_at = ?
 		 WHERE uuid = ?`,
-		errMsg, now, uuid)
+		string(domain.StateError), errMsg, now, uuid)
 	if err != nil {
 		return fmt.Errorf("failed to mark error: %w", err)
 	}
