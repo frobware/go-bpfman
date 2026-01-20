@@ -1,4 +1,4 @@
-package domain
+package bpfman
 
 // ProgramType represents the type of BPF program.
 type ProgramType uint32
@@ -86,4 +86,29 @@ func ParseProgramType(s string) (ProgramType, bool) {
 	default:
 		return ProgramTypeUnspecified, false
 	}
+}
+
+// AttachType specifies the type of BPF program attachment.
+type AttachType string
+
+const (
+	AttachTracepoint AttachType = "tracepoint"
+	AttachKprobe     AttachType = "kprobe"
+	AttachKretprobe  AttachType = "kretprobe"
+)
+
+// AttachInfo describes how to attach a BPF program.
+type AttachInfo struct {
+	Type            AttachType `json:"type"`
+	TracepointGroup string     `json:"tracepoint_group,omitempty"`
+	TracepointName  string     `json:"tracepoint_name,omitempty"`
+	KprobeFunc      string     `json:"kprobe_func,omitempty"`
+	LinkPinPath     string     `json:"link_pin_path,omitempty"`
+}
+
+// AttachedLink is the result of successfully attaching a program.
+type AttachedLink struct {
+	ID      uint32     `json:"id,omitempty"`
+	PinPath string     `json:"pin_path,omitempty"`
+	Type    AttachType `json:"type"`
 }

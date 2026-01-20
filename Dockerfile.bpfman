@@ -12,8 +12,10 @@ COPY pkg/ pkg/
 RUN --mount=type=cache,target=/root/.cache/go-build \
     make bpfman-build
 
-# Runtime image
-FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
+# Runtime image - Fedora for bpftool availability
+FROM fedora:latest
+
+RUN dnf install -y sqlite bpftool && dnf clean all
 
 COPY --from=builder /build/bin/bpfman /usr/local/bin/
 COPY testdata/stats.o /opt/bpf/stats.o

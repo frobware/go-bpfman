@@ -1,14 +1,17 @@
-package domain
+package kernel
 
-// PinnedProgram represents a BPF program pinned on the filesystem.
-// Used for CLI output when scanning bpffs directories.
-type PinnedProgram struct {
-	ID         uint32   `json:"id"`
-	Name       string   `json:"name"`
-	Type       string   `json:"type"`
-	Tag        string   `json:"tag,omitempty"`
-	PinnedPath string   `json:"pinned_path"`
-	MapIDs     []uint32 `json:"map_ids,omitempty"`
+// Map represents a BPF map in the kernel.
+type Map struct {
+	ID         uint32  `json:"id"`
+	Name       string  `json:"name"`
+	MapType    string  `json:"map_type"`
+	KeySize    uint32  `json:"key_size"`
+	ValueSize  uint32  `json:"value_size"`
+	MaxEntries uint32  `json:"max_entries"`
+	Flags      uint32  `json:"flags,omitempty"`
+	BTFId      uint32  `json:"btf_id,omitempty"`
+	Memlock    *uint64 `json:"memlock,omitempty"`
+	Frozen     bool    `json:"frozen,omitempty"`
 }
 
 // PinnedMap represents a BPF map pinned on the filesystem.

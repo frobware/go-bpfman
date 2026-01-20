@@ -4,20 +4,21 @@ package compute
 
 import (
 	"github.com/frobware/go-bpfman/pkg/bpfman/action"
-	"github.com/frobware/go-bpfman/pkg/bpfman/domain"
+	"github.com/frobware/go-bpfman/pkg/bpfman/kernel"
+	"github.com/frobware/go-bpfman/pkg/bpfman/managed"
 )
 
 // ReconcileActions computes the actions needed to reconcile store state
 // with kernel state. This is a pure function - no I/O.
 func ReconcileActions(
-	stored map[uint32]domain.ProgramMetadata,
-	kernel []domain.KernelProgram,
+	stored map[uint32]managed.Program,
+	kps []kernel.Program,
 ) []action.Action {
 	var actions []action.Action
 
 	// Build set of kernel program IDs
-	kernelIDs := make(map[uint32]bool, len(kernel))
-	for _, kp := range kernel {
+	kernelIDs := make(map[uint32]bool, len(kps))
+	for _, kp := range kps {
 		kernelIDs[kp.ID] = true
 	}
 
@@ -34,11 +35,11 @@ func ReconcileActions(
 // OrphanedPrograms returns IDs of programs in store that no longer exist in kernel.
 // Pure function.
 func OrphanedPrograms(
-	stored map[uint32]domain.ProgramMetadata,
-	kernel []domain.KernelProgram,
+	stored map[uint32]managed.Program,
+	kps []kernel.Program,
 ) []uint32 {
-	kernelIDs := make(map[uint32]bool, len(kernel))
-	for _, kp := range kernel {
+	kernelIDs := make(map[uint32]bool, len(kps))
+	for _, kp := range kps {
 		kernelIDs[kp.ID] = true
 	}
 
@@ -54,11 +55,11 @@ func OrphanedPrograms(
 // UnmanagedPrograms returns kernel programs not tracked in the store.
 // Pure function.
 func UnmanagedPrograms(
-	stored map[uint32]domain.ProgramMetadata,
-	kernel []domain.KernelProgram,
-) []domain.KernelProgram {
-	var unmanaged []domain.KernelProgram
-	for _, kp := range kernel {
+	stored map[uint32]managed.Program,
+	kps []kernel.Program,
+) []kernel.Program {
+	var unmanaged []kernel.Program
+	for _, kp := range kps {
 		if _, exists := stored[kp.ID]; !exists {
 			unmanaged = append(unmanaged, kp)
 		}

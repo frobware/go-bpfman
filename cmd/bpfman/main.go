@@ -15,7 +15,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/frobware/go-bpfman/pkg/bpfman/domain"
+	"github.com/frobware/go-bpfman/pkg/bpfman/managed"
 	"github.com/frobware/go-bpfman/pkg/bpfman/manager"
 	"github.com/frobware/go-bpfman/pkg/bpfman/server"
 )
@@ -136,7 +136,7 @@ func cmdLoad(args []string) error {
 	pinDir := filepath.Join(server.DefaultBpfmanRoot, programUUID)
 
 	// Build load spec and options
-	spec := domain.LoadSpec{
+	spec := managed.LoadSpec{
 		ObjectPath:  objectPath,
 		ProgramName: programName,
 		PinPath:     pinDir,
@@ -235,14 +235,14 @@ func cmdList(args []string) error {
 	}
 
 	// Filter to only managed programs
-	managed := manager.FilterManaged(programs)
+	managedProgs := manager.FilterManaged(programs)
 
-	if len(managed) == 0 {
+	if len(managedProgs) == 0 {
 		fmt.Println("No managed programs found")
 		return nil
 	}
 
-	output, err := json.MarshalIndent(managed, "", "  ")
+	output, err := json.MarshalIndent(managedProgs, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal result: %w", err)
 	}

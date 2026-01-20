@@ -17,10 +17,11 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/frobware/go-bpfman/pkg/bpfman/domain"
-	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/kernel/ebpf"
+	"github.com/frobware/go-bpfman/pkg/bpfman"
+	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/ebpf"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/store"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/store/sqlite"
+	"github.com/frobware/go-bpfman/pkg/bpfman/managed"
 	"github.com/frobware/go-bpfman/pkg/bpfman/manager"
 	pb "github.com/frobware/go-bpfman/pkg/bpfman/server/pb"
 	"github.com/frobware/go-bpfman/pkg/csi/driver"
@@ -186,10 +187,10 @@ func (s *Server) Load(ctx context.Context, req *pb.LoadRequest) (*pb.LoadRespons
 
 	// Load each requested program using the manager (transactional)
 	for _, info := range req.Info {
-		spec := domain.LoadSpec{
+		spec := managed.LoadSpec{
 			ObjectPath:  objectPath,
 			ProgramName: info.Name,
-			ProgramType: protoToDomainType(info.ProgramType),
+			ProgramType: protoToBpfmanType(info.ProgramType),
 			PinPath:     pinDir,
 			GlobalData:  req.GlobalData,
 		}
@@ -399,26 +400,26 @@ func (s *Server) serve(ctx context.Context, socketPath string) error {
 	return grpcServer.Serve(listener)
 }
 
-// protoToDomainType converts proto program type to domain type.
-func protoToDomainType(pt pb.BpfmanProgramType) domain.ProgramType {
+// protoToBpfmanType converts proto program type to bpfman type.
+func protoToBpfmanType(pt pb.BpfmanProgramType) bpfman.ProgramType {
 	switch pt {
 	case pb.BpfmanProgramType_XDP:
-		return domain.ProgramTypeXDP
+		return bpfman.ProgramTypeXDP
 	case pb.BpfmanProgramType_TC:
-		return domain.ProgramTypeTC
+		return bpfman.ProgramTypeTC
 	case pb.BpfmanProgramType_TRACEPOINT:
-		return domain.ProgramTypeTracepoint
+		return bpfman.ProgramTypeTracepoint
 	case pb.BpfmanProgramType_KPROBE:
-		return domain.ProgramTypeKprobe
+		return bpfman.ProgramTypeKprobe
 	case pb.BpfmanProgramType_UPROBE:
-		return domain.ProgramTypeUprobe
+		return bpfman.ProgramTypeUprobe
 	case pb.BpfmanProgramType_FENTRY:
-		return domain.ProgramTypeFentry
+		return bpfman.ProgramTypeFentry
 	case pb.BpfmanProgramType_FEXIT:
-		return domain.ProgramTypeFexit
+		return bpfman.ProgramTypeFexit
 	case pb.BpfmanProgramType_TCX:
-		return domain.ProgramTypeTCX
+		return bpfman.ProgramTypeTCX
 	default:
-		return domain.ProgramTypeUnspecified
+		return bpfman.ProgramTypeUnspecified
 	}
 }

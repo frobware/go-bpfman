@@ -53,13 +53,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 
+	"github.com/frobware/go-bpfman/pkg/bpfman"
 	"github.com/frobware/go-bpfman/pkg/bpfman/compute"
-	"github.com/frobware/go-bpfman/pkg/bpfman/domain"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/store"
+	"github.com/frobware/go-bpfman/pkg/bpfman/kernel"
+	"github.com/frobware/go-bpfman/pkg/bpfman/managed"
 )
 
 // Manager orchestrates BPF program management using fetch/compute/execute.
@@ -96,23 +99,23 @@ type LoadOpts struct {
 // On any failure, previously completed steps are rolled back:
 //   - If pinning fails: delete reservation
 //   - If commit fails: unpin + mark error (or delete reservation)
-func (m *Manager) Load(ctx context.Context, spec domain.LoadSpec, opts LoadOpts) (domain.LoadedProgram, error) {
+func (m *Manager) Load(ctx context.Context, spec managed.LoadSpec, opts LoadOpts) (managed.Loaded, error) {
 	now := time.Now()
 
 	// Phase 1: Write reservation (state=loading)
-	metadata := domain.ProgramMetadata{
+	metadata := managed.Program{
 		LoadSpec:     spec,
 		UUID:         opts.UUID,
 		UserMetadata: opts.UserMetadata,
 		Tags:         nil,
 		Owner:        opts.Owner,
 		CreatedAt:    now,
-		State:        domain.StateLoading,
+		State:        managed.StateLoading,
 		UpdatedAt:    now,
 	}
 
 	if err := m.store.Reserve(ctx, opts.UUID, metadata); err != nil {
-		return domain.LoadedProgram{}, fmt.Errorf("create reservation: %w", err)
+		return managed.Loaded{}, fmt.Errorf("create reservation: %w", err)
 	}
 
 	// Track whether pinning succeeded for cleanup
@@ -128,22 +131,25 @@ func (m *Manager) Load(ctx context.Context, spec domain.LoadSpec, opts LoadOpts)
 	// Phase 2: Load and pin to final path directly
 	loaded, err := m.kernel.Load(ctx, spec)
 	if err != nil {
-		return domain.LoadedProgram{}, fmt.Errorf("load program %s: %w", spec.ProgramName, err)
+		return managed.Loaded{}, fmt.Errorf("load program %s: %w", spec.ProgramName, err)
 	}
 	pinned = true
+	fmt.Fprintf(os.Stderr, "[manager] loaded program %s with kernel_id=%d, pinned at %s\n", spec.ProgramName, loaded.ID, spec.PinPath)
 
 	// Phase 3: Commit reservation (state=loaded)
 	if err := m.store.CommitReservation(ctx, opts.UUID, loaded.ID); err != nil {
+		fmt.Fprintf(os.Stderr, "[manager] commit failed for kernel_id=%d: %v\n", loaded.ID, err)
 		// Commit failed - unpin and mark error
 		rbErr := m.kernel.Unload(ctx, spec.PinPath)
 		if rbErr == nil {
+			fmt.Fprintf(os.Stderr, "[manager] rollback succeeded: unloaded kernel_id=%d\n", loaded.ID)
 			// Rollback succeeded - delete reservation
 			_ = m.store.DeleteReservation(ctx, opts.UUID)
-			return domain.LoadedProgram{}, fmt.Errorf("commit reservation: %w", err)
+			return managed.Loaded{}, fmt.Errorf("commit reservation: %w", err)
 		}
 		// Rollback also failed - mark as error for reconciliation
 		_ = m.store.MarkError(ctx, opts.UUID, fmt.Sprintf("commit failed: %v; rollback failed: %v", err, rbErr))
-		return domain.LoadedProgram{}, errors.Join(
+		return managed.Loaded{}, errors.Join(
 			fmt.Errorf("commit reservation: %w", err),
 			fmt.Errorf("rollback pins at %q failed: %w", spec.PinPath, rbErr),
 		)
@@ -183,7 +189,7 @@ func (m *Manager) List(ctx context.Context) ([]ManagedProgram, error) {
 		return nil, err
 	}
 
-	var kernelPrograms []domain.KernelProgram
+	var kernelPrograms []kernel.Program
 	for kp, err := range m.kernel.Programs(ctx) {
 		if err != nil {
 			continue // Skip programs we can't read
@@ -203,7 +209,7 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 		return err
 	}
 
-	var kernelPrograms []domain.KernelProgram
+	var kernelPrograms []kernel.Program
 	for kp, err := range m.kernel.Programs(ctx) {
 		if err != nil {
 			continue
@@ -220,18 +226,18 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 
 // ManagedProgram combines kernel and metadata info.
 type ManagedProgram struct {
-	KernelProgram domain.KernelProgram
-	Metadata      *domain.ProgramMetadata // nil if not managed by bpfman
+	KernelProgram kernel.Program
+	Metadata      *managed.Program // nil if not managed by bpfman
 }
 
 // joinManagedPrograms is a pure function that joins kernel and store data.
 func joinManagedPrograms(
-	stored map[uint32]domain.ProgramMetadata,
-	kernel []domain.KernelProgram,
+	stored map[uint32]managed.Program,
+	kps []kernel.Program,
 ) []ManagedProgram {
-	result := make([]ManagedProgram, 0, len(kernel))
+	result := make([]ManagedProgram, 0, len(kps))
 
-	for _, kp := range kernel {
+	for _, kp := range kps {
 		mp := ManagedProgram{
 			KernelProgram: kp,
 		}
@@ -267,11 +273,11 @@ func FilterUnmanaged(programs []ManagedProgram) []ManagedProgram {
 }
 
 // Get retrieves a managed program by its kernel ID.
-func (m *Manager) Get(ctx context.Context, kernelID uint32) (domain.ProgramMetadata, error) {
+func (m *Manager) Get(ctx context.Context, kernelID uint32) (managed.Program, error) {
 	return m.store.Get(ctx, kernelID)
 }
 
 // AttachTracepoint attaches a pinned program to a tracepoint.
-func (m *Manager) AttachTracepoint(progPinPath, group, name, linkPinPath string) (*domain.AttachedLink, error) {
+func (m *Manager) AttachTracepoint(progPinPath, group, name, linkPinPath string) (*bpfman.AttachedLink, error) {
 	return m.kernel.AttachTracepoint(progPinPath, group, name, linkPinPath)
 }

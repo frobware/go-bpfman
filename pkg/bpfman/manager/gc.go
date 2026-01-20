@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/frobware/go-bpfman/pkg/bpfman/domain"
+	"github.com/frobware/go-bpfman/pkg/bpfman/managed"
 )
 
 // GCConfig configures garbage collection behaviour.
@@ -76,7 +76,7 @@ type GCItem struct {
 	Reason    GCReason
 	UUID      string
 	PinPath   string
-	State     domain.ProgramState
+	State     managed.State
 	UpdatedAt time.Time
 	Age       time.Duration
 	ErrorMsg  string
@@ -162,7 +162,7 @@ func (m *Manager) PlanGC(ctx context.Context, cfg GCConfig) (GCPlan, error) {
 }
 
 func (m *Manager) planStaleLoading(ctx context.Context, cfg GCConfig) ([]GCItem, error) {
-	entries, err := m.store.ListByState(ctx, domain.StateLoading)
+	entries, err := m.store.ListByState(ctx, managed.StateLoading)
 	if err != nil {
 		return nil, err
 	}
@@ -187,7 +187,7 @@ func (m *Manager) planStaleLoading(ctx context.Context, cfg GCConfig) ([]GCItem,
 }
 
 func (m *Manager) planErrorEntries(ctx context.Context, cfg GCConfig) ([]GCItem, error) {
-	entries, err := m.store.ListByState(ctx, domain.StateError)
+	entries, err := m.store.ListByState(ctx, managed.StateError)
 	if err != nil {
 		return nil, err
 	}
@@ -222,11 +222,11 @@ func (m *Manager) planOrphanPins(ctx context.Context, cfg GCConfig) ([]GCItem, e
 	}
 
 	// Also include loading/error entries (we don't want to double-report)
-	loading, _ := m.store.ListByState(ctx, domain.StateLoading)
+	loading, _ := m.store.ListByState(ctx, managed.StateLoading)
 	for _, e := range loading {
 		knownPaths[e.Metadata.LoadSpec.PinPath] = true
 	}
-	errors, _ := m.store.ListByState(ctx, domain.StateError)
+	errors, _ := m.store.ListByState(ctx, managed.StateError)
 	for _, e := range errors {
 		knownPaths[e.Metadata.LoadSpec.PinPath] = true
 	}

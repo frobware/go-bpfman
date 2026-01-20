@@ -4,23 +4,24 @@ import (
 	"testing"
 
 	"github.com/frobware/go-bpfman/pkg/bpfman/action"
-	"github.com/frobware/go-bpfman/pkg/bpfman/domain"
+	"github.com/frobware/go-bpfman/pkg/bpfman/kernel"
+	"github.com/frobware/go-bpfman/pkg/bpfman/managed"
 )
 
 func TestReconcileActions_OrphanedPrograms(t *testing.T) {
 	// Programs in store but not in kernel should be deleted
-	stored := map[uint32]domain.ProgramMetadata{
+	stored := map[uint32]managed.Program{
 		1: {Owner: "bpfman"},
 		2: {Owner: "bpfman"},
 		3: {Owner: "bpfman"},
 	}
 
-	kernel := []domain.KernelProgram{
+	kps := []kernel.Program{
 		{ID: 1, Name: "prog1"},
 		// ID 2 and 3 are gone from kernel
 	}
 
-	actions := ReconcileActions(stored, kernel)
+	actions := ReconcileActions(stored, kps)
 
 	// Should have 2 delete actions for IDs 2 and 3
 	if len(actions) != 2 {
@@ -42,16 +43,16 @@ func TestReconcileActions_OrphanedPrograms(t *testing.T) {
 }
 
 func TestReconcileActions_NoOrphans(t *testing.T) {
-	stored := map[uint32]domain.ProgramMetadata{
+	stored := map[uint32]managed.Program{
 		1: {Owner: "bpfman"},
 	}
 
-	kernel := []domain.KernelProgram{
+	kps := []kernel.Program{
 		{ID: 1, Name: "prog1"},
 		{ID: 2, Name: "prog2"}, // Unmanaged, not in store
 	}
 
-	actions := ReconcileActions(stored, kernel)
+	actions := ReconcileActions(stored, kps)
 
 	if len(actions) != 0 {
 		t.Fatalf("expected 0 actions, got %d", len(actions))
@@ -59,13 +60,13 @@ func TestReconcileActions_NoOrphans(t *testing.T) {
 }
 
 func TestReconcileActions_EmptyStore(t *testing.T) {
-	stored := map[uint32]domain.ProgramMetadata{}
+	stored := map[uint32]managed.Program{}
 
-	kernel := []domain.KernelProgram{
+	kps := []kernel.Program{
 		{ID: 1, Name: "prog1"},
 	}
 
-	actions := ReconcileActions(stored, kernel)
+	actions := ReconcileActions(stored, kps)
 
 	if len(actions) != 0 {
 		t.Fatalf("expected 0 actions, got %d", len(actions))
@@ -73,16 +74,16 @@ func TestReconcileActions_EmptyStore(t *testing.T) {
 }
 
 func TestOrphanedPrograms(t *testing.T) {
-	stored := map[uint32]domain.ProgramMetadata{
+	stored := map[uint32]managed.Program{
 		1: {Owner: "bpfman"},
 		2: {Owner: "bpfman"},
 	}
 
-	kernel := []domain.KernelProgram{
+	kps := []kernel.Program{
 		{ID: 1, Name: "prog1"},
 	}
 
-	orphaned := OrphanedPrograms(stored, kernel)
+	orphaned := OrphanedPrograms(stored, kps)
 
 	if len(orphaned) != 1 {
 		t.Fatalf("expected 1 orphaned, got %d", len(orphaned))
@@ -94,17 +95,17 @@ func TestOrphanedPrograms(t *testing.T) {
 }
 
 func TestUnmanagedPrograms(t *testing.T) {
-	stored := map[uint32]domain.ProgramMetadata{
+	stored := map[uint32]managed.Program{
 		1: {Owner: "bpfman"},
 	}
 
-	kernel := []domain.KernelProgram{
+	kps := []kernel.Program{
 		{ID: 1, Name: "prog1"},
 		{ID: 2, Name: "prog2"},
 		{ID: 3, Name: "prog3"},
 	}
 
-	unmanaged := UnmanagedPrograms(stored, kernel)
+	unmanaged := UnmanagedPrograms(stored, kps)
 
 	if len(unmanaged) != 2 {
 		t.Fatalf("expected 2 unmanaged, got %d", len(unmanaged))

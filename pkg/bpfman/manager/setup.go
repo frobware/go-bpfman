@@ -1,7 +1,7 @@
 package manager
 
 import (
-	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/kernel/ebpf"
+	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/ebpf"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/store/sqlite"
 )
 

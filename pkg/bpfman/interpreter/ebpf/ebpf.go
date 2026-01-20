@@ -11,7 +11,9 @@ import (
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
 
-	"github.com/frobware/go-bpfman/pkg/bpfman/domain"
+	"github.com/frobware/go-bpfman/pkg/bpfman"
+	"github.com/frobware/go-bpfman/pkg/bpfman/kernel"
+	"github.com/frobware/go-bpfman/pkg/bpfman/managed"
 )
 
 // Kernel implements interpreter.KernelOperations using cilium/ebpf.
@@ -23,8 +25,8 @@ func New() *Kernel {
 }
 
 // Programs returns an iterator over kernel BPF programs.
-func (k *Kernel) Programs(ctx context.Context) iter.Seq2[domain.KernelProgram, error] {
-	return func(yield func(domain.KernelProgram, error) bool) {
+func (k *Kernel) Programs(ctx context.Context) iter.Seq2[kernel.Program, error] {
+	return func(yield func(kernel.Program, error) bool) {
 		var id ebpf.ProgramID
 		for {
 			nextID, err := ebpf.ProgramGetNextID(id)
@@ -35,7 +37,7 @@ func (k *Kernel) Programs(ctx context.Context) iter.Seq2[domain.KernelProgram, e
 
 			prog, err := ebpf.NewProgramFromID(id)
 			if err != nil {
-				if !yield(domain.KernelProgram{}, err) {
+				if !yield(kernel.Program{}, err) {
 					return
 				}
 				continue
@@ -44,13 +46,13 @@ func (k *Kernel) Programs(ctx context.Context) iter.Seq2[domain.KernelProgram, e
 			info, err := prog.Info()
 			prog.Close()
 			if err != nil {
-				if !yield(domain.KernelProgram{}, err) {
+				if !yield(kernel.Program{}, err) {
 					return
 				}
 				continue
 			}
 
-			kp := infoToKernelProgram(info, uint32(id))
+			kp := infoToProgram(info, uint32(id))
 			if !yield(kp, nil) {
 				return
 			}
@@ -59,8 +61,8 @@ func (k *Kernel) Programs(ctx context.Context) iter.Seq2[domain.KernelProgram, e
 }
 
 // Maps returns an iterator over kernel BPF maps.
-func (k *Kernel) Maps(ctx context.Context) iter.Seq2[domain.KernelMap, error] {
-	return func(yield func(domain.KernelMap, error) bool) {
+func (k *Kernel) Maps(ctx context.Context) iter.Seq2[kernel.Map, error] {
+	return func(yield func(kernel.Map, error) bool) {
 		var id ebpf.MapID
 		for {
 			nextID, err := ebpf.MapGetNextID(id)
@@ -71,7 +73,7 @@ func (k *Kernel) Maps(ctx context.Context) iter.Seq2[domain.KernelMap, error] {
 
 			m, err := ebpf.NewMapFromID(id)
 			if err != nil {
-				if !yield(domain.KernelMap{}, err) {
+				if !yield(kernel.Map{}, err) {
 					return
 				}
 				continue
@@ -80,13 +82,13 @@ func (k *Kernel) Maps(ctx context.Context) iter.Seq2[domain.KernelMap, error] {
 			info, err := m.Info()
 			m.Close()
 			if err != nil {
-				if !yield(domain.KernelMap{}, err) {
+				if !yield(kernel.Map{}, err) {
 					return
 				}
 				continue
 			}
 
-			km := infoToKernelMap(info, uint32(id))
+			km := infoToMap(info, uint32(id))
 			if !yield(km, nil) {
 				return
 			}
@@ -95,8 +97,8 @@ func (k *Kernel) Maps(ctx context.Context) iter.Seq2[domain.KernelMap, error] {
 }
 
 // Links returns an iterator over kernel BPF links.
-func (k *Kernel) Links(ctx context.Context) iter.Seq2[domain.KernelLink, error] {
-	return func(yield func(domain.KernelLink, error) bool) {
+func (k *Kernel) Links(ctx context.Context) iter.Seq2[kernel.Link, error] {
+	return func(yield func(kernel.Link, error) bool) {
 		// Links iteration not directly supported, would need /sys/fs/bpf traversal
 		// For now, return empty iterator
 	}
@@ -107,16 +109,16 @@ func (k *Kernel) Links(ctx context.Context) iter.Seq2[domain.KernelLink, error] 
 // Creates the pin directory if it doesn't exist. On bpffs, directory
 // creation typically works with appropriate privileges (CAP_SYS_ADMIN
 // or mount with allow_other).
-func (k *Kernel) Load(ctx context.Context, spec domain.LoadSpec) (domain.LoadedProgram, error) {
+func (k *Kernel) Load(ctx context.Context, spec managed.LoadSpec) (managed.Loaded, error) {
 	// Create pin directory if it doesn't exist
 	if err := os.MkdirAll(spec.PinPath, 0755); err != nil {
-		return domain.LoadedProgram{}, fmt.Errorf("create pin directory %q: %w", spec.PinPath, err)
+		return managed.Loaded{}, fmt.Errorf("create pin directory %q: %w", spec.PinPath, err)
 	}
 
 	// Load the collection from the object file
 	collSpec, err := ebpf.LoadCollectionSpec(spec.ObjectPath)
 	if err != nil {
-		return domain.LoadedProgram{}, fmt.Errorf("failed to load collection spec: %w", err)
+		return managed.Loaded{}, fmt.Errorf("failed to load collection spec: %w", err)
 	}
 
 	// Set global data if provided
@@ -136,7 +138,7 @@ func (k *Kernel) Load(ctx context.Context, spec domain.LoadSpec) (domain.LoadedP
 
 	coll, err := ebpf.NewCollectionWithOptions(collSpec, *opts)
 	if err != nil {
-		return domain.LoadedProgram{}, fmt.Errorf("failed to load collection: %w", err)
+		return managed.Loaded{}, fmt.Errorf("failed to load collection: %w", err)
 	}
 	// Always close the collection - pinning creates kernel references
 	// that persist independently of the file descriptors we hold here.
@@ -145,13 +147,13 @@ func (k *Kernel) Load(ctx context.Context, spec domain.LoadSpec) (domain.LoadedP
 	// Find the requested program
 	prog, ok := coll.Programs[spec.ProgramName]
 	if !ok {
-		return domain.LoadedProgram{}, fmt.Errorf("program %q not found in collection", spec.ProgramName)
+		return managed.Loaded{}, fmt.Errorf("program %q not found in collection", spec.ProgramName)
 	}
 
 	// Pin the program
 	progPinPath := filepath.Join(spec.PinPath, spec.ProgramName)
 	if err := prog.Pin(progPinPath); err != nil {
-		return domain.LoadedProgram{}, fmt.Errorf("failed to pin program: %w", err)
+		return managed.Loaded{}, fmt.Errorf("failed to pin program: %w", err)
 	}
 
 	// Explicitly pin all maps
@@ -160,14 +162,14 @@ func (k *Kernel) Load(ctx context.Context, spec domain.LoadSpec) (domain.LoadedP
 		if err := m.Pin(mapPinPath); err != nil {
 			// Ignore if already pinned
 			if !os.IsExist(err) {
-				return domain.LoadedProgram{}, fmt.Errorf("failed to pin map %q: %w", name, err)
+				return managed.Loaded{}, fmt.Errorf("failed to pin map %q: %w", name, err)
 			}
 		}
 	}
 
 	info, err := prog.Info()
 	if err != nil {
-		return domain.LoadedProgram{}, fmt.Errorf("failed to get program info: %w", err)
+		return managed.Loaded{}, fmt.Errorf("failed to get program info: %w", err)
 	}
 
 	progID, _ := info.ID()
@@ -177,7 +179,7 @@ func (k *Kernel) Load(ctx context.Context, spec domain.LoadSpec) (domain.LoadedP
 		mapIDs[i] = uint32(mid)
 	}
 
-	return domain.LoadedProgram{
+	return managed.Loaded{
 		ID:          uint32(progID),
 		Name:        spec.ProgramName,
 		ProgramType: spec.ProgramType,
@@ -210,7 +212,7 @@ func (k *Kernel) Unload(ctx context.Context, pinPath string) error {
 	return nil
 }
 
-func infoToKernelProgram(info *ebpf.ProgramInfo, id uint32) domain.KernelProgram {
+func infoToProgram(info *ebpf.ProgramInfo, id uint32) kernel.Program {
 	name := info.Name
 	tag := info.Tag
 
@@ -220,7 +222,7 @@ func infoToKernelProgram(info *ebpf.ProgramInfo, id uint32) domain.KernelProgram
 		mapIDs[i] = uint32(mid)
 	}
 
-	return domain.KernelProgram{
+	return kernel.Program{
 		ID:          id,
 		Name:        name,
 		ProgramType: info.Type.String(),
@@ -229,8 +231,8 @@ func infoToKernelProgram(info *ebpf.ProgramInfo, id uint32) domain.KernelProgram
 	}
 }
 
-func infoToKernelMap(info *ebpf.MapInfo, id uint32) domain.KernelMap {
-	return domain.KernelMap{
+func infoToMap(info *ebpf.MapInfo, id uint32) kernel.Map {
+	return kernel.Map{
 		ID:         id,
 		Name:       info.Name,
 		MapType:    info.Type.String(),
@@ -246,13 +248,13 @@ func infoToKernelMap(info *ebpf.MapInfo, id uint32) domain.KernelMap {
 // ============================================================================
 
 // ListPinDir scans a bpffs directory and returns its contents.
-func (k *Kernel) ListPinDir(pinDir string, includeMaps bool) (*domain.PinDirContents, error) {
+func (k *Kernel) ListPinDir(pinDir string, includeMaps bool) (*kernel.PinDirContents, error) {
 	entries, err := os.ReadDir(pinDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read pin directory: %w", err)
 	}
 
-	result := &domain.PinDirContents{}
+	result := &kernel.PinDirContents{}
 
 	for _, entry := range entries {
 		if entry.IsDir() {
@@ -272,7 +274,7 @@ func (k *Kernel) ListPinDir(pinDir string, includeMaps bool) (*domain.PinDirCont
 				for i, mid := range ebpfMapIDs {
 					mapIDs[i] = uint32(mid)
 				}
-				result.Programs = append(result.Programs, domain.PinnedProgram{
+				result.Programs = append(result.Programs, kernel.PinnedProgram{
 					ID:         uint32(id),
 					Name:       info.Name,
 					Type:       prog.Type().String(),
@@ -292,7 +294,7 @@ func (k *Kernel) ListPinDir(pinDir string, includeMaps bool) (*domain.PinDirCont
 				info, _ := mp.Info()
 				if info != nil {
 					id, _ := info.ID()
-					result.Maps = append(result.Maps, domain.PinnedMap{
+					result.Maps = append(result.Maps, kernel.PinnedMap{
 						ID:         uint32(id),
 						Name:       info.Name,
 						Type:       info.Type.String(),
@@ -311,7 +313,7 @@ func (k *Kernel) ListPinDir(pinDir string, includeMaps bool) (*domain.PinDirCont
 }
 
 // GetPinned loads and returns info about a pinned program.
-func (k *Kernel) GetPinned(pinPath string) (*domain.PinnedProgram, error) {
+func (k *Kernel) GetPinned(pinPath string) (*kernel.PinnedProgram, error) {
 	prog, err := ebpf.LoadPinnedProgram(pinPath, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load pinned program: %w", err)
@@ -330,7 +332,7 @@ func (k *Kernel) GetPinned(pinPath string) (*domain.PinnedProgram, error) {
 		mapIDs[i] = uint32(mid)
 	}
 
-	return &domain.PinnedProgram{
+	return &kernel.PinnedProgram{
 		ID:         uint32(id),
 		Name:       info.Name,
 		Type:       prog.Type().String(),
@@ -343,13 +345,13 @@ func (k *Kernel) GetPinned(pinPath string) (*domain.PinnedProgram, error) {
 // LoadSingle loads a single program and returns CLI-friendly output.
 // This is a convenience method for CLI usage that creates the pin directory
 // if it doesn't exist. For transactional loads, use Manager.Load instead.
-func (k *Kernel) LoadSingle(ctx context.Context, objectPath, programName, pinDir string) (*domain.LoadResult, error) {
+func (k *Kernel) LoadSingle(ctx context.Context, objectPath, programName, pinDir string) (*kernel.LoadResult, error) {
 	// Create pin directory for CLI convenience
 	if err := os.MkdirAll(pinDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create pin directory: %w", err)
 	}
 
-	spec := domain.LoadSpec{
+	spec := managed.LoadSpec{
 		ObjectPath:  objectPath,
 		ProgramName: programName,
 		PinPath:     pinDir,
@@ -361,7 +363,7 @@ func (k *Kernel) LoadSingle(ctx context.Context, objectPath, programName, pinDir
 	}
 
 	// Get map info from the pin directory
-	var maps []domain.PinnedMap
+	var maps []kernel.PinnedMap
 	entries, _ := os.ReadDir(pinDir)
 	for _, entry := range entries {
 		if entry.IsDir() || entry.Name() == programName {
@@ -373,7 +375,7 @@ func (k *Kernel) LoadSingle(ctx context.Context, objectPath, programName, pinDir
 			info, _ := mp.Info()
 			if info != nil {
 				id, _ := info.ID()
-				maps = append(maps, domain.PinnedMap{
+				maps = append(maps, kernel.PinnedMap{
 					ID:         uint32(id),
 					Name:       info.Name,
 					Type:       info.Type.String(),
@@ -387,8 +389,8 @@ func (k *Kernel) LoadSingle(ctx context.Context, objectPath, programName, pinDir
 		}
 	}
 
-	return &domain.LoadResult{
-		Program: domain.PinnedProgram{
+	return &kernel.LoadResult{
+		Program: kernel.PinnedProgram{
 			ID:         loaded.ID,
 			Name:       loaded.Name,
 			Type:       loaded.ProgramType.String(),
@@ -452,7 +454,7 @@ func (k *Kernel) Unpin(pinDir string) (int, error) {
 }
 
 // AttachTracepoint attaches a pinned program to a tracepoint.
-func (k *Kernel) AttachTracepoint(progPinPath, group, name, linkPinPath string) (*domain.AttachedLink, error) {
+func (k *Kernel) AttachTracepoint(progPinPath, group, name, linkPinPath string) (*bpfman.AttachedLink, error) {
 	prog, err := ebpf.LoadPinnedProgram(progPinPath, nil)
 	if err != nil {
 		return nil, fmt.Errorf("load pinned program %s: %w", progPinPath, err)
@@ -464,8 +466,8 @@ func (k *Kernel) AttachTracepoint(progPinPath, group, name, linkPinPath string) 
 		return nil, fmt.Errorf("attach to tracepoint %s:%s: %w", group, name, err)
 	}
 
-	result := &domain.AttachedLink{
-		Type: domain.AttachTracepoint,
+	result := &bpfman.AttachedLink{
+		Type: bpfman.AttachTracepoint,
 	}
 
 	// Pin the link if a path is provided

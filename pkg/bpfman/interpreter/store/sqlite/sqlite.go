@@ -12,9 +12,9 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/frobware/go-bpfman/pkg/bpfman/domain"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/store"
+	"github.com/frobware/go-bpfman/pkg/bpfman/managed"
 )
 
 // Store implements interpreter.ProgramStore using SQLite.
@@ -29,7 +29,7 @@ func New(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("failed to create database directory: %w", err)
 	}
 
-	db, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)")
+	db, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
@@ -45,7 +45,7 @@ func New(dbPath string) (*Store, error) {
 
 // NewInMemory creates an in-memory SQLite store for testing.
 func NewInMemory() (*Store, error) {
-	db, err := sql.Open("sqlite", ":memory:")
+	db, err := sql.Open("sqlite", ":memory:?_pragma=foreign_keys(1)")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open in-memory database: %w", err)
 	}
@@ -120,36 +120,46 @@ func (s *Store) migrate() error {
 		return err
 	}
 
+	// Step 4: Enforce uniqueness for bpfman.io/ProgramName metadata.
+	// This partial unique index ensures no two programs can claim the same name.
+	// Failures here will trigger rollback in the manager's transactional load.
+	_, err = s.db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_program_name
+		ON program_metadata_index(value)
+		WHERE key = 'bpfman.io/ProgramName'`)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
 // Get retrieves program metadata by kernel ID.
 // Returns store.ErrNotFound if the program does not exist.
 // Only returns programs with state=loaded.
-func (s *Store) Get(ctx context.Context, kernelID uint32) (domain.ProgramMetadata, error) {
+func (s *Store) Get(ctx context.Context, kernelID uint32) (managed.Program, error) {
 	row := s.db.QueryRowContext(ctx,
 		"SELECT metadata FROM managed_programs WHERE kernel_id = ? AND state = ?",
-		kernelID, string(domain.StateLoaded))
+		kernelID, string(managed.StateLoaded))
 
 	var metadataJSON string
 	err := row.Scan(&metadataJSON)
 	if err == sql.ErrNoRows {
-		return domain.ProgramMetadata{}, fmt.Errorf("program %d: %w", kernelID, store.ErrNotFound)
+		return managed.Program{}, fmt.Errorf("program %d: %w", kernelID, store.ErrNotFound)
 	}
 	if err != nil {
-		return domain.ProgramMetadata{}, err
+		return managed.Program{}, err
 	}
 
-	var metadata domain.ProgramMetadata
+	var metadata managed.Program
 	if err := json.Unmarshal([]byte(metadataJSON), &metadata); err != nil {
-		return domain.ProgramMetadata{}, fmt.Errorf("failed to unmarshal metadata: %w", err)
+		return managed.Program{}, fmt.Errorf("failed to unmarshal metadata: %w", err)
 	}
 
 	return metadata, nil
 }
 
 // Save stores program metadata.
-func (s *Store) Save(ctx context.Context, kernelID uint32, metadata domain.ProgramMetadata) error {
+func (s *Store) Save(ctx context.Context, kernelID uint32, metadata managed.Program) error {
 	metadataJSON, err := json.Marshal(metadata)
 	if err != nil {
 		return fmt.Errorf("failed to marshal metadata: %w", err)
@@ -192,24 +202,24 @@ func (s *Store) Save(ctx context.Context, kernelID uint32, metadata domain.Progr
 // GetByUUID retrieves program metadata by UUID.
 // Returns store.ErrNotFound if the program does not exist.
 // Only returns programs with state=loaded.
-func (s *Store) GetByUUID(ctx context.Context, uuid string) (domain.ProgramMetadata, uint32, error) {
+func (s *Store) GetByUUID(ctx context.Context, uuid string) (managed.Program, uint32, error) {
 	row := s.db.QueryRowContext(ctx,
 		"SELECT kernel_id, metadata FROM managed_programs WHERE uuid = ? AND state = ?",
-		uuid, string(domain.StateLoaded))
+		uuid, string(managed.StateLoaded))
 
 	var kernelID uint32
 	var metadataJSON string
 	err := row.Scan(&kernelID, &metadataJSON)
 	if err == sql.ErrNoRows {
-		return domain.ProgramMetadata{}, 0, fmt.Errorf("uuid %s: %w", uuid, store.ErrNotFound)
+		return managed.Program{}, 0, fmt.Errorf("uuid %s: %w", uuid, store.ErrNotFound)
 	}
 	if err != nil {
-		return domain.ProgramMetadata{}, 0, err
+		return managed.Program{}, 0, err
 	}
 
-	var metadata domain.ProgramMetadata
+	var metadata managed.Program
 	if err := json.Unmarshal([]byte(metadataJSON), &metadata); err != nil {
-		return domain.ProgramMetadata{}, 0, fmt.Errorf("failed to unmarshal metadata: %w", err)
+		return managed.Program{}, 0, fmt.Errorf("failed to unmarshal metadata: %w", err)
 	}
 
 	return metadata, kernelID, nil
@@ -225,16 +235,16 @@ func (s *Store) Delete(ctx context.Context, kernelID uint32) error {
 
 // List returns all program metadata.
 // Only returns programs with state=loaded.
-func (s *Store) List(ctx context.Context) (map[uint32]domain.ProgramMetadata, error) {
+func (s *Store) List(ctx context.Context) (map[uint32]managed.Program, error) {
 	rows, err := s.db.QueryContext(ctx,
 		"SELECT kernel_id, metadata FROM managed_programs WHERE state = ?",
-		string(domain.StateLoaded))
+		string(managed.StateLoaded))
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	result := make(map[uint32]domain.ProgramMetadata)
+	result := make(map[uint32]managed.Program)
 	for rows.Next() {
 		var kernelID uint32
 		var metadataJSON string
@@ -242,7 +252,7 @@ func (s *Store) List(ctx context.Context) (map[uint32]domain.ProgramMetadata, er
 			return nil, err
 		}
 
-		var metadata domain.ProgramMetadata
+		var metadata managed.Program
 		if err := json.Unmarshal([]byte(metadataJSON), &metadata); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal metadata for %d: %w", kernelID, err)
 		}
@@ -256,28 +266,28 @@ func (s *Store) List(ctx context.Context) (map[uint32]domain.ProgramMetadata, er
 // FindProgramByMetadata finds a program by a specific metadata key/value pair.
 // Returns store.ErrNotFound if no program matches.
 // Only returns programs with state=loaded.
-func (s *Store) FindProgramByMetadata(ctx context.Context, key, value string) (domain.ProgramMetadata, uint32, error) {
+func (s *Store) FindProgramByMetadata(ctx context.Context, key, value string) (managed.Program, uint32, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT m.kernel_id, m.metadata
 		FROM managed_programs m
 		JOIN program_metadata_index i ON m.kernel_id = i.kernel_id
 		WHERE i.key = ? AND i.value = ? AND m.state = ?
 		LIMIT 1
-	`, key, value, string(domain.StateLoaded))
+	`, key, value, string(managed.StateLoaded))
 
 	var kernelID uint32
 	var metadataJSON string
 	err := row.Scan(&kernelID, &metadataJSON)
 	if err == sql.ErrNoRows {
-		return domain.ProgramMetadata{}, 0, fmt.Errorf("program with %s=%s: %w", key, value, store.ErrNotFound)
+		return managed.Program{}, 0, fmt.Errorf("program with %s=%s: %w", key, value, store.ErrNotFound)
 	}
 	if err != nil {
-		return domain.ProgramMetadata{}, 0, err
+		return managed.Program{}, 0, err
 	}
 
-	var metadata domain.ProgramMetadata
+	var metadata managed.Program
 	if err := json.Unmarshal([]byte(metadataJSON), &metadata); err != nil {
-		return domain.ProgramMetadata{}, 0, fmt.Errorf("failed to unmarshal metadata: %w", err)
+		return managed.Program{}, 0, fmt.Errorf("failed to unmarshal metadata: %w", err)
 	}
 
 	return metadata, kernelID, nil
@@ -287,14 +297,14 @@ func (s *Store) FindProgramByMetadata(ctx context.Context, key, value string) (d
 // Only returns programs with state=loaded.
 func (s *Store) FindAllProgramsByMetadata(ctx context.Context, key, value string) ([]struct {
 	KernelID uint32
-	Metadata domain.ProgramMetadata
+	Metadata managed.Program
 }, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT m.kernel_id, m.metadata
 		FROM managed_programs m
 		JOIN program_metadata_index i ON m.kernel_id = i.kernel_id
 		WHERE i.key = ? AND i.value = ? AND m.state = ?
-	`, key, value, string(domain.StateLoaded))
+	`, key, value, string(managed.StateLoaded))
 	if err != nil {
 		return nil, err
 	}
@@ -302,7 +312,7 @@ func (s *Store) FindAllProgramsByMetadata(ctx context.Context, key, value string
 
 	var result []struct {
 		KernelID uint32
-		Metadata domain.ProgramMetadata
+		Metadata managed.Program
 	}
 
 	for rows.Next() {
@@ -312,14 +322,14 @@ func (s *Store) FindAllProgramsByMetadata(ctx context.Context, key, value string
 			return nil, err
 		}
 
-		var metadata domain.ProgramMetadata
+		var metadata managed.Program
 		if err := json.Unmarshal([]byte(metadataJSON), &metadata); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal metadata for %d: %w", kernelID, err)
 		}
 
 		result = append(result, struct {
 			KernelID uint32
-			Metadata domain.ProgramMetadata
+			Metadata managed.Program
 		}{KernelID: kernelID, Metadata: metadata})
 	}
 
@@ -328,9 +338,9 @@ func (s *Store) FindAllProgramsByMetadata(ctx context.Context, key, value string
 
 // Reserve creates a loading reservation keyed by UUID.
 // The kernel_id is set to 0 (placeholder) since we don't know it yet.
-func (s *Store) Reserve(ctx context.Context, uuid string, metadata domain.ProgramMetadata) error {
+func (s *Store) Reserve(ctx context.Context, uuid string, metadata managed.Program) error {
 	// Ensure state is set to loading
-	metadata.State = domain.StateLoading
+	metadata.State = managed.StateLoading
 	metadata.UpdatedAt = time.Now()
 
 	metadataJSON, err := json.Marshal(metadata)
@@ -342,7 +352,7 @@ func (s *Store) Reserve(ctx context.Context, uuid string, metadata domain.Progra
 
 	// Use kernel_id = 0 as placeholder for reservations.
 	// We'll update it when committing.
-	stateLoading := string(domain.StateLoading)
+	stateLoading := string(managed.StateLoading)
 	_, err = s.db.ExecContext(ctx,
 		`INSERT INTO managed_programs (kernel_id, uuid, metadata, created_at, state, updated_at, error_message)
 		 VALUES (0, ?, ?, ?, ?, ?, '')
@@ -374,7 +384,7 @@ func (s *Store) CommitReservation(ctx context.Context, uuid string, kernelID uin
 	var metadataJSON string
 	err = tx.QueryRowContext(ctx,
 		"SELECT metadata FROM managed_programs WHERE uuid = ? AND state = ?",
-		uuid, string(domain.StateLoading)).Scan(&metadataJSON)
+		uuid, string(managed.StateLoading)).Scan(&metadataJSON)
 	if err == sql.ErrNoRows {
 		return fmt.Errorf("reservation %s: %w", uuid, store.ErrNotFound)
 	}
@@ -382,13 +392,13 @@ func (s *Store) CommitReservation(ctx context.Context, uuid string, kernelID uin
 		return fmt.Errorf("failed to get reservation: %w", err)
 	}
 
-	var metadata domain.ProgramMetadata
+	var metadata managed.Program
 	if err := json.Unmarshal([]byte(metadataJSON), &metadata); err != nil {
 		return fmt.Errorf("failed to unmarshal metadata: %w", err)
 	}
 
 	// Update state to loaded
-	metadata.State = domain.StateLoaded
+	metadata.State = managed.StateLoaded
 	metadata.UpdatedAt = time.Now()
 
 	updatedJSON, err := json.Marshal(metadata)
@@ -407,7 +417,7 @@ func (s *Store) CommitReservation(ctx context.Context, uuid string, kernelID uin
 	_, err = tx.ExecContext(ctx,
 		`INSERT INTO managed_programs (kernel_id, uuid, metadata, created_at, state, updated_at, error_message)
 		 VALUES (?, ?, ?, ?, ?, ?, '')`,
-		kernelID, uuid, string(updatedJSON), metadata.CreatedAt.Format(time.RFC3339), string(domain.StateLoaded), now)
+		kernelID, uuid, string(updatedJSON), metadata.CreatedAt.Format(time.RFC3339), string(managed.StateLoaded), now)
 	if err != nil {
 		return fmt.Errorf("failed to insert committed program: %w", err)
 	}
@@ -433,7 +443,7 @@ func (s *Store) MarkError(ctx context.Context, uuid string, errMsg string) error
 		`UPDATE managed_programs
 		 SET state = ?, error_message = ?, updated_at = ?
 		 WHERE uuid = ?`,
-		string(domain.StateError), errMsg, now, uuid)
+		string(managed.StateError), errMsg, now, uuid)
 	if err != nil {
 		return fmt.Errorf("failed to mark error: %w", err)
 	}
@@ -458,7 +468,7 @@ func (s *Store) DeleteReservation(ctx context.Context, uuid string) error {
 }
 
 // ListByState returns all entries with the given state.
-func (s *Store) ListByState(ctx context.Context, state domain.ProgramState) ([]interpreter.StateEntry, error) {
+func (s *Store) ListByState(ctx context.Context, state managed.State) ([]interpreter.StateEntry, error) {
 	rows, err := s.db.QueryContext(ctx,
 		"SELECT kernel_id, metadata FROM managed_programs WHERE state = ?",
 		string(state))
@@ -475,7 +485,7 @@ func (s *Store) ListByState(ctx context.Context, state domain.ProgramState) ([]i
 			return nil, err
 		}
 
-		var metadata domain.ProgramMetadata
+		var metadata managed.Program
 		if err := json.Unmarshal([]byte(metadataJSON), &metadata); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
 		}

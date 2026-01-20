@@ -2,7 +2,7 @@
 // without actually doing it. These are pure data structures.
 package action
 
-import "github.com/frobware/go-bpfman/pkg/bpfman/domain"
+import "github.com/frobware/go-bpfman/pkg/bpfman/managed"
 
 // Action represents an effect to be executed.
 // Actions are data - they describe what to do, not how.
@@ -15,7 +15,7 @@ type Action interface {
 // SaveProgram saves program metadata to the store.
 type SaveProgram struct {
 	KernelID uint32
-	Metadata domain.ProgramMetadata
+	Metadata managed.Program
 }
 
 func (SaveProgram) isAction() {}
@@ -31,7 +31,7 @@ func (DeleteProgram) isAction() {}
 
 // LoadProgram loads a BPF program into the kernel.
 type LoadProgram struct {
-	Spec domain.LoadSpec
+	Spec managed.LoadSpec
 }
 
 func (LoadProgram) isAction() {}

@@ -11,13 +11,13 @@ import (
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"google.golang.org/grpc"
 
-	"github.com/frobware/go-bpfman/pkg/bpfman/domain"
+	"github.com/frobware/go-bpfman/pkg/bpfman/managed"
 )
 
 // ProgramStore provides metadata lookup for BPF programs.
 type ProgramStore interface {
 	// FindProgramByMetadata finds a program by a metadata key/value pair.
-	FindProgramByMetadata(ctx context.Context, key, value string) (domain.ProgramMetadata, uint32, error)
+	FindProgramByMetadata(ctx context.Context, key, value string) (managed.Program, uint32, error)
 }
 
 // KernelOperations provides BPF map operations.
