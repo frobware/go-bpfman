@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"os"
 	"os/signal"
 	"strconv"
@@ -13,144 +12,86 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/frobware/go-bpfman/pkg/bpfman/domain"
-	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/kernel/ebpf"
-	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/store/sqlite"
+	"github.com/google/uuid"
+
 	"github.com/frobware/go-bpfman/pkg/bpfman/manager"
 	"github.com/frobware/go-bpfman/pkg/bpfman/server"
-	"github.com/frobware/go-bpfman/pkg/csi/driver"
 )
 
+const usageText = `Usage: bpfman <COMMAND>
+
+Commands:
+  serve   Start the gRPC server
+  load    Load an eBPF program from an object file
+          <object.o> <program-name> <pin-dir>
+          [-m KEY=VALUE] metadata to attach to the program
+          [--db PATH]    SQLite database path
+  attach  Attach a loaded program to a hook
+          attach tracepoint <prog-pin-path> <group> <name> [--link-pin-path <path>]
+          [--db PATH]    SQLite database path
+  unload  Unload a managed eBPF program by kernel ID
+          <program-id>
+          [--db PATH]    SQLite database path
+  list    List managed eBPF programs
+          [--pin-dir <dir>] Raw inspection mode (list pins in directory)
+          [--maps]       Include maps (raw inspection mode only)
+          [--db PATH]    SQLite database path
+  get     Get details of a program
+          <program-id>   Get managed program by kernel ID
+          [--pin-path <path>] Raw inspection mode (get pinned program)
+          [--db PATH]    SQLite database path
+  gc      Garbage collect stale/orphaned resources (dry-run by default)
+          [--prune]      Actually delete (default: dry-run)
+          [--ttl 5m]     Stale loading TTL (default: 5m)
+          [--loading]    Only stale loading reservations
+          [--errors]     Only error entries
+          [--orphans]    Only orphaned pins
+          [--db PATH]    SQLite database path
+          [--max N]      Maximum deletions (0=unlimited)
+  help    Print this message
+`
+
 func usage() {
-	fmt.Fprintf(os.Stderr, "Usage: %s <COMMAND>\n\n", os.Args[0])
-	fmt.Fprintf(os.Stderr, "Commands:\n")
-	fmt.Fprintf(os.Stderr, "  serve   Start the gRPC server\n")
-	fmt.Fprintf(os.Stderr, "  load    Load an eBPF program from an object file\n")
-	fmt.Fprintf(os.Stderr, "          [-m KEY=VALUE] metadata to attach to the program\n")
-	fmt.Fprintf(os.Stderr, "          [--db PATH]    SQLite database path (default: %s)\n", server.DefaultDBPath)
-	fmt.Fprintf(os.Stderr, "  attach  Attach a loaded program to a hook\n")
-	fmt.Fprintf(os.Stderr, "          attach tracepoint <prog-pin-path> <group> <name> [--link-pin-path <path>]\n")
-	fmt.Fprintf(os.Stderr, "  unload  Unload (unpin) an eBPF program\n")
-	fmt.Fprintf(os.Stderr, "  list    List pinned eBPF programs [--maps]\n")
-	fmt.Fprintf(os.Stderr, "  get     Get details of a pinned program\n")
-	fmt.Fprintf(os.Stderr, "  gc      Garbage collect stale/orphaned resources (dry-run by default)\n")
-	fmt.Fprintf(os.Stderr, "          [--prune]      Actually delete (default: dry-run)\n")
-	fmt.Fprintf(os.Stderr, "          [--ttl 5m]     Stale loading TTL (default: 5m)\n")
-	fmt.Fprintf(os.Stderr, "          [--loading]    Only stale loading reservations\n")
-	fmt.Fprintf(os.Stderr, "          [--errors]     Only error entries\n")
-	fmt.Fprintf(os.Stderr, "          [--orphans]    Only orphaned pins\n")
-	fmt.Fprintf(os.Stderr, "          [--db PATH]    SQLite database path (default: %s)\n", server.DefaultDBPath)
-	fmt.Fprintf(os.Stderr, "          [--max N]      Maximum deletions (0=unlimited)\n")
-	fmt.Fprintf(os.Stderr, "  help    Print this message\n")
+	fmt.Fprint(os.Stderr, usageText)
 	os.Exit(1)
 }
 
-// CSI driver constants
-const (
-	// DefaultCSISocketPath is the default Unix socket path for the CSI driver.
-	DefaultCSISocketPath = "/run/bpfman/csi/csi.sock"
-	// DefaultCSIDriverName is the default CSI driver name.
-	DefaultCSIDriverName = "csi.go-bpfman.io"
-	// DefaultCSIVersion is the default CSI driver version.
-	DefaultCSIVersion = "0.1.0"
-)
-
 func cmdServe(args []string) error {
-	socketPath := server.DefaultSocketPath
-	csiSupport := false
-	csiSocketPath := DefaultCSISocketPath
-	dbPath := server.DefaultDBPath
+	cfg := server.RunConfig{}
 
 	// Parse flags
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--socket":
 			if i+1 < len(args) {
-				socketPath = args[i+1]
+				cfg.SocketPath = args[i+1]
 				i++
 			}
 		case "--db":
 			if i+1 < len(args) {
-				dbPath = args[i+1]
+				cfg.DBPath = args[i+1]
 				i++
 			}
 		case "--csi-support":
-			csiSupport = true
+			cfg.CSISupport = true
 		case "--csi-socket":
 			if i+1 < len(args) {
-				csiSocketPath = args[i+1]
+				cfg.CSISocketPath = args[i+1]
 				i++
 			}
 		}
 	}
 
-	// Set up logging
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	// Create context that cancels on SIGINT/SIGTERM
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
 
-	// Open shared SQLite store
-	store, err := sqlite.New(dbPath)
-	if err != nil {
-		return fmt.Errorf("failed to open store at %s: %w", dbPath, err)
-	}
-	defer store.Close()
-
-	// Create kernel adapter
-	kernel := ebpf.New()
-
-	// Handle shutdown gracefully
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
-	// Track CSI driver for graceful shutdown
-	var csiDriver *driver.Driver
-
-	// Start CSI driver if enabled
-	if csiSupport {
-		nodeID, err := os.Hostname()
-		if err != nil {
-			return fmt.Errorf("failed to get hostname for node ID: %w", err)
-		}
-
-		csiDriver = driver.New(
-			DefaultCSIDriverName,
-			DefaultCSIVersion,
-			nodeID,
-			"unix://"+csiSocketPath,
-			logger,
-			driver.WithStore(store),
-			driver.WithKernel(kernel),
-		)
-
-		// Start CSI driver in a goroutine
-		go func() {
-			logger.Info("starting CSI driver",
-				"socket", csiSocketPath,
-				"driver", DefaultCSIDriverName,
-			)
-			if err := csiDriver.Run(); err != nil {
-				logger.Error("CSI driver failed", "error", err)
-			}
-		}()
-	}
-
-	// Handle shutdown
-	go func() {
-		sig := <-sigChan
-		logger.Info("received signal, shutting down", "signal", sig)
-		if csiDriver != nil {
-			csiDriver.Stop()
-		}
-		os.Exit(0)
-	}()
-
-	// Start bpfman gRPC server
-	srv := server.NewWithStore(store)
-	return srv.Serve(socketPath)
+	return server.Run(ctx, cfg)
 }
 
 func cmdLoad(args []string) error {
 	var objectPath, programName, pinDir string
-	var dbPath string
+	dbPath := server.DefaultDBPath
 	metadata := make(map[string]string)
 
 	// Parse flags and positional args
@@ -185,40 +126,59 @@ func cmdLoad(args []string) error {
 	programName = positional[1]
 	pinDir = positional[2]
 
-	// Load the program into the kernel
-	kernel := ebpf.New()
-	result, err := kernel.LoadSingle(context.Background(), objectPath, programName, pinDir)
+	// Set up manager
+	mgr, cleanup, err := manager.Setup(dbPath)
+	if err != nil {
+		return fmt.Errorf("failed to set up manager: %w", err)
+	}
+	defer cleanup()
+
+	// Generate UUID for the load
+	programUUID := uuid.New().String()
+
+	// Build load spec and options
+	spec := manager.LoadSpec{
+		ObjectPath:  objectPath,
+		ProgramName: programName,
+		PinPath:     pinDir,
+	}
+	opts := manager.LoadOpts{
+		UUID:         programUUID,
+		UserMetadata: metadata,
+	}
+
+	// Load through manager (transactional)
+	ctx := context.Background()
+	loaded, err := mgr.Load(ctx, spec, opts)
 	if err != nil {
 		return err
 	}
 
-	// Store metadata if any was provided or if db path was specified
-	if len(metadata) > 0 || dbPath != "" {
-		if dbPath == "" {
-			dbPath = server.DefaultDBPath
-		}
-
-		store, err := sqlite.New(dbPath)
-		if err != nil {
-			return fmt.Errorf("failed to open store at %s: %w", dbPath, err)
-		}
-		defer store.Close()
-
-		programMetadata := domain.ProgramMetadata{
-			LoadSpec: domain.LoadSpec{
-				ObjectPath:  objectPath,
-				ProgramName: programName,
-				PinPath:     pinDir,
-			},
-			UserMetadata: metadata,
-			CreatedAt:    time.Now(),
-		}
-
-		if err := store.Save(context.Background(), result.Program.ID, programMetadata); err != nil {
-			return fmt.Errorf("failed to save metadata: %w", err)
-		}
-
-		fmt.Fprintf(os.Stderr, "Stored metadata for program ID %d\n", result.Program.ID)
+	// Build result for output
+	result := struct {
+		Program struct {
+			ID      uint32 `json:"id"`
+			UUID    string `json:"uuid"`
+			Name    string `json:"name"`
+			Type    string `json:"type"`
+			PinPath string `json:"pin_path"`
+		} `json:"program"`
+		PinDir string `json:"pin_dir"`
+	}{
+		Program: struct {
+			ID      uint32 `json:"id"`
+			UUID    string `json:"uuid"`
+			Name    string `json:"name"`
+			Type    string `json:"type"`
+			PinPath string `json:"pin_path"`
+		}{
+			ID:      loaded.ID,
+			UUID:    programUUID,
+			Name:    loaded.Name,
+			Type:    loaded.ProgramType.String(),
+			PinPath: loaded.PinPath,
+		},
+		PinDir: pinDir,
 	}
 
 	output, err := json.MarshalIndent(result, "", "  ")
@@ -231,50 +191,117 @@ func cmdLoad(args []string) error {
 }
 
 func cmdUnload(args []string) error {
-	if len(args) != 1 {
-		return fmt.Errorf("usage: unload <pin-dir>")
+	dbPath := server.DefaultDBPath
+	var programID uint32
+
+	// Parse flags and positional args
+	positional := []string{}
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--db":
+			if i+1 < len(args) {
+				dbPath = args[i+1]
+				i++
+			}
+		default:
+			positional = append(positional, args[i])
+		}
 	}
 
-	pinDir := args[0]
+	if len(positional) != 1 {
+		return fmt.Errorf("usage: unload [--db <path>] <program-id>")
+	}
 
-	kernel := ebpf.New()
-	unpinned, err := kernel.Unpin(pinDir)
+	// Parse program ID
+	id, err := strconv.ParseUint(positional[0], 10, 32)
 	if err != nil {
+		return fmt.Errorf("invalid program ID %q: %w", positional[0], err)
+	}
+	programID = uint32(id)
+
+	// Set up manager
+	mgr, cleanup, err := manager.Setup(dbPath)
+	if err != nil {
+		return fmt.Errorf("failed to set up manager: %w", err)
+	}
+	defer cleanup()
+
+	ctx := context.Background()
+	if err := mgr.Unload(ctx, programID); err != nil {
 		return err
 	}
 
-	fmt.Printf("Unpinned %d objects\n", unpinned)
+	fmt.Printf("Unloaded program %d\n", programID)
 	return nil
 }
 
 func cmdList(args []string) error {
+	dbPath := server.DefaultDBPath
 	includeMaps := false
 	var pinDir string
 
-	for _, arg := range args {
-		if arg == "--maps" {
+	// Parse flags
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--maps":
 			includeMaps = true
-		} else if pinDir == "" {
-			pinDir = arg
+		case "--pin-dir":
+			if i+1 < len(args) {
+				pinDir = args[i+1]
+				i++
+			}
+		case "--db":
+			if i+1 < len(args) {
+				dbPath = args[i+1]
+				i++
+			}
 		}
 	}
 
-	if pinDir == "" {
-		return fmt.Errorf("usage: list [--maps] <pin-dir>")
+	// Set up manager
+	mgr, cleanup, err := manager.Setup(dbPath)
+	if err != nil {
+		return fmt.Errorf("failed to set up manager: %w", err)
+	}
+	defer cleanup()
+
+	// Raw inspection mode if --pin-dir is specified
+	if pinDir != "" {
+		result, err := mgr.ListPinDir(pinDir, includeMaps)
+		if err != nil {
+			return err
+		}
+
+		if len(result.Programs) == 0 && len(result.Maps) == 0 {
+			fmt.Println("No objects found")
+			return nil
+		}
+
+		output, err := json.MarshalIndent(result, "", "  ")
+		if err != nil {
+			return fmt.Errorf("failed to marshal result: %w", err)
+		}
+
+		fmt.Println(string(output))
+		return nil
 	}
 
-	kernel := ebpf.New()
-	result, err := kernel.ListPinDir(pinDir, includeMaps)
+	// Default: list managed programs
+	ctx := context.Background()
+	programs, err := mgr.List(ctx)
 	if err != nil {
 		return err
 	}
 
-	if len(result.Programs) == 0 && len(result.Maps) == 0 {
-		fmt.Println("No objects found")
+	// Filter to only managed programs
+	managed := manager.FilterManaged(programs)
+
+	if len(managed) == 0 {
+		fmt.Println("No managed programs found")
 		return nil
 	}
 
-	output, err := json.MarshalIndent(result, "", "  ")
+	output, err := json.MarshalIndent(managed, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal result: %w", err)
 	}
@@ -284,19 +311,69 @@ func cmdList(args []string) error {
 }
 
 func cmdGet(args []string) error {
-	if len(args) != 1 {
-		return fmt.Errorf("usage: get <pin-path>")
+	dbPath := server.DefaultDBPath
+	var pinPath string
+
+	// Parse flags and positional args
+	positional := []string{}
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--pin-path":
+			if i+1 < len(args) {
+				pinPath = args[i+1]
+				i++
+			}
+		case "--db":
+			if i+1 < len(args) {
+				dbPath = args[i+1]
+				i++
+			}
+		default:
+			positional = append(positional, args[i])
+		}
 	}
 
-	pinPath := args[0]
+	// Set up manager
+	mgr, cleanup, err := manager.Setup(dbPath)
+	if err != nil {
+		return fmt.Errorf("failed to set up manager: %w", err)
+	}
+	defer cleanup()
 
-	kernel := ebpf.New()
-	program, err := kernel.GetPinned(pinPath)
+	// Raw inspection mode if --pin-path is specified
+	if pinPath != "" {
+		program, err := mgr.GetPinned(pinPath)
+		if err != nil {
+			return err
+		}
+
+		output, err := json.MarshalIndent(program, "", "  ")
+		if err != nil {
+			return fmt.Errorf("failed to marshal result: %w", err)
+		}
+
+		fmt.Println(string(output))
+		return nil
+	}
+
+	// Get by program ID
+	if len(positional) != 1 {
+		return fmt.Errorf("usage: get [--db <path>] <program-id> or get --pin-path <path>")
+	}
+
+	id, err := strconv.ParseUint(positional[0], 10, 32)
+	if err != nil {
+		return fmt.Errorf("invalid program ID %q: %w", positional[0], err)
+	}
+	programID := uint32(id)
+
+	ctx := context.Background()
+	metadata, err := mgr.Get(ctx, programID)
 	if err != nil {
 		return err
 	}
 
-	output, err := json.MarshalIndent(program, "", "  ")
+	output, err := json.MarshalIndent(metadata, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal result: %w", err)
 	}
@@ -320,6 +397,7 @@ func cmdAttach(args []string) error {
 }
 
 func cmdAttachTracepoint(args []string) error {
+	dbPath := server.DefaultDBPath
 	var progPinPath, group, name, linkPinPath string
 
 	// Parse flags and positional args
@@ -331,21 +409,32 @@ func cmdAttachTracepoint(args []string) error {
 				linkPinPath = args[i+1]
 				i++
 			}
+		case "--db":
+			if i+1 < len(args) {
+				dbPath = args[i+1]
+				i++
+			}
 		default:
 			positional = append(positional, args[i])
 		}
 	}
 
 	if len(positional) != 3 {
-		return fmt.Errorf("usage: attach tracepoint <prog-pin-path> <group> <name> [--link-pin-path <path>]")
+		return fmt.Errorf("usage: attach tracepoint [--db <path>] <prog-pin-path> <group> <name> [--link-pin-path <path>]")
 	}
 
 	progPinPath = positional[0]
 	group = positional[1]
 	name = positional[2]
 
-	kernel := ebpf.New()
-	result, err := kernel.AttachTracepoint(progPinPath, group, name, linkPinPath)
+	// Set up manager
+	mgr, cleanup, err := manager.Setup(dbPath)
+	if err != nil {
+		return fmt.Errorf("failed to set up manager: %w", err)
+	}
+	defer cleanup()
+
+	result, err := mgr.AttachTracepoint(progPinPath, group, name, linkPinPath)
 	if err != nil {
 		return err
 	}
@@ -414,15 +503,12 @@ func cmdGC(args []string) error {
 		}
 	}
 
-	// Open store and create manager
-	store, err := sqlite.New(dbPath)
+	// Set up manager
+	mgr, cleanup, err := manager.Setup(dbPath)
 	if err != nil {
-		return fmt.Errorf("failed to open store at %s: %w", dbPath, err)
+		return fmt.Errorf("failed to set up manager: %w", err)
 	}
-	defer store.Close()
-
-	kernel := ebpf.New()
-	mgr := manager.New(store, kernel)
+	defer cleanup()
 
 	ctx := context.Background()
 

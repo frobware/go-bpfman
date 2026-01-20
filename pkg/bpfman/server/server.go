@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -22,6 +23,7 @@ import (
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/store/sqlite"
 	"github.com/frobware/go-bpfman/pkg/bpfman/manager"
 	pb "github.com/frobware/go-bpfman/pkg/bpfman/server/pb"
+	"github.com/frobware/go-bpfman/pkg/csi/driver"
 )
 
 const (
@@ -31,7 +33,92 @@ const (
 	DefaultDBPath = "/run/bpfman/state.db"
 	// DefaultBpfmanRoot is the default root directory for bpfman pins.
 	DefaultBpfmanRoot = "/sys/fs/bpf/bpfman"
+	// DefaultCSISocketPath is the default Unix socket path for the CSI driver.
+	DefaultCSISocketPath = "/run/bpfman/csi/csi.sock"
+	// DefaultCSIDriverName is the default CSI driver name.
+	DefaultCSIDriverName = "csi.go-bpfman.io"
+	// DefaultCSIVersion is the default CSI driver version.
+	DefaultCSIVersion = "0.1.0"
 )
+
+// RunConfig configures the server daemon.
+type RunConfig struct {
+	SocketPath    string
+	DBPath        string
+	CSISupport    bool
+	CSISocketPath string
+}
+
+// Run starts the bpfman daemon with the given configuration.
+// This is the main entry point for the serve command.
+// The context is used for cancellation - when cancelled, the server shuts down gracefully.
+func Run(ctx context.Context, cfg RunConfig) error {
+	if cfg.SocketPath == "" {
+		cfg.SocketPath = DefaultSocketPath
+	}
+	if cfg.DBPath == "" {
+		cfg.DBPath = DefaultDBPath
+	}
+	if cfg.CSISocketPath == "" {
+		cfg.CSISocketPath = DefaultCSISocketPath
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	// Open shared SQLite store
+	st, err := sqlite.New(cfg.DBPath)
+	if err != nil {
+		return fmt.Errorf("failed to open store at %s: %w", cfg.DBPath, err)
+	}
+	defer st.Close()
+
+	// Create kernel adapter
+	kernel := ebpf.New()
+
+	// Track CSI driver for graceful shutdown
+	var csiDriver *driver.Driver
+
+	// Start CSI driver if enabled
+	if cfg.CSISupport {
+		nodeID, err := os.Hostname()
+		if err != nil {
+			return fmt.Errorf("failed to get hostname for node ID: %w", err)
+		}
+
+		csiDriver = driver.New(
+			DefaultCSIDriverName,
+			DefaultCSIVersion,
+			nodeID,
+			"unix://"+cfg.CSISocketPath,
+			logger,
+			driver.WithStore(st),
+			driver.WithKernel(kernel),
+		)
+
+		go func() {
+			logger.Info("starting CSI driver",
+				"socket", cfg.CSISocketPath,
+				"driver", DefaultCSIDriverName,
+			)
+			if err := csiDriver.Run(); err != nil {
+				logger.Error("CSI driver failed", "error", err)
+			}
+		}()
+	}
+
+	// Handle context cancellation
+	go func() {
+		<-ctx.Done()
+		logger.Info("context cancelled, shutting down")
+		if csiDriver != nil {
+			csiDriver.Stop()
+		}
+	}()
+
+	// Start bpfman gRPC server
+	srv := newWithStore(st)
+	return srv.serve(ctx, cfg.SocketPath)
+}
 
 // Server implements the bpfman gRPC service.
 type Server struct {
@@ -44,18 +131,8 @@ type Server struct {
 	root   string
 }
 
-// New creates a new bpfman gRPC server.
-func New() *Server {
-	return &Server{
-		kernel: ebpf.New(),
-		root:   DefaultBpfmanRoot,
-	}
-}
-
-// NewWithStore creates a new bpfman gRPC server with a pre-configured store.
-// This is used when running with --csi-support to share the store between
-// bpfman and the CSI driver.
-func NewWithStore(store *sqlite.Store) *Server {
+// newWithStore creates a new bpfman gRPC server with a pre-configured store.
+func newWithStore(store *sqlite.Store) *Server {
 	return &Server{
 		kernel: ebpf.New(),
 		store:  store,
@@ -265,9 +342,9 @@ func (s *Server) PullBytecode(ctx context.Context, req *pb.PullBytecodeRequest) 
 	return nil, status.Error(codes.Unimplemented, "PullBytecode not yet implemented")
 }
 
-// Serve starts the gRPC server on the given socket path.
-func (s *Server) Serve(socketPath string) error {
-	// Open SQLite store if not already set (e.g., when using NewWithStore)
+// serve starts the gRPC server on the given socket path.
+func (s *Server) serve(ctx context.Context, socketPath string) error {
+	// Open SQLite store if not already set (e.g., when using newWithStore)
 	closeStore := false
 	if s.store == nil {
 		st, err := sqlite.New(DefaultDBPath)
@@ -307,9 +384,16 @@ func (s *Server) Serve(socketPath string) error {
 		return fmt.Errorf("failed to set socket permissions: %w", err)
 	}
 
-	// Create and start gRPC server
+	// Create gRPC server
 	grpcServer := grpc.NewServer()
 	pb.RegisterBpfmanServer(grpcServer, s)
+
+	// Handle context cancellation for graceful shutdown
+	go func() {
+		<-ctx.Done()
+		log.Printf("shutting down gRPC server")
+		grpcServer.GracefulStop()
+	}()
 
 	log.Printf("bpfman gRPC server listening on %s", socketPath)
 	return grpcServer.Serve(listener)

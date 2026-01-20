@@ -263,3 +263,26 @@ func FilterUnmanaged(programs []ManagedProgram) []ManagedProgram {
 	}
 	return result
 }
+
+// Get retrieves a managed program by its kernel ID.
+func (m *Manager) Get(ctx context.Context, kernelID uint32) (domain.ProgramMetadata, error) {
+	return m.store.Get(ctx, kernelID)
+}
+
+// ListPinDir provides raw inspection of a bpffs directory.
+// This is a pass-through to the kernel for backwards compatibility.
+func (m *Manager) ListPinDir(pinDir string, includeMaps bool) (*domain.PinDirContents, error) {
+	return m.kernel.ListPinDir(pinDir, includeMaps)
+}
+
+// GetPinned provides raw inspection of a pinned program.
+// This is a pass-through to the kernel for backwards compatibility.
+func (m *Manager) GetPinned(pinPath string) (*domain.PinnedProgram, error) {
+	return m.kernel.GetPinned(pinPath)
+}
+
+// AttachTracepoint attaches a pinned program to a tracepoint.
+// This is a pass-through to the kernel for backwards compatibility.
+func (m *Manager) AttachTracepoint(progPinPath, group, name, linkPinPath string) (*domain.AttachedLink, error) {
+	return m.kernel.AttachTracepoint(progPinPath, group, name, linkPinPath)
+}

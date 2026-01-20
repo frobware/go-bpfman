@@ -79,9 +79,25 @@ type ProgramUnloader interface {
 	Unload(ctx context.Context, pinPath string) error
 }
 
+// PinInspector provides raw inspection of bpffs pins.
+type PinInspector interface {
+	// ListPinDir scans a bpffs directory and returns its contents.
+	ListPinDir(pinDir string, includeMaps bool) (*domain.PinDirContents, error)
+	// GetPinned loads and returns info about a pinned program.
+	GetPinned(pinPath string) (*domain.PinnedProgram, error)
+}
+
+// ProgramAttacher attaches programs to hooks.
+type ProgramAttacher interface {
+	// AttachTracepoint attaches a pinned program to a tracepoint.
+	AttachTracepoint(progPinPath, group, name, linkPinPath string) (*domain.AttachedLink, error)
+}
+
 // KernelOperations combines all kernel operations.
 type KernelOperations interface {
 	KernelSource
 	ProgramLoader
 	ProgramUnloader
+	PinInspector
+	ProgramAttacher
 }
