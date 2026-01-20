@@ -53,7 +53,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
+	"log/slog"
 	"path/filepath"
 	"time"
 
@@ -70,14 +70,19 @@ type Manager struct {
 	store    interpreter.ProgramStore
 	kernel   interpreter.KernelOperations
 	executor *interpreter.Executor
+	logger   *slog.Logger
 }
 
 // New creates a new Manager.
-func New(store interpreter.ProgramStore, kernel interpreter.KernelOperations) *Manager {
+func New(store interpreter.ProgramStore, kernel interpreter.KernelOperations, logger *slog.Logger) *Manager {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &Manager{
 		store:    store,
 		kernel:   kernel,
 		executor: interpreter.NewExecutor(store, kernel),
+		logger:   logger.With("component", "manager"),
 	}
 }
 
@@ -134,15 +139,15 @@ func (m *Manager) Load(ctx context.Context, spec managed.LoadSpec, opts LoadOpts
 		return managed.Loaded{}, fmt.Errorf("load program %s: %w", spec.ProgramName, err)
 	}
 	pinned = true
-	fmt.Fprintf(os.Stderr, "[manager] loaded program %s with kernel_id=%d, pinned at %s\n", spec.ProgramName, loaded.ID, spec.PinPath)
+	m.logger.Info("loaded program", "name", spec.ProgramName, "kernel_id", loaded.ID, "pin_path", spec.PinPath)
 
 	// Phase 3: Commit reservation (state=loaded)
 	if err := m.store.CommitReservation(ctx, opts.UUID, loaded.ID); err != nil {
-		fmt.Fprintf(os.Stderr, "[manager] commit failed for kernel_id=%d: %v\n", loaded.ID, err)
+		m.logger.Error("commit failed", "kernel_id", loaded.ID, "error", err)
 		// Commit failed - unpin and mark error
 		rbErr := m.kernel.Unload(ctx, spec.PinPath)
 		if rbErr == nil {
-			fmt.Fprintf(os.Stderr, "[manager] rollback succeeded: unloaded kernel_id=%d\n", loaded.ID)
+			m.logger.Info("rollback succeeded", "kernel_id", loaded.ID)
 			// Rollback succeeded - delete reservation
 			_ = m.store.DeleteReservation(ctx, opts.UUID)
 			return managed.Loaded{}, fmt.Errorf("commit reservation: %w", err)

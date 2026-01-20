@@ -67,7 +67,7 @@ func Run(ctx context.Context, cfg RunConfig) error {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
 	// Open shared SQLite store
-	st, err := sqlite.New(cfg.DBPath)
+	st, err := sqlite.New(cfg.DBPath, logger)
 	if err != nil {
 		return fmt.Errorf("failed to open store at %s: %w", cfg.DBPath, err)
 	}
@@ -117,7 +117,7 @@ func Run(ctx context.Context, cfg RunConfig) error {
 	}()
 
 	// Start bpfman gRPC server
-	srv := newWithStore(st)
+	srv := newWithStore(st, logger)
 	return srv.serve(ctx, cfg.SocketPath)
 }
 
@@ -130,14 +130,19 @@ type Server struct {
 	store  *sqlite.Store
 	mgr    *manager.Manager
 	root   string
+	logger *slog.Logger
 }
 
 // newWithStore creates a new bpfman gRPC server with a pre-configured store.
-func newWithStore(store *sqlite.Store) *Server {
+func newWithStore(store *sqlite.Store, logger *slog.Logger) *Server {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &Server{
 		kernel: ebpf.New(),
 		store:  store,
 		root:   DefaultBpfmanRoot,
+		logger: logger.With("component", "server"),
 	}
 }
 
@@ -348,7 +353,7 @@ func (s *Server) serve(ctx context.Context, socketPath string) error {
 	// Open SQLite store if not already set (e.g., when using newWithStore)
 	closeStore := false
 	if s.store == nil {
-		st, err := sqlite.New(DefaultDBPath)
+		st, err := sqlite.New(DefaultDBPath, s.logger)
 		if err != nil {
 			return fmt.Errorf("failed to open store: %w", err)
 		}
@@ -360,7 +365,7 @@ func (s *Server) serve(ctx context.Context, socketPath string) error {
 	}
 
 	// Create manager for transactional load/unload operations
-	s.mgr = manager.New(s.store, s.kernel)
+	s.mgr = manager.New(s.store, s.kernel, s.logger)
 
 	// Ensure socket directory exists
 	socketDir := filepath.Dir(socketPath)

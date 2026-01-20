@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -125,7 +126,7 @@ func cmdLoad(args []string) error {
 	programName = positional[1]
 
 	// Set up manager
-	mgr, cleanup, err := manager.Setup(dbPath)
+	mgr, cleanup, err := manager.Setup(dbPath, slog.New(slog.NewTextHandler(os.Stderr, nil)))
 	if err != nil {
 		return fmt.Errorf("failed to set up manager: %w", err)
 	}
@@ -192,7 +193,7 @@ func cmdUnload(args []string) error {
 	programID = uint32(id)
 
 	// Set up manager
-	mgr, cleanup, err := manager.Setup(dbPath)
+	mgr, cleanup, err := manager.Setup(dbPath, slog.New(slog.NewTextHandler(os.Stderr, nil)))
 	if err != nil {
 		return fmt.Errorf("failed to set up manager: %w", err)
 	}
@@ -222,7 +223,7 @@ func cmdList(args []string) error {
 	}
 
 	// Set up manager
-	mgr, cleanup, err := manager.Setup(dbPath)
+	mgr, cleanup, err := manager.Setup(dbPath, slog.New(slog.NewTextHandler(os.Stderr, nil)))
 	if err != nil {
 		return fmt.Errorf("failed to set up manager: %w", err)
 	}
@@ -279,7 +280,7 @@ func cmdGet(args []string) error {
 	programID := uint32(id)
 
 	// Set up manager
-	mgr, cleanup, err := manager.Setup(dbPath)
+	mgr, cleanup, err := manager.Setup(dbPath, slog.New(slog.NewTextHandler(os.Stderr, nil)))
 	if err != nil {
 		return fmt.Errorf("failed to set up manager: %w", err)
 	}
@@ -346,7 +347,7 @@ func cmdAttachTracepoint(args []string) error {
 	name = positional[2]
 
 	// Set up manager
-	mgr, cleanup, err := manager.Setup(dbPath)
+	mgr, cleanup, err := manager.Setup(dbPath, slog.New(slog.NewTextHandler(os.Stderr, nil)))
 	if err != nil {
 		return fmt.Errorf("failed to set up manager: %w", err)
 	}
@@ -422,7 +423,7 @@ func cmdGC(args []string) error {
 	}
 
 	// Set up manager
-	mgr, cleanup, err := manager.Setup(dbPath)
+	mgr, cleanup, err := manager.Setup(dbPath, slog.New(slog.NewTextHandler(os.Stderr, nil)))
 	if err != nil {
 		return fmt.Errorf("failed to set up manager: %w", err)
 	}

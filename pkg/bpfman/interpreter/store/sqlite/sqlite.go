@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
@@ -19,11 +20,17 @@ import (
 
 // Store implements interpreter.ProgramStore using SQLite.
 type Store struct {
-	db *sql.DB
+	db     *sql.DB
+	logger *slog.Logger
 }
 
 // New creates a new SQLite store at the given path.
-func New(dbPath string) (*Store, error) {
+func New(dbPath string, logger *slog.Logger) (*Store, error) {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	logger = logger.With("component", "store")
+
 	dir := filepath.Dir(dbPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create database directory: %w", err)
@@ -34,28 +41,35 @@ func New(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
-	s := &Store{db: db}
+	s := &Store{db: db, logger: logger}
 	if err := s.migrate(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
 
+	logger.Info("opened database", "path", dbPath)
 	return s, nil
 }
 
 // NewInMemory creates an in-memory SQLite store for testing.
-func NewInMemory() (*Store, error) {
+func NewInMemory(logger *slog.Logger) (*Store, error) {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	logger = logger.With("component", "store")
+
 	db, err := sql.Open("sqlite", ":memory:?_pragma=foreign_keys(1)")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open in-memory database: %w", err)
 	}
 
-	s := &Store{db: db}
+	s := &Store{db: db, logger: logger}
 	if err := s.migrate(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
 
+	logger.Info("opened in-memory database")
 	return s, nil
 }
 
@@ -196,7 +210,11 @@ func (s *Store) Save(ctx context.Context, kernelID uint32, metadata managed.Prog
 		}
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.logger.Debug("saved program", "kernel_id", kernelID, "uuid", metadata.UUID)
+	return nil
 }
 
 // GetByUUID retrieves program metadata by UUID.
@@ -230,6 +248,9 @@ func (s *Store) Delete(ctx context.Context, kernelID uint32) error {
 	_, err := s.db.ExecContext(ctx,
 		"DELETE FROM managed_programs WHERE kernel_id = ?",
 		kernelID)
+	if err == nil {
+		s.logger.Debug("deleted program", "kernel_id", kernelID)
+	}
 	return err
 }
 
@@ -366,6 +387,7 @@ func (s *Store) Reserve(ctx context.Context, uuid string, metadata managed.Progr
 		return fmt.Errorf("failed to create reservation: %w", err)
 	}
 
+	s.logger.Debug("created reservation", "uuid", uuid)
 	return nil
 }
 
@@ -432,7 +454,11 @@ func (s *Store) CommitReservation(ctx context.Context, uuid string, kernelID uin
 		}
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.logger.Debug("committed reservation", "uuid", uuid, "kernel_id", kernelID)
+	return nil
 }
 
 // MarkError transitions a reservation to error state.
@@ -456,6 +482,7 @@ func (s *Store) MarkError(ctx context.Context, uuid string, errMsg string) error
 		return fmt.Errorf("reservation %s: %w", uuid, store.ErrNotFound)
 	}
 
+	s.logger.Debug("marked error", "uuid", uuid, "error", errMsg)
 	return nil
 }
 
@@ -464,6 +491,9 @@ func (s *Store) DeleteReservation(ctx context.Context, uuid string) error {
 	_, err := s.db.ExecContext(ctx,
 		"DELETE FROM managed_programs WHERE uuid = ?",
 		uuid)
+	if err == nil {
+		s.logger.Debug("deleted reservation", "uuid", uuid)
+	}
 	return err
 }
 
