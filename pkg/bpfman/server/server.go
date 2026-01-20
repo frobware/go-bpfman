@@ -18,6 +18,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/frobware/go-bpfman/pkg/bpfman"
+	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/ebpf"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/store"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/store/sqlite"
@@ -126,8 +127,8 @@ type Server struct {
 	pb.UnimplementedBpfmanServer
 
 	mu     sync.RWMutex
-	kernel *ebpf.Kernel
-	store  *sqlite.Store
+	kernel interpreter.KernelOperations
+	store  interpreter.Store
 	mgr    *manager.Manager
 	root   string
 	logger *slog.Logger
@@ -144,6 +145,21 @@ func newWithStore(store *sqlite.Store, logger *slog.Logger) *Server {
 		root:   DefaultBpfmanRoot,
 		logger: logger.With("component", "server"),
 	}
+}
+
+// NewForTest creates a server with injected dependencies for testing.
+func NewForTest(store interpreter.Store, kernel interpreter.KernelOperations, logger *slog.Logger) *Server {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	s := &Server{
+		kernel: kernel,
+		store:  store,
+		root:   "/sys/fs/bpf/test",
+		logger: logger.With("component", "server"),
+	}
+	s.mgr = manager.New(store, kernel, logger)
+	return s
 }
 
 // Load implements the Load RPC method.
@@ -361,7 +377,9 @@ func (s *Server) serve(ctx context.Context, socketPath string) error {
 		closeStore = true
 	}
 	if closeStore {
-		defer s.store.Close()
+		if closer, ok := s.store.(interface{ Close() error }); ok {
+			defer closer.Close()
+		}
 	}
 
 	// Create manager for transactional load/unload operations
