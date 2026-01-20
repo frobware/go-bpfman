@@ -28,6 +28,9 @@ type KernelOperations interface {
 
 // Driver implements a minimal CSI driver for learning purposes.
 type Driver struct {
+	csi.UnimplementedIdentityServer
+	csi.UnimplementedNodeServer
+
 	name     string
 	version  string
 	nodeID   string
