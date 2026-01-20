@@ -1,4 +1,26 @@
-.PHONY: build test clean docker-build-csi kind-load deploy-driver delete-driver redeploy logs logs-registrar status deploy-app-pod delete-app-pod delete-all docker-build-bpfman docker-build-bpfman-builder docker-clean-bpfman-builder kind-load-bpfman deploy-bpfman delete-bpfman logs-bpfman deploy-bpfman-test delete-bpfman-test bpfman-proto bpfman-clean bpfman-build bpfman-test-grpc
+.PHONY: help build test clean docker-build-csi kind-load deploy-driver delete-driver redeploy logs logs-registrar status deploy-app-pod delete-app-pod delete-all docker-build-bpfman docker-build-bpfman-builder docker-clean-bpfman-builder kind-load-bpfman deploy-bpfman delete-bpfman logs-bpfman deploy-bpfman-test delete-bpfman-test bpfman-proto bpfman-clean bpfman-build bpfman-test-grpc
+
+help:
+	@echo "CSI Driver:"
+	@echo "  build              Build csi-driver binary"
+	@echo "  test               Run csi-driver tests"
+	@echo "  docker-build-csi   Build csi-driver container image"
+	@echo "  deploy-driver      Deploy csi-driver to kind cluster"
+	@echo "  delete-driver      Remove csi-driver from cluster"
+	@echo ""
+	@echo "bpfman:"
+	@echo "  bpfman-build       Build bpfman binary"
+	@echo "  bpfman-proto       Generate protobuf/gRPC stubs"
+	@echo "  bpfman-clean       Remove generated files and binary"
+	@echo "  docker-build-bpfman Build bpfman container image"
+	@echo "  deploy-bpfman      Deploy bpfman to kind cluster"
+	@echo "  delete-bpfman      Remove bpfman from cluster"
+	@echo "  bpfman-test-grpc   Run gRPC integration tests"
+	@echo ""
+	@echo "Combined:"
+	@echo "  deploy-app-pod     Deploy test pod with CSI volume"
+	@echo "  delete-all         Remove all components"
+	@echo "  clean              Remove all build artifacts"
 
 IMAGE_NAME ?= bpffs-csi-driver
 IMAGE_TAG ?= dev
