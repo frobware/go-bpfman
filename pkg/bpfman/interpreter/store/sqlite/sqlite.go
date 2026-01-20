@@ -73,6 +73,17 @@ func (s *Store) migrate() error {
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_managed_programs_uuid ON managed_programs(uuid);
+
+	-- Index table for fast metadata key/value lookups (used by CSI)
+	CREATE TABLE IF NOT EXISTS program_metadata_index (
+		kernel_id INTEGER NOT NULL,
+		key TEXT NOT NULL,
+		value TEXT NOT NULL,
+		PRIMARY KEY (kernel_id, key),
+		FOREIGN KEY (kernel_id) REFERENCES managed_programs(kernel_id) ON DELETE CASCADE
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_program_metadata_key_value ON program_metadata_index(key, value);
 	`
 	_, err := s.db.Exec(schema)
 	return err
@@ -109,10 +120,38 @@ func (s *Store) Save(ctx context.Context, kernelID uint32, metadata domain.Progr
 		return fmt.Errorf("failed to marshal metadata: %w", err)
 	}
 
-	_, err = s.db.ExecContext(ctx,
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	_, err = tx.ExecContext(ctx,
 		"INSERT OR REPLACE INTO managed_programs (kernel_id, uuid, metadata, created_at) VALUES (?, ?, ?, ?)",
 		kernelID, metadata.UUID, string(metadataJSON), time.Now().Format(time.RFC3339))
-	return err
+	if err != nil {
+		return fmt.Errorf("failed to insert program: %w", err)
+	}
+
+	// Clear old metadata index entries for this program
+	_, err = tx.ExecContext(ctx,
+		"DELETE FROM program_metadata_index WHERE kernel_id = ?",
+		kernelID)
+	if err != nil {
+		return fmt.Errorf("failed to clear metadata index: %w", err)
+	}
+
+	// Insert metadata index entries for UserMetadata
+	for key, value := range metadata.UserMetadata {
+		_, err = tx.ExecContext(ctx,
+			"INSERT INTO program_metadata_index (kernel_id, key, value) VALUES (?, ?, ?)",
+			kernelID, key, value)
+		if err != nil {
+			return fmt.Errorf("failed to insert metadata index: %w", err)
+		}
+	}
+
+	return tx.Commit()
 }
 
 // GetByUUID retrieves program metadata by UUID.
@@ -171,6 +210,77 @@ func (s *Store) List(ctx context.Context) (map[uint32]domain.ProgramMetadata, er
 		}
 
 		result[kernelID] = metadata
+	}
+
+	return result, rows.Err()
+}
+
+// FindProgramByMetadata finds a program by a specific metadata key/value pair.
+// Returns store.ErrNotFound if no program matches.
+func (s *Store) FindProgramByMetadata(ctx context.Context, key, value string) (domain.ProgramMetadata, uint32, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT m.kernel_id, m.metadata
+		FROM managed_programs m
+		JOIN program_metadata_index i ON m.kernel_id = i.kernel_id
+		WHERE i.key = ? AND i.value = ?
+		LIMIT 1
+	`, key, value)
+
+	var kernelID uint32
+	var metadataJSON string
+	err := row.Scan(&kernelID, &metadataJSON)
+	if err == sql.ErrNoRows {
+		return domain.ProgramMetadata{}, 0, fmt.Errorf("program with %s=%s: %w", key, value, store.ErrNotFound)
+	}
+	if err != nil {
+		return domain.ProgramMetadata{}, 0, err
+	}
+
+	var metadata domain.ProgramMetadata
+	if err := json.Unmarshal([]byte(metadataJSON), &metadata); err != nil {
+		return domain.ProgramMetadata{}, 0, fmt.Errorf("failed to unmarshal metadata: %w", err)
+	}
+
+	return metadata, kernelID, nil
+}
+
+// FindAllProgramsByMetadata finds all programs with a specific metadata key/value pair.
+func (s *Store) FindAllProgramsByMetadata(ctx context.Context, key, value string) ([]struct {
+	KernelID uint32
+	Metadata domain.ProgramMetadata
+}, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT m.kernel_id, m.metadata
+		FROM managed_programs m
+		JOIN program_metadata_index i ON m.kernel_id = i.kernel_id
+		WHERE i.key = ? AND i.value = ?
+	`, key, value)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []struct {
+		KernelID uint32
+		Metadata domain.ProgramMetadata
+	}
+
+	for rows.Next() {
+		var kernelID uint32
+		var metadataJSON string
+		if err := rows.Scan(&kernelID, &metadataJSON); err != nil {
+			return nil, err
+		}
+
+		var metadata domain.ProgramMetadata
+		if err := json.Unmarshal([]byte(metadataJSON), &metadata); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal metadata for %d: %w", kernelID, err)
+		}
+
+		result = append(result, struct {
+			KernelID uint32
+			Metadata domain.ProgramMetadata
+		}{KernelID: kernelID, Metadata: metadata})
 	}
 
 	return result, rows.Err()

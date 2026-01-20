@@ -378,6 +378,21 @@ func (k *Kernel) LoadSingle(ctx context.Context, objectPath, programName, pinDir
 	}, nil
 }
 
+// RepinMap loads a pinned map and re-pins it to a new path.
+// This is used by CSI to expose maps to per-pod bpffs.
+func (k *Kernel) RepinMap(srcPath, dstPath string) error {
+	m, err := ebpf.LoadPinnedMap(srcPath, nil)
+	if err != nil {
+		return fmt.Errorf("load pinned map %s: %w", srcPath, err)
+	}
+	defer m.Close()
+
+	if err := m.Pin(dstPath); err != nil {
+		return fmt.Errorf("re-pin map to %s: %w", dstPath, err)
+	}
+	return nil
+}
+
 // Unpin removes all pins from a directory.
 func (k *Kernel) Unpin(pinDir string) (int, error) {
 	entries, err := os.ReadDir(pinDir)

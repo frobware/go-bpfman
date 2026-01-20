@@ -14,11 +14,12 @@ spec:
       labels:
         app: bpfman
     spec:
+      serviceAccountName: bpfman
       containers:
         - name: bpfman
           image: bpfman:dev
           imagePullPolicy: IfNotPresent
-          args: ["serve"]
+          args: ["serve", "--csi-support"]
           securityContext:
             privileged: true
           volumeMounts:
@@ -27,6 +28,28 @@ spec:
               mountPropagation: Bidirectional
             - name: bpfman-sock
               mountPath: /run/bpfman-sock
+            - name: bpfman-state
+              mountPath: /run/bpfman
+            - name: csi-dir
+              mountPath: /run/bpfman/csi
+            - name: pods-mount-dir
+              mountPath: /var/lib/kubelet/pods
+              mountPropagation: Bidirectional
+            - name: plugin-dir
+              mountPath: /var/lib/kubelet/plugins/csi.bpfman.io
+
+        - name: node-driver-registrar
+          image: registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.9.0
+          args:
+            - --csi-address=/var/lib/kubelet/plugins/csi.bpfman.io/csi.sock
+            - --kubelet-registration-path=/var/lib/kubelet/plugins/csi.bpfman.io/csi.sock
+            - --v=5
+          volumeMounts:
+            - name: plugin-dir
+              mountPath: /var/lib/kubelet/plugins/csi.bpfman.io
+            - name: registration-dir
+              mountPath: /registration
+
       volumes:
         - name: bpffs
           hostPath:
@@ -36,5 +59,31 @@ spec:
           hostPath:
             path: /run/bpfman-sock
             type: DirectoryOrCreate
+        - name: bpfman-state
+          hostPath:
+            path: /run/bpfman
+            type: DirectoryOrCreate
+        - name: csi-dir
+          hostPath:
+            path: /run/bpfman/csi
+            type: DirectoryOrCreate
+        - name: pods-mount-dir
+          hostPath:
+            path: /var/lib/kubelet/pods
+            type: Directory
+        - name: plugin-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins/csi.bpfman.io
+            type: DirectoryOrCreate
+        - name: registration-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins_registry
+            type: Directory
       tolerations:
         - operator: Exists
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: bpfman
+  namespace: kube-system

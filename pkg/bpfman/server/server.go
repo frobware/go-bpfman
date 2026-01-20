@@ -50,6 +50,17 @@ func New() *Server {
 	}
 }
 
+// NewWithStore creates a new bpfman gRPC server with a pre-configured store.
+// This is used when running with --csi-support to share the store between
+// bpfman and the CSI driver.
+func NewWithStore(store *sqlite.Store) *Server {
+	return &Server{
+		kernel: ebpf.New(),
+		store:  store,
+		root:   DefaultBpfmanRoot,
+	}
+}
+
 // Load implements the Load RPC method.
 func (s *Server) Load(ctx context.Context, req *pb.LoadRequest) (*pb.LoadResponse, error) {
 	s.mu.Lock()
@@ -273,13 +284,19 @@ func (s *Server) PullBytecode(ctx context.Context, req *pb.PullBytecodeRequest) 
 
 // Serve starts the gRPC server on the given socket path.
 func (s *Server) Serve(socketPath string) error {
-	// Open SQLite store
-	st, err := sqlite.New(DefaultDBPath)
-	if err != nil {
-		return fmt.Errorf("failed to open store: %w", err)
+	// Open SQLite store if not already set (e.g., when using NewWithStore)
+	closeStore := false
+	if s.store == nil {
+		st, err := sqlite.New(DefaultDBPath)
+		if err != nil {
+			return fmt.Errorf("failed to open store: %w", err)
+		}
+		s.store = st
+		closeStore = true
 	}
-	s.store = st
-	defer s.store.Close()
+	if closeStore {
+		defer s.store.Close()
+	}
 
 	// Ensure socket directory exists
 	socketDir := filepath.Dir(socketPath)

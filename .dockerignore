@@ -5,8 +5,6 @@ bin/
 build/
 deploy/
 scripts/
-proto/
 *.md
-Makefile
 .git/
 .gitignore

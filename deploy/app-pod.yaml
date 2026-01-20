@@ -1,3 +1,5 @@
+# Example pod using legacy bind-mount mode
+# This mode simply bind-mounts an existing bpffs path to the container.
 apiVersion: v1
 kind: Pod
 metadata:
@@ -15,6 +17,7 @@ spec:
   volumes:
     - name: bpf-volume
       csi:
-        driver: bpffs.csi.frobware.io
+        driver: csi.bpfman.io
         volumeAttributes:
+          # Legacy mode: bind-mount an existing bpffs path
           mapPath: "/sys/fs/bpf/test"

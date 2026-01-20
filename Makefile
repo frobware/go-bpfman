@@ -7,24 +7,24 @@ help:
 	@echo "  clean              Remove all build artifacts"
 	@echo "  test               Run all tests"
 	@echo ""
-	@echo "CSI Driver:"
-	@echo "  csi-build          Build csi-driver binary"
-	@echo "  csi-test           Run csi-driver tests"
-	@echo "  docker-build-csi   Build csi-driver container image"
-	@echo "  csi-deploy         Deploy csi-driver to kind cluster"
-	@echo "  csi-delete         Remove csi-driver from cluster"
-	@echo "  csi-logs           Follow csi-driver logs"
-	@echo "  csi-status         Show csi-driver status"
-	@echo ""
-	@echo "bpfman:"
-	@echo "  bpfman-build       Build bpfman binary"
+	@echo "bpfman (unified with CSI):"
+	@echo "  bpfman-build       Build bpfman binary (includes CSI support)"
 	@echo "  bpfman-proto       Generate protobuf/gRPC stubs"
 	@echo "  bpfman-clean       Remove generated files and binary"
 	@echo "  docker-build-bpfman Build bpfman container image"
-	@echo "  bpfman-deploy      Deploy bpfman to kind cluster"
+	@echo "  bpfman-deploy      Deploy bpfman with CSI to kind cluster"
 	@echo "  bpfman-delete      Remove bpfman from cluster"
 	@echo "  bpfman-logs        Follow bpfman logs"
 	@echo "  bpfman-test-grpc   Run gRPC integration tests"
+	@echo ""
+	@echo "Standalone CSI Driver (legacy):"
+	@echo "  csi-build          Build standalone csi-driver binary"
+	@echo "  csi-test           Run csi-driver tests"
+	@echo "  docker-build-csi   Build standalone csi-driver container image"
+	@echo "  csi-deploy         Deploy standalone csi-driver to kind cluster"
+	@echo "  csi-delete         Remove standalone csi-driver from cluster"
+	@echo "  csi-logs           Follow csi-driver logs"
+	@echo "  csi-status         Show csi-driver status"
 	@echo ""
 	@echo "Combined:"
 	@echo "  deploy-app-pod     Deploy test pod with CSI volume"
@@ -51,7 +51,7 @@ test:
 
 # CSI Driver targets
 csi-build:
-	go build -o $(BIN_DIR)/bpffs-csi-driver ./cmd/csi-driver
+	CGO_ENABLED=0 go build -mod=vendor -o $(BIN_DIR)/bpffs-csi-driver ./cmd/csi-driver
 
 csi-test:
 	go test -v ./pkg/csi/...
@@ -84,11 +84,12 @@ csi-status:
 	kubectl get csidrivers
 
 # bpfman targets
-bpfman-build: bpfman-proto
-	go build -o $(BIN_DIR)/bpfman ./cmd/bpfman
+# Note: bpfman-proto is not a dependency here since pb files are committed.
+# Run 'make bpfman-proto' explicitly after modifying proto/bpfman.proto.
+bpfman-build:
+	CGO_ENABLED=1 go build -mod=vendor -o $(BIN_DIR)/bpfman ./cmd/bpfman
 
 bpfman-clean:
-	$(RM) -r pkg/bpfman/server/pb/
 	$(RM) $(BIN_DIR)/bpfman
 
 # Proto generation for bpfman gRPC API
@@ -111,18 +112,18 @@ docker-build-bpfman-builder:
 docker-clean-bpfman-builder:
 	-docker rmi $(BPFMAN_BUILDER_IMAGE):$(IMAGE_TAG)
 
-docker-build-bpfman: docker-build-bpfman-builder testdata/stats.o bpfman-proto
+docker-build-bpfman: docker-build-bpfman-builder testdata/stats.o
 	docker buildx build --builder=default --load --build-arg BUILDER_IMAGE=$(BPFMAN_BUILDER_IMAGE):$(IMAGE_TAG) -t $(BPFMAN_IMAGE):$(IMAGE_TAG) -f Dockerfile.bpfman .
 
 bpfman-kind-load: docker-build-bpfman
 	kind load docker-image $(BPFMAN_IMAGE):$(IMAGE_TAG) --name $(KIND_CLUSTER)
 
 bpfman-deploy: bpfman-kind-load
-	kubectl apply -f deploy/bpfman.yaml
+	kubectl apply -f deploy/csidriver.yaml -f deploy/bpfman.yaml
 	kubectl -n $(NAMESPACE) wait --for=condition=Ready pod -l app=bpfman --timeout=60s
 
 bpfman-delete:
-	kubectl delete -f deploy/bpfman.yaml --ignore-not-found
+	kubectl delete -f deploy/bpfman.yaml -f deploy/csidriver.yaml --ignore-not-found
 
 bpfman-logs:
 	kubectl -n $(NAMESPACE) logs -l app=bpfman -f
@@ -145,8 +146,7 @@ testdata/stats.o: $(BPFMAN_HACKS_DIR)/stats/bpf/stats.o
 	cp $< $@
 
 # Combined targets
-deploy-app-pod: csi-deploy bpfman-deploy
-	kubectl -n $(NAMESPACE) wait --for=condition=Ready pod -l app=bpffs-csi-node --timeout=60s
+deploy-app-pod: bpfman-deploy
 	kubectl apply -f deploy/app-pod.yaml
 	kubectl wait --for=condition=Ready pod/bpffs-app-pod --timeout=30s
 	@echo ""
@@ -156,4 +156,4 @@ deploy-app-pod: csi-deploy bpfman-deploy
 delete-app-pod:
 	kubectl delete -f deploy/app-pod.yaml --ignore-not-found
 
-delete-all: delete-app-pod csi-delete bpfman-delete
+delete-all: delete-app-pod bpfman-delete csi-delete

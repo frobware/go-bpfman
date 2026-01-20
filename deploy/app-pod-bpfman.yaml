@@ -1,0 +1,30 @@
+# Example pod using bpfman-aware mode
+# This mode looks up a program by name in the bpfman database and
+# re-pins requested maps to a per-pod bpffs.
+#
+# Prerequisites:
+# 1. bpfman must be running with --csi-support
+# 2. A program must be loaded with the appropriate metadata:
+#    bpfman load --metadata bpfman.io/ProgramName=my-stats /path/to/stats.o stats /sys/fs/bpf/stats
+apiVersion: v1
+kind: Pod
+metadata:
+  name: bpffs-app-pod-bpfman
+  namespace: default
+spec:
+  terminationGracePeriodSeconds: 1
+  containers:
+    - name: app
+      image: busybox
+      command: ["sleep", "infinity"]
+      volumeMounts:
+        - name: bpf-maps
+          mountPath: /bpf
+  volumes:
+    - name: bpf-maps
+      csi:
+        driver: csi.bpfman.io
+        volumeAttributes:
+          # bpfman-aware mode: look up program by name and expose specific maps
+          csi.bpfman.io/program: "my-stats"
+          csi.bpfman.io/maps: "stats_map,config_map"

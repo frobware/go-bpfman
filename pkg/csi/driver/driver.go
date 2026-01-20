@@ -1,6 +1,7 @@
 package driver
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net"
@@ -9,7 +10,21 @@ import (
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"google.golang.org/grpc"
+
+	"github.com/frobware/go-bpfman/pkg/bpfman/domain"
 )
+
+// ProgramStore provides metadata lookup for BPF programs.
+type ProgramStore interface {
+	// FindProgramByMetadata finds a program by a metadata key/value pair.
+	FindProgramByMetadata(ctx context.Context, key, value string) (domain.ProgramMetadata, uint32, error)
+}
+
+// KernelOperations provides BPF map operations.
+type KernelOperations interface {
+	// RepinMap loads a pinned map and re-pins it to a new path.
+	RepinMap(srcPath, dstPath string) error
+}
 
 // Driver implements a minimal CSI driver for learning purposes.
 type Driver struct {
@@ -19,18 +34,59 @@ type Driver struct {
 	endpoint string
 	logger   *slog.Logger
 
+	// Optional dependencies for bpfman integration.
+	// When nil, the driver operates in simple bind-mount mode.
+	store  ProgramStore
+	kernel KernelOperations
+
+	// csiFsRoot is the root directory for per-pod bpffs mounts.
+	// Defaults to /run/bpfman/csi/fs
+	csiFsRoot string
+
 	server *grpc.Server
 }
 
-// New creates a new CSI driver instance.
-func New(name, version, nodeID, endpoint string, logger *slog.Logger) *Driver {
-	return &Driver{
-		name:     name,
-		version:  version,
-		nodeID:   nodeID,
-		endpoint: endpoint,
-		logger:   logger.With("component", "driver"),
+// Option configures the Driver.
+type Option func(*Driver)
+
+// WithStore configures the program store for metadata lookups.
+func WithStore(store ProgramStore) Option {
+	return func(d *Driver) {
+		d.store = store
 	}
+}
+
+// WithKernel configures kernel operations for map re-pinning.
+func WithKernel(kernel KernelOperations) Option {
+	return func(d *Driver) {
+		d.kernel = kernel
+	}
+}
+
+// WithCSIFsRoot configures the root directory for per-pod bpffs mounts.
+func WithCSIFsRoot(root string) Option {
+	return func(d *Driver) {
+		d.csiFsRoot = root
+	}
+}
+
+// DefaultCSIFsRoot is the default root directory for per-pod bpffs mounts.
+const DefaultCSIFsRoot = "/run/bpfman/csi/fs"
+
+// New creates a new CSI driver instance.
+func New(name, version, nodeID, endpoint string, logger *slog.Logger, opts ...Option) *Driver {
+	d := &Driver{
+		name:      name,
+		version:   version,
+		nodeID:    nodeID,
+		endpoint:  endpoint,
+		logger:    logger.With("component", "driver"),
+		csiFsRoot: DefaultCSIFsRoot,
+	}
+	for _, opt := range opts {
+		opt(d)
+	}
+	return d
 }
 
 // Run starts the CSI driver gRPC server.

@@ -3,11 +3,29 @@ package driver
 import (
 	"context"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"golang.org/x/sys/unix"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+)
+
+// CSI volume attribute keys matching upstream Rust bpfman.
+const (
+	// VolumeAttrProgram specifies the program name to look up.
+	// This is matched against the bpfman.io/ProgramName metadata.
+	VolumeAttrProgram = "csi.bpfman.io/program"
+
+	// VolumeAttrMaps specifies a comma-separated list of map names to expose.
+	VolumeAttrMaps = "csi.bpfman.io/maps"
+
+	// MetadataKeyProgramName is the metadata key used to identify programs.
+	MetadataKeyProgramName = "bpfman.io/ProgramName"
+
+	// LegacyVolumeAttrMapPath is the legacy attribute for simple bind-mount mode.
+	LegacyVolumeAttrMapPath = "mapPath"
 )
 
 // NodeGetInfo returns information about this node.
@@ -46,7 +64,17 @@ func (d *Driver) NodeGetCapabilities(ctx context.Context, req *csi.NodeGetCapabi
 	return resp, nil
 }
 
-// NodePublishVolume bind-mounts the BPF path to the target path.
+// NodePublishVolume mounts BPF maps to the target path.
+//
+// The driver supports two modes:
+//
+// 1. bpfman-aware mode (when store and kernel are configured):
+//   - Looks up programs by csi.bpfman.io/program metadata
+//   - Re-pins requested maps to per-pod bpffs
+//   - Bind-mounts the per-pod bpffs to the container
+//
+// 2. Legacy bind-mount mode (fallback):
+//   - Simply bind-mounts the specified mapPath
 func (d *Driver) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolumeRequest) (*csi.NodePublishVolumeResponse, error) {
 	volumeID := req.GetVolumeId()
 	targetPath := req.GetTargetPath()
@@ -68,11 +96,123 @@ func (d *Driver) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolu
 		return nil, status.Error(codes.InvalidArgument, "target path is required")
 	}
 
-	mapPath := volumeContext["mapPath"]
-	if mapPath == "" {
-		return nil, status.Error(codes.InvalidArgument, "volumeAttributes.mapPath is required")
+	// Check for bpfman-aware mode
+	programName := volumeContext[VolumeAttrProgram]
+	mapsStr := volumeContext[VolumeAttrMaps]
+
+	if programName != "" && mapsStr != "" {
+		// bpfman-aware mode
+		return d.publishBpfmanVolume(ctx, volumeID, targetPath, programName, mapsStr, readonly)
 	}
 
+	// Legacy bind-mount mode
+	mapPath := volumeContext[LegacyVolumeAttrMapPath]
+	if mapPath == "" {
+		return nil, status.Error(codes.InvalidArgument,
+			"either volumeAttributes.mapPath (legacy) or csi.bpfman.io/program + csi.bpfman.io/maps (bpfman) are required")
+	}
+
+	return d.publishLegacyVolume(ctx, volumeID, targetPath, mapPath, readonly)
+}
+
+// publishBpfmanVolume handles bpfman-aware volume publishing.
+func (d *Driver) publishBpfmanVolume(ctx context.Context, volumeID, targetPath, programName, mapsStr string, readonly bool) (*csi.NodePublishVolumeResponse, error) {
+	if d.store == nil || d.kernel == nil {
+		return nil, status.Error(codes.FailedPrecondition,
+			"bpfman integration not configured; store and kernel required for csi.bpfman.io/program")
+	}
+
+	// 1. Find program by metadata
+	metadata, _, err := d.store.FindProgramByMetadata(ctx, MetadataKeyProgramName, programName)
+	if err != nil {
+		d.logger.Error("failed to find program",
+			"programName", programName,
+			"error", err,
+		)
+		return nil, status.Errorf(codes.NotFound, "program %q not found: %v", programName, err)
+	}
+
+	// 2. Get the pin path from the program's LoadSpec
+	mapPinPath := metadata.LoadSpec.PinPath
+	if mapPinPath == "" {
+		return nil, status.Errorf(codes.Internal, "program %q has no pin path", programName)
+	}
+
+	d.logger.Info("found program",
+		"programName", programName,
+		"pinPath", mapPinPath,
+	)
+
+	// 3. Create per-pod bpffs directory
+	podBpffs := filepath.Join(d.csiFsRoot, volumeID)
+	if err := os.MkdirAll(podBpffs, 0750); err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to create bpffs dir %q: %v", podBpffs, err)
+	}
+
+	// 4. Mount bpffs on the per-pod directory
+	if err := mountBpffs(podBpffs); err != nil {
+		os.RemoveAll(podBpffs)
+		return nil, status.Errorf(codes.Internal, "failed to mount bpffs at %q: %v", podBpffs, err)
+	}
+
+	// 5. Re-pin each requested map
+	mapNames := strings.Split(mapsStr, ",")
+	for _, mapName := range mapNames {
+		mapName = strings.TrimSpace(mapName)
+		if mapName == "" {
+			continue
+		}
+
+		srcPath := filepath.Join(mapPinPath, mapName)
+		dstPath := filepath.Join(podBpffs, mapName)
+
+		d.logger.Debug("re-pinning map",
+			"map", mapName,
+			"src", srcPath,
+			"dst", dstPath,
+		)
+
+		if err := d.kernel.RepinMap(srcPath, dstPath); err != nil {
+			// Cleanup on failure
+			unix.Unmount(podBpffs, 0)
+			os.RemoveAll(podBpffs)
+			return nil, status.Errorf(codes.Internal, "failed to re-pin map %q: %v", mapName, err)
+		}
+	}
+
+	// 6. Create target directory and bind-mount
+	if err := os.MkdirAll(targetPath, 0755); err != nil {
+		unix.Unmount(podBpffs, 0)
+		os.RemoveAll(podBpffs)
+		return nil, status.Errorf(codes.Internal, "failed to create target path: %v", err)
+	}
+
+	flags := uintptr(unix.MS_BIND)
+	if readonly {
+		flags |= unix.MS_RDONLY
+	}
+
+	if err := unix.Mount(podBpffs, targetPath, "", flags, ""); err != nil {
+		unix.Unmount(podBpffs, 0)
+		os.RemoveAll(podBpffs)
+		return nil, status.Errorf(codes.Internal, "failed to bind-mount %q to %q: %v", podBpffs, targetPath, err)
+	}
+
+	d.logger.Info("NodePublishVolume succeeded (bpfman mode)",
+		"method", "Node.NodePublishVolume",
+		"volumeID", volumeID,
+		"programName", programName,
+		"maps", mapsStr,
+		"podBpffs", podBpffs,
+		"targetPath", targetPath,
+		"readonly", readonly,
+	)
+
+	return &csi.NodePublishVolumeResponse{}, nil
+}
+
+// publishLegacyVolume handles legacy bind-mount mode.
+func (d *Driver) publishLegacyVolume(ctx context.Context, volumeID, targetPath, mapPath string, readonly bool) (*csi.NodePublishVolumeResponse, error) {
 	// Verify source path exists
 	if _, err := os.Stat(mapPath); err != nil {
 		return nil, status.Errorf(codes.NotFound, "mapPath %q does not exist: %v", mapPath, err)
@@ -93,7 +233,7 @@ func (d *Driver) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolu
 		return nil, status.Errorf(codes.Internal, "failed to bind-mount %q to %q: %v", mapPath, targetPath, err)
 	}
 
-	d.logger.Info("NodePublishVolume succeeded",
+	d.logger.Info("NodePublishVolume succeeded (legacy mode)",
 		"method", "Node.NodePublishVolume",
 		"volumeID", volumeID,
 		"mapPath", mapPath,
@@ -104,7 +244,13 @@ func (d *Driver) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolu
 	return &csi.NodePublishVolumeResponse{}, nil
 }
 
+// mountBpffs mounts a bpffs filesystem at the given path.
+func mountBpffs(path string) error {
+	return unix.Mount("bpf", path, "bpf", 0, "")
+}
+
 // NodeUnpublishVolume unmounts the volume from the target path.
+// It also cleans up any per-pod bpffs created for bpfman-aware volumes.
 func (d *Driver) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpublishVolumeRequest) (*csi.NodeUnpublishVolumeResponse, error) {
 	volumeID := req.GetVolumeId()
 	targetPath := req.GetTargetPath()
@@ -122,7 +268,7 @@ func (d *Driver) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpublish
 		return nil, status.Error(codes.InvalidArgument, "target path is required")
 	}
 
-	// Unmount the bind-mount
+	// 1. Unmount the bind-mount from the container
 	if err := unix.Unmount(targetPath, 0); err != nil {
 		// Ignore "not mounted" errors for idempotency
 		if err != unix.EINVAL && err != unix.ENOENT {
@@ -130,9 +276,32 @@ func (d *Driver) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpublish
 		}
 	}
 
-	// Remove the target directory
+	// 2. Remove the target directory
 	if err := os.RemoveAll(targetPath); err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to remove target path: %v", err)
+	}
+
+	// 3. Clean up per-pod bpffs if it exists (bpfman-aware mode)
+	podBpffs := filepath.Join(d.csiFsRoot, volumeID)
+	if _, err := os.Stat(podBpffs); err == nil {
+		// Unmount the per-pod bpffs
+		if err := unix.Unmount(podBpffs, 0); err != nil {
+			// Ignore "not mounted" errors
+			if err != unix.EINVAL && err != unix.ENOENT {
+				d.logger.Warn("failed to unmount per-pod bpffs",
+					"path", podBpffs,
+					"error", err,
+				)
+			}
+		}
+
+		// Remove the directory
+		if err := os.RemoveAll(podBpffs); err != nil {
+			d.logger.Warn("failed to remove per-pod bpffs directory",
+				"path", podBpffs,
+				"error", err,
+			)
+		}
 	}
 
 	d.logger.Info("NodeUnpublishVolume succeeded",
