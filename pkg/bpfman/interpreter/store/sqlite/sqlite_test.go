@@ -2,6 +2,9 @@ package sqlite
 
 import (
 	"context"
+	"io"
+	"log/slog"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -9,8 +12,17 @@ import (
 	"github.com/frobware/go-bpfman/pkg/bpfman/managed"
 )
 
+// testLogger returns a logger for tests. By default it discards all output.
+// Set BPFMAN_TEST_VERBOSE=1 to enable logging.
+func testLogger() *slog.Logger {
+	if os.Getenv("BPFMAN_TEST_VERBOSE") != "" {
+		return slog.New(slog.NewTextHandler(os.Stderr, nil))
+	}
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
 func TestForeignKey_LinkRequiresProgram(t *testing.T) {
-	store, err := NewInMemory(nil)
+	store, err := NewInMemory(testLogger())
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}
@@ -40,7 +52,7 @@ func TestForeignKey_LinkRequiresProgram(t *testing.T) {
 }
 
 func TestForeignKey_CascadeDeleteRemovesLinks(t *testing.T) {
-	store, err := NewInMemory(nil)
+	store, err := NewInMemory(testLogger())
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}
@@ -108,7 +120,7 @@ func TestForeignKey_CascadeDeleteRemovesLinks(t *testing.T) {
 }
 
 func TestForeignKey_CascadeDeleteRemovesMetadataIndex(t *testing.T) {
-	store, err := NewInMemory(nil)
+	store, err := NewInMemory(testLogger())
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}
@@ -161,7 +173,7 @@ func TestForeignKey_CascadeDeleteRemovesMetadataIndex(t *testing.T) {
 }
 
 func TestUniqueIndex_ProgramNameEnforcesUniqueness(t *testing.T) {
-	store, err := NewInMemory(nil)
+	store, err := NewInMemory(testLogger())
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}
@@ -210,7 +222,7 @@ func TestUniqueIndex_ProgramNameEnforcesUniqueness(t *testing.T) {
 }
 
 func TestUniqueIndex_DifferentNamesAllowed(t *testing.T) {
-	store, err := NewInMemory(nil)
+	store, err := NewInMemory(testLogger())
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}
@@ -247,7 +259,7 @@ func TestUniqueIndex_DifferentNamesAllowed(t *testing.T) {
 }
 
 func TestUniqueIndex_NameCanBeReusedAfterDelete(t *testing.T) {
-	store, err := NewInMemory(nil)
+	store, err := NewInMemory(testLogger())
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}

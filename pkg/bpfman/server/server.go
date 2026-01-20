@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"log/slog"
 	"net"
 	"os"
@@ -244,8 +243,6 @@ func (s *Server) Load(ctx context.Context, req *pb.LoadRequest) (*pb.LoadRespons
 				MapIds:        loaded.MapIDs,
 			},
 		})
-
-		log.Printf("Loaded program %q (ID: %d) pinned at %s", info.Name, loaded.ID, pinDir)
 	}
 
 	return resp, nil
@@ -263,7 +260,6 @@ func (s *Server) Unload(ctx context.Context, req *pb.UnloadRequest) (*pb.UnloadR
 		return nil, status.Errorf(codes.Internal, "failed to unload program: %v", err)
 	}
 
-	log.Printf("Unloaded program ID %d", req.Id)
 	return &pb.UnloadResponse{}, nil
 }
 
@@ -415,11 +411,11 @@ func (s *Server) serve(ctx context.Context, socketPath string) error {
 	// Handle context cancellation for graceful shutdown
 	go func() {
 		<-ctx.Done()
-		log.Printf("shutting down gRPC server")
+		s.logger.Info("shutting down gRPC server")
 		grpcServer.GracefulStop()
 	}()
 
-	log.Printf("bpfman gRPC server listening on %s", socketPath)
+	s.logger.Info("bpfman gRPC server listening", "socket", socketPath)
 	return grpcServer.Serve(listener)
 }
 

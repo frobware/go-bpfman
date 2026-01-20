@@ -16,7 +16,10 @@ package server
 
 import (
 	"context"
+	"io"
 	"iter"
+	"log/slog"
+	"os"
 	"sync/atomic"
 	"testing"
 
@@ -29,6 +32,15 @@ import (
 	"github.com/frobware/go-bpfman/pkg/bpfman/managed"
 	pb "github.com/frobware/go-bpfman/pkg/bpfman/server/pb"
 )
+
+// testLogger returns a logger for tests. By default it discards all output.
+// Set BPFMAN_TEST_VERBOSE=1 to enable logging.
+func testLogger() *slog.Logger {
+	if os.Getenv("BPFMAN_TEST_VERBOSE") != "" {
+		return slog.New(slog.NewTextHandler(os.Stderr, nil))
+	}
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
 
 // fakeKernel implements interpreter.KernelOperations for testing.
 // It simulates kernel BPF operations without actual syscalls.
@@ -115,12 +127,12 @@ func (f *fakeKernel) AttachTracepoint(progPinPath, group, name, linkPinPath stri
 // newTestServer creates a server with fake kernel and real in-memory SQLite.
 func newTestServer(t *testing.T) *Server {
 	t.Helper()
-	store, err := sqlite.NewInMemory(nil)
+	store, err := sqlite.NewInMemory(testLogger())
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}
 	t.Cleanup(func() { store.Close() })
-	return NewForTest(store, newFakeKernel(), nil)
+	return NewForTest(store, newFakeKernel(), testLogger())
 }
 
 // TestLoadProgram_WithValidRequest_Succeeds verifies that:
