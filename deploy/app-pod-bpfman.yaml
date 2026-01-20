@@ -1,11 +1,11 @@
 # Example pod using bpfman-aware mode
 #
 # Prerequisites:
-# 1. bpfman must be running with --csi-support
+# 1. go-bpfman must be running with --csi-support
 # 2. Load a program with metadata:
-#    kubectl -n kube-system exec -it deploy/bpfman -- \
+#    kubectl -n bpfman exec -it daemonset/go-bpfman -c bpfman -- \
 #      bpfman load -m bpfman.io/ProgramName=my-stats \
-#      /opt/bpf/stats.o stats /sys/fs/bpf/bpfman/my-stats
+#      /opt/bpf/stats.o count_context_switches /sys/fs/bpf/go-bpfman/my-stats
 apiVersion: v1
 kind: Pod
 metadata:
