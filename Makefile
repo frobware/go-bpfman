@@ -1,4 +1,4 @@
-.PHONY: help build-all docker-build-all clean test csi-build csi-test docker-build-csi csi-kind-load csi-deploy csi-delete csi-redeploy csi-logs csi-logs-registrar csi-status bpfman-build bpfman-proto bpfman-clean docker-build-bpfman docker-build-bpfman-builder docker-clean-bpfman-builder bpfman-kind-load bpfman-deploy bpfman-delete bpfman-logs bpfman-deploy-test bpfman-delete-test bpfman-test-grpc deploy-app-pod delete-app-pod delete-all
+.PHONY: help build-all docker-build-all clean test csi-build csi-test docker-build-csi csi-kind-load csi-deploy csi-delete csi-redeploy csi-logs csi-logs-registrar csi-status bpfman-build bpfman-proto bpfman-clean docker-build-bpfman docker-build-bpfman-builder docker-clean-bpfman-builder bpfman-kind-load bpfman-deploy bpfman-delete bpfman-logs bpfman-deploy-test bpfman-delete-test bpfman-test-grpc docker-build-stats-reader stats-reader-deploy stats-reader-delete stats-reader-logs delete-all
 
 help:
 	@echo "Build:"
@@ -26,8 +26,13 @@ help:
 	@echo "  csi-logs           Follow csi-driver logs"
 	@echo "  csi-status         Show csi-driver status"
 	@echo ""
+	@echo "Example stats-reader app:"
+	@echo "  docker-build-stats-reader  Build stats-reader container image"
+	@echo "  stats-reader-deploy        Deploy stats-reader pod"
+	@echo "  stats-reader-delete        Remove stats-reader pod"
+	@echo "  stats-reader-logs          Follow stats-reader logs"
+	@echo ""
 	@echo "Combined:"
-	@echo "  deploy-app-pod     Deploy test pod with CSI volume"
 	@echo "  delete-all         Remove all components"
 
 IMAGE_NAME ?= bpffs-csi-driver
@@ -35,7 +40,8 @@ IMAGE_TAG ?= dev
 BPFMAN_IMAGE ?= bpfman
 BPFMAN_BUILDER_IMAGE ?= bpfman-builder
 KIND_CLUSTER ?= bpfman-deployment
-NAMESPACE ?= kube-system
+NAMESPACE ?= bpfman
+STATS_READER_IMAGE ?= stats-reader
 BIN_DIR ?= bin
 
 # Aggregate targets
@@ -120,13 +126,13 @@ bpfman-kind-load: docker-build-bpfman
 
 bpfman-deploy: bpfman-kind-load
 	kubectl apply -f deploy/csidriver.yaml -f deploy/bpfman.yaml
-	kubectl -n $(NAMESPACE) wait --for=condition=Ready pod -l app=bpfman --timeout=60s
+	kubectl -n $(NAMESPACE) wait --for=condition=Ready pod -l app=bpfman-daemon-go --timeout=60s
 
 bpfman-delete:
 	kubectl delete -f deploy/bpfman.yaml -f deploy/csidriver.yaml --ignore-not-found
 
 bpfman-logs:
-	kubectl -n $(NAMESPACE) logs -l app=bpfman -f
+	kubectl -n $(NAMESPACE) logs -l app=bpfman-daemon-go -c bpfman -f
 
 bpfman-deploy-test: bpfman-kind-load
 	kubectl apply -f deploy/bpfman-test-pod.yaml
@@ -145,15 +151,22 @@ testdata/stats.o: $(BPFMAN_HACKS_DIR)/stats/bpf/stats.o
 	mkdir -p testdata
 	cp $< $@
 
+# stats-reader example app
+docker-build-stats-reader:
+	docker buildx build --builder=default --load -t $(STATS_READER_IMAGE):$(IMAGE_TAG) -f examples/stats-reader/Dockerfile .
+
+stats-reader-kind-load: docker-build-stats-reader
+	kind load docker-image $(STATS_READER_IMAGE):$(IMAGE_TAG) --name $(KIND_CLUSTER)
+
+stats-reader-deploy: stats-reader-kind-load
+	kubectl apply -f deploy/stats-reader.yaml
+	kubectl wait --for=condition=Ready pod/stats-reader --timeout=30s
+
+stats-reader-delete:
+	kubectl delete -f deploy/stats-reader.yaml --ignore-not-found
+
+stats-reader-logs:
+	kubectl logs -f stats-reader
+
 # Combined targets
-deploy-app-pod: bpfman-deploy
-	kubectl apply -f deploy/app-pod.yaml
-	kubectl wait --for=condition=Ready pod/bpffs-app-pod --timeout=30s
-	@echo ""
-	@echo "=== Volume mount ==="
-	kubectl exec bpffs-app-pod -- mount | grep /bpf
-
-delete-app-pod:
-	kubectl delete -f deploy/app-pod.yaml --ignore-not-found
-
-delete-all: delete-app-pod bpfman-delete csi-delete
+delete-all: stats-reader-delete bpfman-delete csi-delete

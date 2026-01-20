@@ -1,0 +1,34 @@
+# Example deployment using the stats-reader app with bpfman CSI
+#
+# Prerequisites:
+# 1. bpfman-daemon-go must be running with --csi-support
+# 2. Load a program with metadata:
+#    kubectl -n bpfman exec -it daemonset/bpfman-daemon-go -c bpfman -- \
+#      bpfman load -m bpfman.io/ProgramName=my-stats \
+#      /opt/bpf/stats.o count_context_switches /sys/fs/bpf/go-bpfman/my-stats
+# 3. Build and load the stats-reader image:
+#    make docker-build-stats-reader
+#    kind load docker-image stats-reader:dev --name bpfman-deployment
+apiVersion: v1
+kind: Pod
+metadata:
+  name: stats-reader
+  namespace: default
+spec:
+  terminationGracePeriodSeconds: 1
+  containers:
+    - name: stats-reader
+      image: stats-reader:dev
+      imagePullPolicy: IfNotPresent
+      args: ["--interval", "5s", "--top", "10"]
+      volumeMounts:
+        - name: bpf-maps
+          mountPath: /bpf
+          readOnly: true
+  volumes:
+    - name: bpf-maps
+      csi:
+        driver: csi.go-bpfman.io
+        volumeAttributes:
+          csi.bpfman.io/program: "my-stats"
+          csi.bpfman.io/maps: "stats_map"
