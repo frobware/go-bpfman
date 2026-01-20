@@ -1,10 +1,15 @@
-.PHONY: help clean csi-build csi-test csi-docker-build csi-kind-load csi-deploy csi-delete csi-redeploy csi-logs csi-logs-registrar csi-status bpfman-build bpfman-proto bpfman-clean bpfman-docker-build bpfman-docker-build-builder bpfman-docker-clean-builder bpfman-kind-load bpfman-deploy bpfman-delete bpfman-logs bpfman-deploy-test bpfman-delete-test bpfman-test-grpc deploy-app-pod delete-app-pod delete-all
+.PHONY: help build-all docker-build-all clean csi-build csi-test docker-build-csi csi-kind-load csi-deploy csi-delete csi-redeploy csi-logs csi-logs-registrar csi-status bpfman-build bpfman-proto bpfman-clean docker-build-bpfman docker-build-bpfman-builder docker-clean-bpfman-builder bpfman-kind-load bpfman-deploy bpfman-delete bpfman-logs bpfman-deploy-test bpfman-delete-test bpfman-test-grpc deploy-app-pod delete-app-pod delete-all
 
 help:
+	@echo "Build:"
+	@echo "  build-all          Build all binaries"
+	@echo "  docker-build-all   Build all container images"
+	@echo "  clean              Remove all build artifacts"
+	@echo ""
 	@echo "CSI Driver:"
 	@echo "  csi-build          Build csi-driver binary"
 	@echo "  csi-test           Run csi-driver tests"
-	@echo "  csi-docker-build   Build csi-driver container image"
+	@echo "  docker-build-csi   Build csi-driver container image"
 	@echo "  csi-deploy         Deploy csi-driver to kind cluster"
 	@echo "  csi-delete         Remove csi-driver from cluster"
 	@echo "  csi-logs           Follow csi-driver logs"
@@ -14,7 +19,7 @@ help:
 	@echo "  bpfman-build       Build bpfman binary"
 	@echo "  bpfman-proto       Generate protobuf/gRPC stubs"
 	@echo "  bpfman-clean       Remove generated files and binary"
-	@echo "  bpfman-docker-build Build bpfman container image"
+	@echo "  docker-build-bpfman Build bpfman container image"
 	@echo "  bpfman-deploy      Deploy bpfman to kind cluster"
 	@echo "  bpfman-delete      Remove bpfman from cluster"
 	@echo "  bpfman-logs        Follow bpfman logs"
@@ -23,7 +28,6 @@ help:
 	@echo "Combined:"
 	@echo "  deploy-app-pod     Deploy test pod with CSI volume"
 	@echo "  delete-all         Remove all components"
-	@echo "  clean              Remove all build artifacts"
 
 IMAGE_NAME ?= bpffs-csi-driver
 IMAGE_TAG ?= dev
@@ -33,6 +37,14 @@ KIND_CLUSTER ?= bpfman-deployment
 NAMESPACE ?= kube-system
 BIN_DIR ?= bin
 
+# Aggregate targets
+build-all: csi-build bpfman-build
+
+docker-build-all: docker-build-csi docker-build-bpfman
+
+clean: bpfman-clean
+	$(RM) -r $(BIN_DIR)
+
 # CSI Driver targets
 csi-build:
 	cd csi-driver && go build -o ../$(BIN_DIR)/bpffs-csi-driver .
@@ -40,10 +52,10 @@ csi-build:
 csi-test:
 	cd csi-driver && go test -v ./...
 
-csi-docker-build:
+docker-build-csi:
 	docker buildx build --builder=default --load -t $(IMAGE_NAME):$(IMAGE_TAG) csi-driver/
 
-csi-kind-load: csi-docker-build
+csi-kind-load: docker-build-csi
 	kind load docker-image $(IMAGE_NAME):$(IMAGE_TAG) --name $(KIND_CLUSTER)
 
 csi-deploy: csi-kind-load
@@ -88,17 +100,17 @@ $(BPFMAN_PB_DIR)/bpfman.pb.go $(BPFMAN_PB_DIR)/bpfman_grpc.pb.go: $(BPFMAN_PROTO
 		--proto_path=$(BPFMAN_PROTO_DIR) \
 		$<
 
-bpfman-docker-build-builder:
+docker-build-bpfman-builder:
 	@docker image inspect $(BPFMAN_BUILDER_IMAGE):$(IMAGE_TAG) >/dev/null 2>&1 || \
 		docker buildx build --builder=default --load -t $(BPFMAN_BUILDER_IMAGE):$(IMAGE_TAG) -f bpfman/Dockerfile.builder bpfman/
 
-bpfman-docker-clean-builder:
+docker-clean-bpfman-builder:
 	-docker rmi $(BPFMAN_BUILDER_IMAGE):$(IMAGE_TAG)
 
-bpfman-docker-build: bpfman-docker-build-builder bpfman/testdata/stats.o bpfman-proto
+docker-build-bpfman: docker-build-bpfman-builder bpfman/testdata/stats.o bpfman-proto
 	docker buildx build --builder=default --load --build-arg BUILDER_IMAGE=$(BPFMAN_BUILDER_IMAGE):$(IMAGE_TAG) -t $(BPFMAN_IMAGE):$(IMAGE_TAG) bpfman/
 
-bpfman-kind-load: bpfman-docker-build
+bpfman-kind-load: docker-build-bpfman
 	kind load docker-image $(BPFMAN_IMAGE):$(IMAGE_TAG) --name $(KIND_CLUSTER)
 
 bpfman-deploy: bpfman-kind-load
@@ -118,7 +130,7 @@ bpfman-deploy-test: bpfman-kind-load
 bpfman-delete-test:
 	kubectl delete -f bpfman/deploy/test-pod.yaml --ignore-not-found
 
-bpfman-test-grpc: bpfman-docker-build
+bpfman-test-grpc: docker-build-bpfman
 	BPFMAN_IMAGE=$(BPFMAN_IMAGE):$(IMAGE_TAG) bpfman/scripts/test-grpc.sh
 
 # bpfman testdata
@@ -141,6 +153,3 @@ delete-app-pod:
 	kubectl delete -f deploy/app-pod.yaml --ignore-not-found
 
 delete-all: delete-app-pod csi-delete bpfman-delete
-
-clean: bpfman-clean
-	$(RM) -r $(BIN_DIR)
