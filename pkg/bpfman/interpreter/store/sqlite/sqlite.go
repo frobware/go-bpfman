@@ -65,19 +65,16 @@ func (s *Store) Close() error {
 }
 
 func (s *Store) migrate() error {
+	// Step 1: Create tables (without state-dependent indexes)
 	schema := `
 	CREATE TABLE IF NOT EXISTS managed_programs (
 		kernel_id INTEGER PRIMARY KEY,
 		uuid TEXT,
 		metadata TEXT NOT NULL,
-		created_at TEXT NOT NULL,
-		state TEXT NOT NULL DEFAULT 'loaded',
-		updated_at TEXT NOT NULL DEFAULT '',
-		error_message TEXT NOT NULL DEFAULT ''
+		created_at TEXT NOT NULL
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_managed_programs_uuid ON managed_programs(uuid);
-	CREATE INDEX IF NOT EXISTS idx_managed_programs_state ON managed_programs(state);
 
 	-- Index table for fast metadata key/value lookups (used by CSI)
 	CREATE TABLE IF NOT EXISTS program_metadata_index (
@@ -94,7 +91,7 @@ func (s *Store) migrate() error {
 		return err
 	}
 
-	// Migrate existing rows: add state column if missing (for existing databases)
+	// Step 2: Add state columns if missing (for existing databases)
 	// SQLite doesn't support IF NOT EXISTS for ALTER TABLE, so we check first.
 	var count int
 	err := s.db.QueryRow(`
@@ -104,7 +101,7 @@ func (s *Store) migrate() error {
 		return err
 	}
 	if count == 0 {
-		// Column doesn't exist, add it
+		// Columns don't exist, add them
 		migrations := []string{
 			`ALTER TABLE managed_programs ADD COLUMN state TEXT NOT NULL DEFAULT 'loaded'`,
 			`ALTER TABLE managed_programs ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''`,
@@ -115,6 +112,12 @@ func (s *Store) migrate() error {
 				return err
 			}
 		}
+	}
+
+	// Step 3: Create state index (now that column definitely exists)
+	_, err = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_managed_programs_state ON managed_programs(state)`)
+	if err != nil {
+		return err
 	}
 
 	return nil
