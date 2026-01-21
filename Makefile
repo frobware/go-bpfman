@@ -41,7 +41,7 @@ BIN_DIR ?= bin
 # Aggregate targets
 build-all: bpfman-build
 
-docker-build-all: docker-build-bpfman
+docker-build-all: docker-build-bpfman docker-build-stats-reader docker-build-csi-sanity
 
 clean: bpfman-clean
 	$(RM) -r $(BIN_DIR)
