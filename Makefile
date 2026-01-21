@@ -11,7 +11,7 @@ help:
 	@echo "  bpfman-build                Build bpfman binary"
 	@echo "  bpfman-clean                Remove generated files and binary"
 	@echo "  bpfman-delete               Remove bpfman from cluster"
-	@echo "  bpfman-deploy               Deploy bpfman to kind cluster"
+	@echo "  bpfman-deploy               Deploy bpfman to KIND cluster"
 	@echo "  bpfman-logs                 Follow bpfman logs"
 	@echo "  bpfman-proto                Generate protobuf/gRPC stubs"
 	@echo "  bpfman-test-grpc            Run gRPC integration tests"
@@ -27,13 +27,17 @@ help:
 	@echo "CSI conformance testing:"
 	@echo "  docker-build-csi-sanity     Build csi-sanity container image"
 	@echo ""
+	@echo "KIND cluster:"
+	@echo "  kind-create                 Create KIND cluster with bpffs mounted"
+	@echo "  kind-delete                 Delete KIND cluster"
+	@echo ""
 	@echo "Combined:"
-	@echo "  delete-all                  Remove all components"
+	@echo "  kind-undeploy-all           Remove all components from KIND cluster"
 
 IMAGE_TAG ?= dev
 BPFMAN_IMAGE ?= bpfman
 BPFMAN_BUILDER_IMAGE ?= bpfman-builder
-KIND_CLUSTER ?= bpfman-deployment
+KIND_CLUSTER ?= bpfman-go
 NAMESPACE ?= bpfman
 STATS_READER_IMAGE ?= stats-reader
 BIN_DIR ?= bin
@@ -140,8 +144,20 @@ CSI_SANITY_IMAGE ?= csi-sanity
 docker-build-csi-sanity:
 	docker buildx build --builder=default --load -t $(CSI_SANITY_IMAGE):$(IMAGE_TAG) -f Dockerfile.csi-sanity .
 
+# KIND cluster management
+kind-create:
+	kind create cluster --name $(KIND_CLUSTER) --config kind-config.yaml
+	@echo "Mounting bpffs on KIND nodes..."
+	@for node in $$(kind get nodes --name $(KIND_CLUSTER)); do \
+		docker exec $$node mount -t bpf bpf /sys/fs/bpf 2>/dev/null || true; \
+	done
+	@echo "KIND cluster $(KIND_CLUSTER) created with bpffs mounted"
+
+kind-delete:
+	kind delete cluster --name $(KIND_CLUSTER)
+
 # Combined targets
-delete-all: stats-reader-delete bpfman-delete
+kind-undeploy-all: stats-reader-delete bpfman-delete
 
 .PHONY: \
 	bpfman-build \
@@ -156,7 +172,7 @@ delete-all: stats-reader-delete bpfman-delete
 	bpfman-test-grpc \
 	build-all \
 	clean \
-	delete-all \
+	kind-undeploy-all \
 	docker-build-all \
 	docker-build-bpfman \
 	docker-build-bpfman-builder \
@@ -165,6 +181,8 @@ delete-all: stats-reader-delete bpfman-delete
 	docker-build-stats-reader \
 	docker-clean-bpfman-builder \
 	help \
+	kind-create \
+	kind-delete \
 	stats-reader-delete \
 	stats-reader-deploy \
 	stats-reader-logs \
