@@ -101,6 +101,7 @@ type ProgramStore interface {
 // KernelSource provides access to kernel BPF objects.
 type KernelSource interface {
 	Programs(ctx context.Context) iter.Seq2[kernel.Program, error]
+	GetProgramByID(ctx context.Context, id uint32) (kernel.Program, error)
 	Maps(ctx context.Context) iter.Seq2[kernel.Map, error]
 	Links(ctx context.Context) iter.Seq2[kernel.Link, error]
 }

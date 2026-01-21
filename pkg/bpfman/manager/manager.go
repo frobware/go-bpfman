@@ -272,8 +272,8 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 
 // ManagedProgram combines kernel and metadata info.
 type ManagedProgram struct {
-	KernelProgram kernel.Program
-	Metadata      *managed.Program // nil if not managed by bpfman
+	KernelProgram kernel.Program   `json:"kernel"`
+	Metadata      *managed.Program `json:"metadata,omitempty"`
 }
 
 // joinManagedPrograms is a pure function that joins kernel and store data.
@@ -319,8 +319,26 @@ func FilterUnmanaged(programs []ManagedProgram) []ManagedProgram {
 }
 
 // Get retrieves a managed program by its kernel ID.
-func (m *Manager) Get(ctx context.Context, kernelID uint32) (managed.Program, error) {
-	return m.store.Get(ctx, kernelID)
+// Returns both the stored metadata and the live kernel state.
+// Returns an error if the program exists in the store but not in the kernel,
+// as this indicates an inconsistent state that requires reconciliation.
+func (m *Manager) Get(ctx context.Context, kernelID uint32) (ManagedProgram, error) {
+	// Fetch from store
+	metadata, err := m.store.Get(ctx, kernelID)
+	if err != nil {
+		return ManagedProgram{}, err
+	}
+
+	// Fetch from kernel
+	kp, err := m.kernel.GetProgramByID(ctx, kernelID)
+	if err != nil {
+		return ManagedProgram{}, fmt.Errorf("program %d exists in store but not in kernel (requires reconciliation): %w", kernelID, err)
+	}
+
+	return ManagedProgram{
+		KernelProgram: kp,
+		Metadata:      &metadata,
+	}, nil
 }
 
 // AttachTracepoint attaches a pinned program to a tracepoint.

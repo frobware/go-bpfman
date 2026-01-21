@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
@@ -23,6 +24,22 @@ type Kernel struct{}
 // New creates a new kernel adapter.
 func New() *Kernel {
 	return &Kernel{}
+}
+
+// GetProgramByID retrieves a kernel program by its ID.
+func (k *Kernel) GetProgramByID(ctx context.Context, id uint32) (kernel.Program, error) {
+	prog, err := ebpf.NewProgramFromID(ebpf.ProgramID(id))
+	if err != nil {
+		return kernel.Program{}, fmt.Errorf("program %d: %w", id, err)
+	}
+	defer prog.Close()
+
+	info, err := prog.Info()
+	if err != nil {
+		return kernel.Program{}, fmt.Errorf("get info for program %d: %w", id, err)
+	}
+
+	return infoToProgram(info, id), nil
 }
 
 // Programs returns an iterator over kernel BPF programs.
@@ -238,23 +255,57 @@ func (k *Kernel) Unload(ctx context.Context, pinPath string) error {
 	return nil
 }
 
-func infoToProgram(info *ebpf.ProgramInfo, id uint32) kernel.Program {
-	name := info.Name
-	tag := info.Tag
+// bootTime returns the system boot time by reading /proc/stat.
+// Falls back to time.Now() if /proc/stat cannot be read.
+func bootTime() time.Time {
+	data, err := os.ReadFile("/proc/stat")
+	if err != nil {
+		return time.Now()
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "btime ") {
+			var btime int64
+			if _, err := fmt.Sscanf(line, "btime %d", &btime); err == nil {
+				return time.Unix(btime, 0)
+			}
+		}
+	}
+	return time.Now()
+}
 
+func infoToProgram(info *ebpf.ProgramInfo, id uint32) kernel.Program {
 	ebpfMapIDs, _ := info.MapIDs()
 	mapIDs := make([]uint32, len(ebpfMapIDs))
 	for i, mid := range ebpfMapIDs {
 		mapIDs[i] = uint32(mid)
 	}
 
-	return kernel.Program{
+	kp := kernel.Program{
 		ID:          id,
-		Name:        name,
+		Name:        info.Name,
 		ProgramType: info.Type.String(),
-		Tag:         tag,
+		Tag:         info.Tag,
 		MapIDs:      mapIDs,
 	}
+
+	if uid, ok := info.CreatedByUID(); ok {
+		kp.UID = uid
+	}
+	if loadTime, ok := info.LoadTime(); ok {
+		// LoadTime is nanoseconds since boot, convert to wall clock time
+		kp.LoadedAt = bootTime().Add(loadTime)
+	}
+	if btfID, ok := info.BTFID(); ok {
+		kp.BTFId = uint32(btfID)
+	}
+	if jitedSize, err := info.JitedSize(); err == nil {
+		kp.JitedSize = jitedSize
+	}
+	if xlatedSize, err := info.TranslatedSize(); err == nil {
+		kp.XlatedSize = uint32(xlatedSize)
+	}
+
+	return kp
 }
 
 func infoToMap(info *ebpf.MapInfo, id uint32) kernel.Map {

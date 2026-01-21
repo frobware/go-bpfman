@@ -16,6 +16,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"iter"
 	"log/slog"
@@ -97,6 +98,18 @@ func (f *fakeKernel) Programs(_ context.Context) iter.Seq2[kernel.Program, error
 			}
 		}
 	}
+}
+
+func (f *fakeKernel) GetProgramByID(_ context.Context, id uint32) (kernel.Program, error) {
+	p, ok := f.programs[id]
+	if !ok {
+		return kernel.Program{}, fmt.Errorf("program %d not found", id)
+	}
+	return kernel.Program{
+		ID:          id,
+		Name:        p.Name,
+		ProgramType: p.ProgramType.String(),
+	}, nil
 }
 
 func (f *fakeKernel) Maps(_ context.Context) iter.Seq2[kernel.Map, error] {
