@@ -671,9 +671,13 @@ func (m *Manager) GetLink(ctx context.Context, uuid string) (managed.LinkSummary
 //
 // This detaches the link from the kernel (if pinned) and removes it from the
 // store. The associated program remains loaded.
+//
+// For XDP and TC links attached via dispatchers, this also decrements the
+// dispatcher's extension count. If the dispatcher has no remaining extensions,
+// it is cleaned up automatically (pins removed and deleted from store).
 func (m *Manager) Detach(ctx context.Context, linkUUID string) error {
-	// Fetch link summary from store
-	summary, _, err := m.store.GetLink(ctx, linkUUID)
+	// Fetch link summary and details from store
+	summary, details, err := m.store.GetLink(ctx, linkUUID)
 	if err != nil {
 		return fmt.Errorf("get link %s: %w", linkUUID, err)
 	}
@@ -693,6 +697,105 @@ func (m *Manager) Detach(ctx context.Context, linkUUID string) error {
 		return fmt.Errorf("delete link %s from store: %w", linkUUID, err)
 	}
 
+	// Handle dispatcher cleanup for XDP/TC links
+	if summary.LinkType == managed.LinkTypeXDP || summary.LinkType == managed.LinkTypeTC {
+		if err := m.maybeCleanupDispatcher(ctx, details); err != nil {
+			m.logger.Warn("failed to cleanup dispatcher", "error", err)
+		}
+	}
+
 	m.logger.Info("removed link", "uuid", linkUUID, "type", summary.LinkType, "program_id", summary.KernelProgramID)
+	return nil
+}
+
+// maybeCleanupDispatcher decrements the dispatcher's extension count and
+// cleans up the dispatcher if no extensions remain.
+func (m *Manager) maybeCleanupDispatcher(ctx context.Context, details managed.LinkDetails) error {
+	var dispType dispatcher.DispatcherType
+	var nsid uint64
+	var ifindex uint32
+
+	switch d := details.(type) {
+	case managed.XDPDetails:
+		dispType = dispatcher.DispatcherTypeXDP
+		nsid = d.Nsid
+		ifindex = d.Ifindex
+	case managed.TCDetails:
+		switch d.Direction {
+		case "ingress":
+			dispType = dispatcher.DispatcherTypeTCIngress
+		case "egress":
+			dispType = dispatcher.DispatcherTypeTCEgress
+		default:
+			return fmt.Errorf("unknown TC direction: %s", d.Direction)
+		}
+		nsid = d.Nsid
+		ifindex = d.Ifindex
+	default:
+		// Not a dispatcher-based link type
+		return nil
+	}
+
+	// Get dispatcher state
+	dispState, err := m.store.GetDispatcher(ctx, string(dispType), nsid, ifindex)
+	if err != nil {
+		return fmt.Errorf("get dispatcher: %w", err)
+	}
+
+	// Decrement extension count
+	if dispState.NumExtensions > 0 {
+		dispState.NumExtensions--
+	}
+
+	// If still has extensions, just save updated count
+	if dispState.NumExtensions > 0 {
+		if err := m.store.SaveDispatcher(ctx, dispState); err != nil {
+			return fmt.Errorf("save dispatcher: %w", err)
+		}
+		m.logger.Debug("decremented dispatcher extension count",
+			"type", dispType,
+			"nsid", nsid,
+			"ifindex", ifindex,
+			"remaining", dispState.NumExtensions)
+		return nil
+	}
+
+	// No extensions left - clean up dispatcher
+	return m.cleanupDispatcher(ctx, dispState)
+}
+
+// cleanupDispatcher removes a dispatcher's pins and deletes it from the store.
+func (m *Manager) cleanupDispatcher(ctx context.Context, state managed.DispatcherState) error {
+	m.logger.Info("removing empty dispatcher",
+		"type", state.Type,
+		"nsid", state.Nsid,
+		"ifindex", state.Ifindex)
+
+	// Remove dispatcher link pin (stable link outside revision dir)
+	if err := os.Remove(state.LinkPinPath); err != nil && !os.IsNotExist(err) {
+		m.logger.Warn("failed to remove dispatcher link pin", "path", state.LinkPinPath, "error", err)
+	}
+
+	// Remove dispatcher program pin
+	if err := os.Remove(state.ProgPinPath); err != nil && !os.IsNotExist(err) {
+		m.logger.Warn("failed to remove dispatcher prog pin", "path", state.ProgPinPath, "error", err)
+	}
+
+	// Remove revision directory (should be empty now)
+	revisionDir := filepath.Dir(state.ProgPinPath)
+	if err := os.Remove(revisionDir); err != nil && !os.IsNotExist(err) {
+		m.logger.Warn("failed to remove revision directory", "path", revisionDir, "error", err)
+	}
+
+	// Delete from store
+	if err := m.store.DeleteDispatcher(ctx, string(state.Type), state.Nsid, state.Ifindex); err != nil {
+		return fmt.Errorf("delete dispatcher from store: %w", err)
+	}
+
+	m.logger.Info("removed dispatcher",
+		"type", state.Type,
+		"nsid", state.Nsid,
+		"ifindex", state.Ifindex)
+
 	return nil
 }
