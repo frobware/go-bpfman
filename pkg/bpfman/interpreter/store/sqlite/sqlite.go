@@ -14,6 +14,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"github.com/frobware/go-bpfman/pkg/bpfman/dispatcher"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/store"
 	"github.com/frobware/go-bpfman/pkg/bpfman/managed"
@@ -759,10 +760,10 @@ func (s *Store) SaveXDPLink(ctx context.Context, summary managed.LinkSummary, de
 	}
 
 	_, err = tx.ExecContext(ctx,
-		`INSERT INTO xdp_link_details (uuid, interface, ifindex, priority, position, proceed_on, netns, nsid, dispatcher_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO xdp_link_details (uuid, interface, ifindex, priority, position, proceed_on, netns, nsid, dispatcher_id, revision)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		summary.UUID, details.Interface, details.Ifindex, details.Priority, details.Position,
-		string(proceedOnJSON), details.Netns, details.Nsid, details.DispatcherID)
+		string(proceedOnJSON), details.Netns, details.Nsid, details.DispatcherID, details.Revision)
 	if err != nil {
 		return fmt.Errorf("failed to insert xdp details: %w", err)
 	}
@@ -793,10 +794,10 @@ func (s *Store) SaveTCLink(ctx context.Context, summary managed.LinkSummary, det
 	}
 
 	_, err = tx.ExecContext(ctx,
-		`INSERT INTO tc_link_details (uuid, interface, ifindex, direction, priority, position, proceed_on, netns, nsid, dispatcher_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO tc_link_details (uuid, interface, ifindex, direction, priority, position, proceed_on, netns, nsid, dispatcher_id, revision)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		summary.UUID, details.Interface, details.Ifindex, details.Direction, details.Priority, details.Position,
-		string(proceedOnJSON), details.Netns, details.Nsid, details.DispatcherID)
+		string(proceedOnJSON), details.Netns, details.Nsid, details.DispatcherID, details.Revision)
 	if err != nil {
 		return fmt.Errorf("failed to insert tc details: %w", err)
 	}
@@ -1034,15 +1035,14 @@ func (s *Store) getFexitDetails(ctx context.Context, uuid string) (managed.Fexit
 
 func (s *Store) getXDPDetails(ctx context.Context, uuid string) (managed.XDPDetails, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT interface, ifindex, priority, position, proceed_on, netns, nsid, dispatcher_id
+		`SELECT interface, ifindex, priority, position, proceed_on, netns, nsid, dispatcher_id, revision
 		 FROM xdp_link_details WHERE uuid = ?`, uuid)
 
 	var details managed.XDPDetails
 	var proceedOnJSON string
 	var netns sql.NullString
-	var nsid sql.NullInt64
 	err := row.Scan(&details.Interface, &details.Ifindex, &details.Priority, &details.Position,
-		&proceedOnJSON, &netns, &nsid, &details.DispatcherID)
+		&proceedOnJSON, &netns, &details.Nsid, &details.DispatcherID, &details.Revision)
 	if err == sql.ErrNoRows {
 		return managed.XDPDetails{}, fmt.Errorf("xdp details for %s: %w", uuid, store.ErrNotFound)
 	}
@@ -1056,23 +1056,19 @@ func (s *Store) getXDPDetails(ctx context.Context, uuid string) (managed.XDPDeta
 	if netns.Valid {
 		details.Netns = netns.String
 	}
-	if nsid.Valid {
-		details.Nsid = uint32(nsid.Int64)
-	}
 	return details, nil
 }
 
 func (s *Store) getTCDetails(ctx context.Context, uuid string) (managed.TCDetails, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT interface, ifindex, direction, priority, position, proceed_on, netns, nsid, dispatcher_id
+		`SELECT interface, ifindex, direction, priority, position, proceed_on, netns, nsid, dispatcher_id, revision
 		 FROM tc_link_details WHERE uuid = ?`, uuid)
 
 	var details managed.TCDetails
 	var proceedOnJSON string
 	var netns sql.NullString
-	var nsid sql.NullInt64
 	err := row.Scan(&details.Interface, &details.Ifindex, &details.Direction, &details.Priority, &details.Position,
-		&proceedOnJSON, &netns, &nsid, &details.DispatcherID)
+		&proceedOnJSON, &netns, &details.Nsid, &details.DispatcherID, &details.Revision)
 	if err == sql.ErrNoRows {
 		return managed.TCDetails{}, fmt.Errorf("tc details for %s: %w", uuid, store.ErrNotFound)
 	}
@@ -1085,9 +1081,6 @@ func (s *Store) getTCDetails(ctx context.Context, uuid string) (managed.TCDetail
 	}
 	if netns.Valid {
 		details.Netns = netns.String
-	}
-	if nsid.Valid {
-		details.Nsid = uint32(nsid.Int64)
 	}
 	return details, nil
 }
@@ -1112,7 +1105,120 @@ func (s *Store) getTCXDetails(ctx context.Context, uuid string) (managed.TCXDeta
 		details.Netns = netns.String
 	}
 	if nsid.Valid {
-		details.Nsid = uint32(nsid.Int64)
+		details.Nsid = uint64(nsid.Int64)
 	}
 	return details, nil
+}
+
+// ----------------------------------------------------------------------------
+// Dispatcher Store Operations
+// ----------------------------------------------------------------------------
+
+// GetDispatcher retrieves a dispatcher by type, nsid, and ifindex.
+func (s *Store) GetDispatcher(ctx context.Context, dispType string, nsid uint64, ifindex uint32) (managed.DispatcherState, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT id, type, nsid, ifindex, revision, kernel_id, link_id, link_pin_path, prog_pin_path, num_extensions
+		 FROM dispatchers WHERE type = ? AND nsid = ? AND ifindex = ?`,
+		dispType, nsid, ifindex)
+
+	var state managed.DispatcherState
+	var id int64
+	var dispTypeStr string
+	err := row.Scan(&id, &dispTypeStr, &state.Nsid, &state.Ifindex, &state.Revision,
+		&state.KernelID, &state.LinkID, &state.LinkPinPath, &state.ProgPinPath, &state.NumExtensions)
+	if err == sql.ErrNoRows {
+		return managed.DispatcherState{}, fmt.Errorf("dispatcher (%s, %d, %d): %w", dispType, nsid, ifindex, store.ErrNotFound)
+	}
+	if err != nil {
+		return managed.DispatcherState{}, err
+	}
+
+	state.Type = dispatcher.DispatcherType(dispTypeStr)
+	return state, nil
+}
+
+// SaveDispatcher creates or updates a dispatcher.
+func (s *Store) SaveDispatcher(ctx context.Context, state managed.DispatcherState) error {
+	now := time.Now().Format(time.RFC3339)
+
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO dispatchers (type, nsid, ifindex, revision, kernel_id, link_id, link_pin_path, prog_pin_path, num_extensions, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(type, nsid, ifindex) DO UPDATE SET
+		   revision = excluded.revision,
+		   kernel_id = excluded.kernel_id,
+		   link_id = excluded.link_id,
+		   link_pin_path = excluded.link_pin_path,
+		   prog_pin_path = excluded.prog_pin_path,
+		   num_extensions = excluded.num_extensions,
+		   updated_at = excluded.updated_at`,
+		string(state.Type), state.Nsid, state.Ifindex, state.Revision,
+		state.KernelID, state.LinkID, state.LinkPinPath, state.ProgPinPath,
+		state.NumExtensions, now, now)
+	if err != nil {
+		return fmt.Errorf("save dispatcher: %w", err)
+	}
+
+	s.logger.Debug("saved dispatcher",
+		"type", state.Type, "nsid", state.Nsid, "ifindex", state.Ifindex, "revision", state.Revision)
+	return nil
+}
+
+// DeleteDispatcher removes a dispatcher by type, nsid, and ifindex.
+func (s *Store) DeleteDispatcher(ctx context.Context, dispType string, nsid uint64, ifindex uint32) error {
+	result, err := s.db.ExecContext(ctx,
+		`DELETE FROM dispatchers WHERE type = ? AND nsid = ? AND ifindex = ?`,
+		dispType, nsid, ifindex)
+	if err != nil {
+		return fmt.Errorf("delete dispatcher: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return fmt.Errorf("dispatcher (%s, %d, %d): %w", dispType, nsid, ifindex, store.ErrNotFound)
+	}
+
+	s.logger.Debug("deleted dispatcher", "type", dispType, "nsid", nsid, "ifindex", ifindex)
+	return nil
+}
+
+// IncrementRevision atomically increments the dispatcher revision.
+// Returns the new revision number. Wraps from MaxUint32 to 1.
+func (s *Store) IncrementRevision(ctx context.Context, dispType string, nsid uint64, ifindex uint32) (uint32, error) {
+	now := time.Now().Format(time.RFC3339)
+
+	// Use CASE to handle wrap-around at MaxUint32
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE dispatchers
+		 SET revision = CASE WHEN revision = 4294967295 THEN 1 ELSE revision + 1 END,
+		     updated_at = ?
+		 WHERE type = ? AND nsid = ? AND ifindex = ?`,
+		now, dispType, nsid, ifindex)
+	if err != nil {
+		return 0, fmt.Errorf("increment revision: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if rows == 0 {
+		return 0, fmt.Errorf("dispatcher (%s, %d, %d): %w", dispType, nsid, ifindex, store.ErrNotFound)
+	}
+
+	// Fetch the new revision
+	var newRevision uint32
+	err = s.db.QueryRowContext(ctx,
+		`SELECT revision FROM dispatchers WHERE type = ? AND nsid = ? AND ifindex = ?`,
+		dispType, nsid, ifindex).Scan(&newRevision)
+	if err != nil {
+		return 0, fmt.Errorf("fetch new revision: %w", err)
+	}
+
+	s.logger.Debug("incremented dispatcher revision",
+		"type", dispType, "nsid", nsid, "ifindex", ifindex, "new_revision", newRevision)
+	return newRevision, nil
 }

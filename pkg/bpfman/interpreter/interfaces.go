@@ -46,10 +46,28 @@ type LinkStore interface {
 	LinkLister
 }
 
-// Store combines program and link store operations.
+// DispatcherStore manages dispatcher state.
+type DispatcherStore interface {
+	// GetDispatcher retrieves a dispatcher by type, nsid, and ifindex.
+	// Returns store.ErrNotFound if the dispatcher does not exist.
+	GetDispatcher(ctx context.Context, dispType string, nsid uint64, ifindex uint32) (managed.DispatcherState, error)
+
+	// SaveDispatcher creates or updates a dispatcher.
+	SaveDispatcher(ctx context.Context, state managed.DispatcherState) error
+
+	// DeleteDispatcher removes a dispatcher by type, nsid, and ifindex.
+	DeleteDispatcher(ctx context.Context, dispType string, nsid uint64, ifindex uint32) error
+
+	// IncrementRevision atomically increments the dispatcher revision.
+	// Returns the new revision number. Wraps from MaxUint32 to 1.
+	IncrementRevision(ctx context.Context, dispType string, nsid uint64, ifindex uint32) (uint32, error)
+}
+
+// Store combines program, link, and dispatcher store operations.
 type Store interface {
 	ProgramStore
 	LinkStore
+	DispatcherStore
 }
 
 // ProgramReader reads program metadata from the store.
@@ -158,6 +176,18 @@ type DispatcherAttacher interface {
 	// The dispatcher allows multiple XDP programs to be chained together.
 	// numProgs specifies how many slots to enable, proceedOn is the bitmask for chain behaviour.
 	AttachXDPDispatcher(ifindex int, pinDir string, numProgs int, proceedOn uint32) (*XDPDispatcherResult, error)
+
+	// AttachXDPDispatcherWithPaths loads and attaches an XDP dispatcher to an interface
+	// with explicit paths for the dispatcher program and link.
+	// This is used when the caller has computed paths according to the Rust bpfman convention.
+	//
+	// Parameters:
+	//   - ifindex: Network interface index
+	//   - progPinPath: Path to pin the dispatcher program (e.g., .../dispatcher_{nsid}_{ifindex}_{revision}/dispatcher)
+	//   - linkPinPath: Stable path to pin the XDP link (e.g., .../xdp/dispatcher_{nsid}_{ifindex}_link)
+	//   - numProgs: Number of extension slots to enable
+	//   - proceedOn: Bitmask of XDP return codes that trigger continuation to next program
+	AttachXDPDispatcherWithPaths(ifindex int, progPinPath, linkPinPath string, numProgs int, proceedOn uint32) (*XDPDispatcherResult, error)
 
 	// AttachXDPExtension loads a program from ELF as Extension type and attaches
 	// it to a dispatcher slot. The program is loaded with BPF_PROG_TYPE_EXT

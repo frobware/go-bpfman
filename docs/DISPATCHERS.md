@@ -13,6 +13,38 @@ whether to continue to the next program based on its return value.
 The dispatcher model matches upstream bpfman's behaviour, ensuring
 drop-in compatibility.
 
+## Limits
+
+### Dispatchers Per Interface
+
+You can have up to **3 dispatchers** per network interface (per namespace):
+
+| Dispatcher Type | Hook Point |
+|-----------------|------------|
+| `xdp` | XDP (ingress only) |
+| `tc-ingress` | TC ingress |
+| `tc-egress` | TC egress |
+
+This is enforced by the unique constraint `(type, nsid, ifindex)` in
+the database schema.
+
+### Programs Per Dispatcher
+
+Each dispatcher can chain up to **10 programs** (positions 0-9).
+
+This limit is defined by `MaxPrograms = 10` in `dispatcher.go` and
+matches the upstream bpfman implementation.
+
+### Total Capacity
+
+Per interface, you can attach:
+- 10 XDP programs
+- 10 TC-ingress programs
+- 10 TC-egress programs
+
+The system-wide limit is bounded by the number of network namespaces
+and interfaces, which are limited by kernel resources.
+
 ## Architecture
 
 ### Dispatcher Programs
@@ -43,6 +75,67 @@ the original ELF file with:
 This is different from direct XDP attachment where the program is
 loaded as `BPF_PROG_TYPE_XDP`.
 
+## Pin Path Structure
+
+Pin paths follow the Rust bpfman convention, using network namespace
+ID (nsid) and interface index (ifindex) for unique identification:
+
+```
+/sys/fs/bpf/bpfman/
+├── <uuid>/                              # User programs (unchanged)
+│   ├── <program-name>
+│   └── <map-names>
+│
+├── xdp/                                 # XDP dispatchers
+│   ├── dispatcher_{nsid}_{ifindex}_link        # Stable XDP link
+│   └── dispatcher_{nsid}_{ifindex}_{revision}/ # Revision directory
+│       ├── dispatcher                          # Dispatcher program
+│       ├── link_0                              # Extension link position 0
+│       ├── link_1                              # Extension link position 1
+│       └── ...
+│
+├── tc-ingress/                          # TC ingress dispatchers
+│   ├── dispatcher_{nsid}_{ifindex}_link
+│   └── dispatcher_{nsid}_{ifindex}_{revision}/
+│       └── ...
+│
+└── tc-egress/                           # TC egress dispatchers
+    ├── dispatcher_{nsid}_{ifindex}_link
+    └── dispatcher_{nsid}_{ifindex}_{revision}/
+        └── ...
+```
+
+### Path Components
+
+| Component | Description |
+|-----------|-------------|
+| `nsid` | Network namespace inode number (e.g., `4026531840`) |
+| `ifindex` | Network interface index (e.g., `1` for lo) |
+| `revision` | Dispatcher revision, incremented on atomic updates |
+
+### Example Paths
+
+For XDP on loopback (ifindex=1) in the root namespace (nsid=4026531840):
+
+```
+/sys/fs/bpf/bpfman/xdp/dispatcher_4026531840_1_link
+/sys/fs/bpf/bpfman/xdp/dispatcher_4026531840_1_1/dispatcher
+/sys/fs/bpf/bpfman/xdp/dispatcher_4026531840_1_1/link_0
+```
+
+### Why This Structure?
+
+1. **Stable link path**: The `_link` file is outside the revision
+   directory, allowing atomic dispatcher replacement without
+   re-attaching the XDP link.
+
+2. **Namespace isolation**: Using nsid ensures dispatchers in
+   different network namespaces don't collide.
+
+3. **Revision-based updates**: New dispatcher configs are loaded into
+   a new revision directory, then extension links are migrated
+   atomically.
+
 ## Implementation
 
 ### Package Structure
@@ -50,13 +143,42 @@ loaded as `BPF_PROG_TYPE_XDP`.
 ```
 pkg/bpfman/dispatcher/     # Dispatcher loading and config
   dispatcher.go            # Load functions, config structs
+  paths.go                 # Path construction functions
   xdp_dispatcher_v2.bpf.o  # Embedded XDP dispatcher bytecode
   tc_dispatcher.bpf.o      # Embedded TC dispatcher bytecode
+
+pkg/bpfman/netns/          # Network namespace utilities
+  netns.go                 # GetCurrentNsid()
+
+pkg/bpfman/managed/        # Data types
+  dispatcher.go            # DispatcherState struct
 
 dispatchers/               # BPF source files
   xdp_dispatcher_v2.bpf.c
   tc_dispatcher.bpf.c
   Makefile
+```
+
+### Path Construction
+
+The `dispatcher` package provides functions to construct paths:
+
+```go
+// Stable link path (outside revision directory)
+dispatcher.DispatcherLinkPath(DispatcherTypeXDP, nsid, ifindex)
+// -> /sys/fs/bpf/bpfman/xdp/dispatcher_{nsid}_{ifindex}_link
+
+// Revision directory
+dispatcher.DispatcherRevisionDir(DispatcherTypeXDP, nsid, ifindex, revision)
+// -> /sys/fs/bpf/bpfman/xdp/dispatcher_{nsid}_{ifindex}_{revision}
+
+// Dispatcher program within revision
+dispatcher.DispatcherProgPath(revisionDir)
+// -> {revisionDir}/dispatcher
+
+// Extension link within revision
+dispatcher.ExtensionLinkPath(revisionDir, position)
+// -> {revisionDir}/link_{position}
 ```
 
 ### Config Injection
@@ -91,16 +213,24 @@ rodata.Contents = []ebpf.MapKV{
 Note: `RewriteConstants` and the Variables API don't work for static
 variables in cilium/ebpf.
 
-### Pin Paths
+### Dispatcher State
 
-```
-/sys/fs/bpf/bpfman/dispatchers/<ifname>/
-    xdp_dispatcher    # The dispatcher program
-    link              # XDP link attaching dispatcher to interface
+Dispatcher state is persisted in SQLite:
 
-/sys/fs/bpf/bpfman/<program-uuid>/
-    <program-name>    # Original program (loaded as XDP type)
-    link              # Extension link (freplace to dispatcher slot)
+```sql
+CREATE TABLE dispatchers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    type TEXT NOT NULL,           -- 'xdp', 'tc-ingress', 'tc-egress'
+    nsid INTEGER NOT NULL,        -- Network namespace inode
+    ifindex INTEGER NOT NULL,     -- Interface index
+    revision INTEGER NOT NULL,    -- Current revision
+    kernel_id INTEGER NOT NULL,   -- Dispatcher program kernel ID
+    link_id INTEGER NOT NULL,     -- XDP/TC link kernel ID
+    link_pin_path TEXT NOT NULL,  -- Stable link path
+    prog_pin_path TEXT NOT NULL,  -- Current dispatcher program path
+    num_extensions INTEGER NOT NULL,
+    UNIQUE (type, nsid, ifindex)
+);
 ```
 
 ### Attachment Flow
@@ -111,12 +241,14 @@ variables in cilium/ebpf.
    - ObjectPath stored in database
 
 2. **Attach XDP** (via `bpfman attach xdp`):
-   - Check if dispatcher exists for interface
-   - If not, create dispatcher and attach to interface
+   - Get current network namespace ID
+   - Look up dispatcher by `(xdp, nsid, ifindex)` in store
+   - If not found, create new dispatcher with revision=1
+   - Compute extension link path: `{revision_dir}/link_{position}`
    - Reload program from ObjectPath as Extension type
    - Set AttachTarget to dispatcher, AttachTo to slot name
-   - Create freplace link
-   - Pin extension link
+   - Create freplace link and pin to extension link path
+   - Update dispatcher extension count in store
 
 3. **Detach** (via `bpfman detach`):
    - Remove extension link pin
@@ -126,41 +258,8 @@ variables in cilium/ebpf.
 
 ### Single Slot (Position 0)
 
-Currently all programs are attached to slot 0. The code has:
-
-```go
-// TODO: Track positions per interface and find next available slot
-position := 0
-```
-
-Future work: Track occupied positions per interface and allocate the
-next available slot based on priority.
-
-### No Dispatcher Lifecycle Management
-
-Dispatchers are created on first attachment but never automatically
-removed. After detaching all programs from an interface, the dispatcher
-remains until manually cleaned up:
-
-```bash
-rm -rf /sys/fs/bpf/bpfman/dispatchers/<ifname>
-```
-
-Future work: Track extension count per dispatcher and remove when
-count reaches zero.
-
-### Dispatcher ID Not Retrieved on Reuse
-
-When reusing an existing dispatcher, we don't retrieve its kernel ID:
-
-```go
-} else {
-    m.logger.Debug("using existing dispatcher", ...)
-    // TODO: Get dispatcher ID from pinned program
-}
-```
-
-This means `XDPDetails.DispatcherID` is 0 when reusing a dispatcher.
+Currently all programs are attached to position 0. Position tracking
+based on priority is not yet implemented.
 
 ### Hardcoded Proceed-On
 
@@ -173,10 +272,14 @@ xdpProceedOnPass = 1 << 2  // Continue on XDP_PASS
 The CLI doesn't expose proceed-on configuration. Future work: add
 `--proceed-on` flag to `attach xdp` command.
 
-### No Multi-Program Testing
+### No Atomic Revision Updates
 
-Only single program attachment has been tested. Attaching multiple
-programs to the same interface (using different slots) is untested.
+Revision-based atomic updates are not yet implemented. The revision
+field exists in the schema but is not used for atomic replacement.
+
+### TC Dispatcher Untested
+
+The TC dispatcher implementation exists but is untested.
 
 ## XDP vs Extension Program Types
 
@@ -212,16 +315,19 @@ bpfman load image --program=xdp:pass quay.io/bpfman-bytecode/xdp_pass:latest
 # Attach using dispatcher (program ID from load output)
 bpfman attach xdp --program-id=<id> lo
 
-# Verify
-ip link show lo                              # Shows xdpgeneric
-ls /sys/fs/bpf/bpfman/dispatchers/lo/        # Dispatcher pins
-bpfman list links                            # Shows extension link
+# Verify new path structure
+ls /sys/fs/bpf/bpfman/xdp/
+# Should show: dispatcher_{nsid}_{ifindex}_link
+#              dispatcher_{nsid}_{ifindex}_1/
+
+ls /sys/fs/bpf/bpfman/xdp/dispatcher_*_1/
+# Should show: dispatcher, link_0
+
+ip link show lo                    # Shows xdpgeneric
+bpfman list links                  # Shows extension link
 
 # Detach
 bpfman detach <link-uuid>
-
-# Clean up dispatcher manually
-sudo rm -rf /sys/fs/bpf/bpfman/dispatchers/lo
 ```
 
 ## Future Work
@@ -235,11 +341,10 @@ sudo rm -rf /sys/fs/bpf/bpfman/dispatchers/lo
 3. **Proceed-on configuration**: CLI flag to configure which return
    values continue the chain
 
-4. **TC dispatcher**: Same model for TC programs (implementation
-   exists but untested)
+4. **Atomic revision updates**: Load new dispatcher config into new
+   revision, migrate extensions, clean up old revision
 
-5. **Revision-based updates**: Atomic dispatcher replacement for
-   config changes (matches upstream bpfman)
+5. **TC dispatcher testing**: Verify TC dispatchers work correctly
 
 6. **Multi-program testing**: Verify multiple programs can be attached
    to different slots on the same interface

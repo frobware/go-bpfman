@@ -61,10 +61,12 @@ import (
 	googleuuid "github.com/google/uuid"
 
 	"github.com/frobware/go-bpfman/pkg/bpfman/compute"
+	"github.com/frobware/go-bpfman/pkg/bpfman/dispatcher"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/store"
 	"github.com/frobware/go-bpfman/pkg/bpfman/kernel"
 	"github.com/frobware/go-bpfman/pkg/bpfman/managed"
+	"github.com/frobware/go-bpfman/pkg/bpfman/netns"
 )
 
 // Manager orchestrates BPF program management using fetch/compute/execute.
@@ -477,15 +479,17 @@ const (
 	xdpProceedOnPass = 1 << 2 // Continue to next program on XDP_PASS
 )
 
-// dispatcherPinRoot is where dispatchers are pinned.
-const dispatcherPinRoot = "/sys/fs/bpf/bpfman/dispatchers"
-
 // AttachXDP attaches an XDP program to a network interface using the
 // dispatcher model for multi-program chaining.
 //
 // The dispatcher is created automatically if it doesn't exist for the interface.
 // Programs are attached as extensions (freplace) to dispatcher slots.
 // The program is reloaded from its original ObjectPath as Extension type.
+//
+// Pin paths follow the Rust bpfman convention:
+//   - Dispatcher link: /sys/fs/bpf/bpfman/xdp/dispatcher_{nsid}_{ifindex}_link
+//   - Dispatcher prog: /sys/fs/bpf/bpfman/xdp/dispatcher_{nsid}_{ifindex}_{revision}/dispatcher
+//   - Extension links: /sys/fs/bpf/bpfman/xdp/dispatcher_{nsid}_{ifindex}_{revision}/link_{position}
 func (m *Manager) AttachXDP(ctx context.Context, programKernelID uint32, ifindex int, ifname string, linkPinPath string) (managed.LinkSummary, error) {
 	// Get program metadata to access ObjectPath and ProgramName
 	prog, err := m.store.Get(ctx, programKernelID)
@@ -493,38 +497,46 @@ func (m *Manager) AttachXDP(ctx context.Context, programKernelID uint32, ifindex
 		return managed.LinkSummary{}, fmt.Errorf("get program %d: %w", programKernelID, err)
 	}
 
-	// Dispatcher pin directory for this interface
-	dispatcherPinDir := filepath.Join(dispatcherPinRoot, ifname)
-	dispatcherProgPin := filepath.Join(dispatcherPinDir, "xdp_dispatcher")
+	// Get network namespace ID
+	nsid, err := netns.GetCurrentNsid()
+	if err != nil {
+		return managed.LinkSummary{}, fmt.Errorf("get current nsid: %w", err)
+	}
 
-	// Check if dispatcher exists, create if not
-	var dispatcherID uint32
-	if _, err := os.Stat(dispatcherProgPin); os.IsNotExist(err) {
-		m.logger.Info("creating XDP dispatcher", "interface", ifname, "pin_dir", dispatcherPinDir)
-
-		// Create dispatcher with 1 slot enabled, proceed on XDP_PASS
-		result, err := m.kernel.AttachXDPDispatcher(ifindex, dispatcherPinDir, 1, xdpProceedOnPass)
+	// Look up or create dispatcher
+	dispState, err := m.store.GetDispatcher(ctx, string(dispatcher.DispatcherTypeXDP), nsid, uint32(ifindex))
+	if errors.Is(err, store.ErrNotFound) {
+		// Create new dispatcher
+		dispState, err = m.createXDPDispatcher(ctx, nsid, uint32(ifindex))
 		if err != nil {
 			return managed.LinkSummary{}, fmt.Errorf("create XDP dispatcher for %s: %w", ifname, err)
 		}
-		dispatcherID = result.DispatcherID
-		m.logger.Info("created XDP dispatcher",
-			"interface", ifname,
-			"dispatcher_id", dispatcherID,
-			"dispatcher_pin", result.DispatcherPin)
 	} else if err != nil {
-		return managed.LinkSummary{}, fmt.Errorf("check dispatcher exists: %w", err)
-	} else {
-		m.logger.Debug("using existing dispatcher", "interface", ifname, "dispatcher_pin", dispatcherProgPin)
-		// TODO: Get dispatcher ID from pinned program
+		return managed.LinkSummary{}, fmt.Errorf("get dispatcher: %w", err)
 	}
 
-	// Attach user program as extension to slot 0
-	// The program is loaded fresh from the ELF file as Extension type
-	// TODO: Track positions per interface and find next available slot
-	position := 0
+	m.logger.Debug("using dispatcher",
+		"interface", ifname,
+		"nsid", nsid,
+		"ifindex", ifindex,
+		"revision", dispState.Revision,
+		"dispatcher_id", dispState.KernelID)
+
+	// Calculate extension link path using new convention
+	revisionDir := dispatcher.DispatcherRevisionDir(dispatcher.DispatcherTypeXDP, nsid, uint32(ifindex), dispState.Revision)
+
+	// Find next available position (TODO: query store for used positions)
+	position := int(dispState.NumExtensions)
+	extensionLinkPath := dispatcher.ExtensionLinkPath(revisionDir, position)
+
+	// Override linkPinPath with the computed path if not provided
+	if linkPinPath == "" {
+		linkPinPath = extensionLinkPath
+	}
+
+	// Attach user program as extension
 	extensionLink, err := m.kernel.AttachXDPExtension(
-		dispatcherProgPin,
+		dispState.ProgPinPath,
 		prog.LoadSpec.ObjectPath,
 		prog.LoadSpec.ProgramName,
 		position,
@@ -532,6 +544,12 @@ func (m *Manager) AttachXDP(ctx context.Context, programKernelID uint32, ifindex
 	)
 	if err != nil {
 		return managed.LinkSummary{}, fmt.Errorf("attach XDP extension to %s slot %d: %w", ifname, position, err)
+	}
+
+	// Update dispatcher extension count
+	dispState.NumExtensions++
+	if err := m.store.SaveDispatcher(ctx, dispState); err != nil {
+		m.logger.Warn("failed to update dispatcher extension count", "error", err)
 	}
 
 	// Create link metadata
@@ -553,7 +571,9 @@ func (m *Manager) AttachXDP(ctx context.Context, programKernelID uint32, ifindex
 		Priority:     50, // Default priority
 		Position:     int32(position),
 		ProceedOn:    []int32{2}, // XDP_PASS
-		DispatcherID: dispatcherID,
+		Nsid:         nsid,
+		DispatcherID: dispState.KernelID,
+		Revision:     dispState.Revision,
 	}
 
 	// Save to store
@@ -567,11 +587,69 @@ func (m *Manager) AttachXDP(ctx context.Context, programKernelID uint32, ifindex
 			"program_id", programKernelID,
 			"interface", ifname,
 			"ifindex", ifindex,
+			"nsid", nsid,
 			"position", position,
+			"revision", dispState.Revision,
 			"pin_path", extensionLink.PinPath)
 	}
 
 	return summary, nil
+}
+
+// createXDPDispatcher creates a new XDP dispatcher for the given interface.
+func (m *Manager) createXDPDispatcher(ctx context.Context, nsid uint64, ifindex uint32) (managed.DispatcherState, error) {
+	// Calculate paths according to Rust bpfman convention
+	revision := uint32(1)
+	linkPinPath := dispatcher.DispatcherLinkPath(dispatcher.DispatcherTypeXDP, nsid, ifindex)
+	revisionDir := dispatcher.DispatcherRevisionDir(dispatcher.DispatcherTypeXDP, nsid, ifindex, revision)
+	progPinPath := dispatcher.DispatcherProgPath(revisionDir)
+
+	m.logger.Info("creating XDP dispatcher",
+		"nsid", nsid,
+		"ifindex", ifindex,
+		"revision", revision,
+		"prog_pin_path", progPinPath,
+		"link_pin_path", linkPinPath)
+
+	// Create dispatcher with 1 slot enabled, proceed on XDP_PASS
+	result, err := m.kernel.AttachXDPDispatcherWithPaths(
+		int(ifindex),
+		progPinPath,
+		linkPinPath,
+		dispatcher.MaxPrograms,
+		xdpProceedOnPass,
+	)
+	if err != nil {
+		return managed.DispatcherState{}, err
+	}
+
+	// Create dispatcher state
+	state := managed.DispatcherState{
+		Type:          dispatcher.DispatcherTypeXDP,
+		Nsid:          nsid,
+		Ifindex:       ifindex,
+		Revision:      revision,
+		KernelID:      result.DispatcherID,
+		LinkID:        result.LinkID,
+		LinkPinPath:   linkPinPath,
+		ProgPinPath:   progPinPath,
+		NumExtensions: 0,
+	}
+
+	// Save to store
+	if err := m.store.SaveDispatcher(ctx, state); err != nil {
+		return managed.DispatcherState{}, fmt.Errorf("save dispatcher: %w", err)
+	}
+
+	m.logger.Info("created XDP dispatcher",
+		"nsid", nsid,
+		"ifindex", ifindex,
+		"dispatcher_id", result.DispatcherID,
+		"link_id", result.LinkID,
+		"prog_pin_path", progPinPath,
+		"link_pin_path", linkPinPath)
+
+	return state, nil
 }
 
 // ListLinks returns all managed links (summaries only).

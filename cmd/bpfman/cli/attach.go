@@ -107,20 +107,9 @@ func (c *XDPCmd) Run(cli *CLI) error {
 
 	ctx := context.Background()
 
-	// Auto-generate link pin path if not provided.
-	// Links must be pinned to persist beyond the CLI command.
+	// For XDP dispatcher attachments, let the manager compute the pin path
+	// using the new dispatcher path convention. Only override if explicitly provided.
 	linkPinPath := c.LinkPinPath
-	if linkPinPath == "" {
-		// Get program info to derive link pin path from program's pin directory
-		progInfo, err := mgr.Get(ctx, c.ProgramID.Value)
-		if err != nil {
-			return fmt.Errorf("failed to get program %d: %w", c.ProgramID.Value, err)
-		}
-		if progInfo.Bpfman == nil || progInfo.Bpfman.Program == nil {
-			return fmt.Errorf("program %d not found in bpfman store", c.ProgramID.Value)
-		}
-		linkPinPath = filepath.Join(progInfo.Bpfman.Program.LoadSpec.PinPath, "link")
-	}
 
 	result, err := mgr.AttachXDP(ctx, c.ProgramID.Value, iface.Index, c.Interface, linkPinPath)
 	if err != nil {

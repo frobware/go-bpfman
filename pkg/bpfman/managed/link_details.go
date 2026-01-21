@@ -56,8 +56,9 @@ type XDPDetails struct {
 	Position     int32   `json:"position"`
 	ProceedOn    []int32 `json:"proceed_on"`
 	Netns        string  `json:"netns,omitempty"`
-	Nsid         uint32  `json:"nsid,omitempty"`
+	Nsid         uint64  `json:"nsid"`
 	DispatcherID uint32  `json:"dispatcher_id"`
+	Revision     uint32  `json:"revision"`
 }
 
 func (XDPDetails) linkDetails() {}
@@ -71,8 +72,9 @@ type TCDetails struct {
 	Position     int32   `json:"position"`
 	ProceedOn    []int32 `json:"proceed_on"`
 	Netns        string  `json:"netns,omitempty"`
-	Nsid         uint32  `json:"nsid,omitempty"`
+	Nsid         uint64  `json:"nsid"`
 	DispatcherID uint32  `json:"dispatcher_id"`
+	Revision     uint32  `json:"revision"`
 }
 
 func (TCDetails) linkDetails() {}
@@ -84,7 +86,7 @@ type TCXDetails struct {
 	Direction string `json:"direction"` // "ingress" or "egress"
 	Priority  int32  `json:"priority"`
 	Netns     string `json:"netns,omitempty"`
-	Nsid      uint32 `json:"nsid,omitempty"`
+	Nsid      uint64 `json:"nsid,omitempty"`
 }
 
 func (TCXDetails) linkDetails() {}

@@ -799,6 +799,104 @@ func (k *Kernel) AttachXDPDispatcher(ifindex int, pinDir string, numProgs int, p
 	return result, nil
 }
 
+// AttachXDPDispatcherWithPaths loads and attaches an XDP dispatcher to an interface
+// with explicit paths for the dispatcher program and link.
+// This follows the Rust bpfman convention where:
+//   - progPinPath: revision-specific path for the dispatcher program
+//   - linkPinPath: stable path for the XDP link (outside revision directory)
+func (k *Kernel) AttachXDPDispatcherWithPaths(ifindex int, progPinPath, linkPinPath string, numProgs int, proceedOn uint32) (*interpreter.XDPDispatcherResult, error) {
+	// Configure the dispatcher
+	cfg := dispatcher.NewXDPConfig(numProgs)
+	for i := 0; i < dispatcher.MaxPrograms; i++ {
+		cfg.ChainCallActions[i] = proceedOn
+	}
+
+	// Load the dispatcher spec with config injected
+	spec, err := dispatcher.LoadXDPDispatcher(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("load XDP dispatcher spec: %w", err)
+	}
+
+	// Create collection from spec
+	coll, err := ebpf.NewCollection(spec)
+	if err != nil {
+		return nil, fmt.Errorf("create XDP dispatcher collection: %w", err)
+	}
+	defer coll.Close()
+
+	// Get the dispatcher program
+	dispatcherProg := coll.Programs["xdp_dispatcher"]
+	if dispatcherProg == nil {
+		return nil, fmt.Errorf("xdp_dispatcher program not found in collection")
+	}
+
+	// Attach to interface
+	lnk, err := link.AttachXDP(link.XDPOptions{
+		Program:   dispatcherProg,
+		Interface: ifindex,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("attach XDP dispatcher to ifindex %d: %w", ifindex, err)
+	}
+
+	result := &interpreter.XDPDispatcherResult{}
+
+	// Get dispatcher program info
+	progInfo, err := dispatcherProg.Info()
+	if err != nil {
+		lnk.Close()
+		return nil, fmt.Errorf("get dispatcher program info: %w", err)
+	}
+	progID, _ := progInfo.ID()
+	result.DispatcherID = uint32(progID)
+
+	// Get link info
+	linkInfo, err := lnk.Info()
+	if err != nil {
+		lnk.Close()
+		return nil, fmt.Errorf("get dispatcher link info: %w", err)
+	}
+	result.LinkID = uint32(linkInfo.ID)
+
+	// Pin dispatcher program to the revision-specific path
+	if progPinPath != "" {
+		progDir := filepath.Dir(progPinPath)
+		if err := os.MkdirAll(progDir, 0755); err != nil {
+			lnk.Close()
+			return nil, fmt.Errorf("create dispatcher program directory: %w", err)
+		}
+
+		if err := dispatcherProg.Pin(progPinPath); err != nil {
+			lnk.Close()
+			return nil, fmt.Errorf("pin dispatcher program to %s: %w", progPinPath, err)
+		}
+		result.DispatcherPin = progPinPath
+	}
+
+	// Pin link to the stable path (outside revision directory)
+	if linkPinPath != "" {
+		linkDir := filepath.Dir(linkPinPath)
+		if err := os.MkdirAll(linkDir, 0755); err != nil {
+			if progPinPath != "" {
+				os.Remove(progPinPath)
+			}
+			lnk.Close()
+			return nil, fmt.Errorf("create link pin directory: %w", err)
+		}
+
+		if err := lnk.Pin(linkPinPath); err != nil {
+			if progPinPath != "" {
+				os.Remove(progPinPath)
+			}
+			lnk.Close()
+			return nil, fmt.Errorf("pin dispatcher link to %s: %w", linkPinPath, err)
+		}
+		result.LinkPin = linkPinPath
+	}
+
+	return result, nil
+}
+
 // AttachXDPExtension loads a program from ELF as Extension type and attaches
 // it to a dispatcher slot.
 //

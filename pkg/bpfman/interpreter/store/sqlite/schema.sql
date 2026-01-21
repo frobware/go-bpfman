@@ -115,6 +115,26 @@ CREATE TABLE IF NOT EXISTS fexit_link_details (
         ON DELETE CASCADE
 ) STRICT;
 
+-- Dispatchers table for XDP/TC multi-program chaining
+CREATE TABLE IF NOT EXISTS dispatchers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    type TEXT NOT NULL CHECK (type IN ('xdp', 'tc-ingress', 'tc-egress')),
+    nsid INTEGER NOT NULL,
+    ifindex INTEGER NOT NULL,
+    revision INTEGER NOT NULL DEFAULT 1,
+    kernel_id INTEGER NOT NULL,
+    link_id INTEGER NOT NULL,
+    link_pin_path TEXT NOT NULL,
+    prog_pin_path TEXT NOT NULL,
+    num_extensions INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (type, nsid, ifindex)
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS idx_dispatchers_lookup
+    ON dispatchers(type, nsid, ifindex);
+
 -- XDP links (dispatcher-based)
 CREATE TABLE IF NOT EXISTS xdp_link_details (
     uuid TEXT PRIMARY KEY,
@@ -124,17 +144,18 @@ CREATE TABLE IF NOT EXISTS xdp_link_details (
     position INTEGER NOT NULL CHECK (position BETWEEN 0 AND 9),
     proceed_on TEXT NOT NULL CHECK (json_valid(proceed_on)),
     netns TEXT,
-    nsid INTEGER,
+    nsid INTEGER NOT NULL,
     dispatcher_id INTEGER NOT NULL,
+    revision INTEGER NOT NULL,
 
     FOREIGN KEY (uuid)
         REFERENCES link_registry(uuid)
         ON DELETE CASCADE
 ) STRICT;
 
--- Enforce unique position per XDP dispatcher
+-- Enforce unique position per interface in namespace
 CREATE UNIQUE INDEX IF NOT EXISTS uq_xdp_dispatcher_position
-    ON xdp_link_details(dispatcher_id, nsid, position);
+    ON xdp_link_details(nsid, ifindex, position);
 
 -- TC links (dispatcher-based)
 CREATE TABLE IF NOT EXISTS tc_link_details (
@@ -146,17 +167,18 @@ CREATE TABLE IF NOT EXISTS tc_link_details (
     position INTEGER NOT NULL CHECK (position BETWEEN 0 AND 9),
     proceed_on TEXT NOT NULL CHECK (json_valid(proceed_on)),
     netns TEXT,
-    nsid INTEGER,
+    nsid INTEGER NOT NULL,
     dispatcher_id INTEGER NOT NULL,
+    revision INTEGER NOT NULL,
 
     FOREIGN KEY (uuid)
         REFERENCES link_registry(uuid)
         ON DELETE CASCADE
 ) STRICT;
 
--- Enforce unique position per TC dispatcher + direction
+-- Enforce unique position per interface + direction in namespace
 CREATE UNIQUE INDEX IF NOT EXISTS uq_tc_dispatcher_position
-    ON tc_link_details(dispatcher_id, direction, nsid, position);
+    ON tc_link_details(nsid, ifindex, direction, position);
 
 -- TCX links (kernel multi-attach)
 CREATE TABLE IF NOT EXISTS tcx_link_details (

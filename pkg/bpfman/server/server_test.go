@@ -189,6 +189,17 @@ func (f *fakeKernel) AttachXDPDispatcher(ifindex int, pinDir string, numProgs in
 	}, nil
 }
 
+func (f *fakeKernel) AttachXDPDispatcherWithPaths(ifindex int, progPinPath, linkPinPath string, numProgs int, proceedOn uint32) (*interpreter.XDPDispatcherResult, error) {
+	dispatcherID := f.nextID.Add(1)
+	linkID := f.nextID.Add(1)
+	return &interpreter.XDPDispatcherResult{
+		DispatcherID:  dispatcherID,
+		LinkID:        linkID,
+		DispatcherPin: progPinPath,
+		LinkPin:       linkPinPath,
+	}, nil
+}
+
 func (f *fakeKernel) AttachXDPExtension(dispatcherPinPath, objectPath, programName string, position int, linkPinPath string) (*bpfman.AttachedLink, error) {
 	id := f.nextID.Add(1)
 	link := &bpfman.AttachedLink{

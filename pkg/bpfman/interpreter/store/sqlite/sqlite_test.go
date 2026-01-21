@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/frobware/go-bpfman/pkg/bpfman/dispatcher"
 	"github.com/frobware/go-bpfman/pkg/bpfman/managed"
 )
 
@@ -359,4 +360,241 @@ func TestLinkRegistry_CascadeDeleteFromRegistry(t *testing.T) {
 	// Verify link is gone
 	_, _, err = store.GetLink(ctx, linkUUID)
 	require.Error(t, err, "expected link to be deleted")
+}
+
+// ----------------------------------------------------------------------------
+// Dispatcher Store Tests
+// ----------------------------------------------------------------------------
+
+func TestDispatcherStore_SaveAndGet(t *testing.T) {
+	store, err := NewInMemory(testLogger())
+	require.NoError(t, err, "failed to create store")
+	defer store.Close()
+
+	ctx := context.Background()
+
+	// Create a dispatcher
+	state := managed.DispatcherState{
+		Type:          dispatcher.DispatcherTypeXDP,
+		Nsid:          4026531840,
+		Ifindex:       1,
+		Revision:      1,
+		KernelID:      100,
+		LinkID:        101,
+		LinkPinPath:   "/sys/fs/bpf/bpfman/xdp/dispatcher_4026531840_1_link",
+		ProgPinPath:   "/sys/fs/bpf/bpfman/xdp/dispatcher_4026531840_1_1/dispatcher",
+		NumExtensions: 0,
+	}
+
+	require.NoError(t, store.SaveDispatcher(ctx, state), "SaveDispatcher failed")
+
+	// Retrieve and verify
+	got, err := store.GetDispatcher(ctx, string(dispatcher.DispatcherTypeXDP), 4026531840, 1)
+	require.NoError(t, err, "GetDispatcher failed")
+
+	assert.Equal(t, state.Type, got.Type)
+	assert.Equal(t, state.Nsid, got.Nsid)
+	assert.Equal(t, state.Ifindex, got.Ifindex)
+	assert.Equal(t, state.Revision, got.Revision)
+	assert.Equal(t, state.KernelID, got.KernelID)
+	assert.Equal(t, state.LinkID, got.LinkID)
+	assert.Equal(t, state.LinkPinPath, got.LinkPinPath)
+	assert.Equal(t, state.ProgPinPath, got.ProgPinPath)
+	assert.Equal(t, state.NumExtensions, got.NumExtensions)
+}
+
+func TestDispatcherStore_Update(t *testing.T) {
+	store, err := NewInMemory(testLogger())
+	require.NoError(t, err, "failed to create store")
+	defer store.Close()
+
+	ctx := context.Background()
+
+	// Create a dispatcher
+	state := managed.DispatcherState{
+		Type:          dispatcher.DispatcherTypeXDP,
+		Nsid:          4026531840,
+		Ifindex:       1,
+		Revision:      1,
+		KernelID:      100,
+		LinkID:        101,
+		LinkPinPath:   "/sys/fs/bpf/bpfman/xdp/dispatcher_4026531840_1_link",
+		ProgPinPath:   "/sys/fs/bpf/bpfman/xdp/dispatcher_4026531840_1_1/dispatcher",
+		NumExtensions: 0,
+	}
+
+	require.NoError(t, store.SaveDispatcher(ctx, state), "SaveDispatcher failed")
+
+	// Update it
+	state.NumExtensions = 3
+	state.Revision = 2
+	state.ProgPinPath = "/sys/fs/bpf/bpfman/xdp/dispatcher_4026531840_1_2/dispatcher"
+
+	require.NoError(t, store.SaveDispatcher(ctx, state), "SaveDispatcher (update) failed")
+
+	// Verify the update
+	got, err := store.GetDispatcher(ctx, string(dispatcher.DispatcherTypeXDP), 4026531840, 1)
+	require.NoError(t, err, "GetDispatcher failed")
+
+	assert.Equal(t, uint8(3), got.NumExtensions)
+	assert.Equal(t, uint32(2), got.Revision)
+	assert.Equal(t, "/sys/fs/bpf/bpfman/xdp/dispatcher_4026531840_1_2/dispatcher", got.ProgPinPath)
+}
+
+func TestDispatcherStore_Delete(t *testing.T) {
+	store, err := NewInMemory(testLogger())
+	require.NoError(t, err, "failed to create store")
+	defer store.Close()
+
+	ctx := context.Background()
+
+	// Create a dispatcher
+	state := managed.DispatcherState{
+		Type:          dispatcher.DispatcherTypeXDP,
+		Nsid:          4026531840,
+		Ifindex:       1,
+		Revision:      1,
+		KernelID:      100,
+		LinkID:        101,
+		LinkPinPath:   "/sys/fs/bpf/bpfman/xdp/dispatcher_4026531840_1_link",
+		ProgPinPath:   "/sys/fs/bpf/bpfman/xdp/dispatcher_4026531840_1_1/dispatcher",
+		NumExtensions: 0,
+	}
+
+	require.NoError(t, store.SaveDispatcher(ctx, state), "SaveDispatcher failed")
+
+	// Delete it
+	require.NoError(t, store.DeleteDispatcher(ctx, string(dispatcher.DispatcherTypeXDP), 4026531840, 1), "DeleteDispatcher failed")
+
+	// Verify it's gone
+	_, err = store.GetDispatcher(ctx, string(dispatcher.DispatcherTypeXDP), 4026531840, 1)
+	require.Error(t, err, "expected dispatcher to be deleted")
+}
+
+func TestDispatcherStore_DeleteNonExistent(t *testing.T) {
+	store, err := NewInMemory(testLogger())
+	require.NoError(t, err, "failed to create store")
+	defer store.Close()
+
+	ctx := context.Background()
+
+	// Try to delete a non-existent dispatcher
+	err = store.DeleteDispatcher(ctx, string(dispatcher.DispatcherTypeXDP), 4026531840, 99)
+	require.Error(t, err, "expected error for non-existent dispatcher")
+}
+
+func TestDispatcherStore_IncrementRevision(t *testing.T) {
+	store, err := NewInMemory(testLogger())
+	require.NoError(t, err, "failed to create store")
+	defer store.Close()
+
+	ctx := context.Background()
+
+	// Create a dispatcher with revision 1
+	state := managed.DispatcherState{
+		Type:          dispatcher.DispatcherTypeXDP,
+		Nsid:          4026531840,
+		Ifindex:       1,
+		Revision:      1,
+		KernelID:      100,
+		LinkID:        101,
+		LinkPinPath:   "/sys/fs/bpf/bpfman/xdp/dispatcher_4026531840_1_link",
+		ProgPinPath:   "/sys/fs/bpf/bpfman/xdp/dispatcher_4026531840_1_1/dispatcher",
+		NumExtensions: 0,
+	}
+
+	require.NoError(t, store.SaveDispatcher(ctx, state), "SaveDispatcher failed")
+
+	// Increment revision
+	newRev, err := store.IncrementRevision(ctx, string(dispatcher.DispatcherTypeXDP), 4026531840, 1)
+	require.NoError(t, err, "IncrementRevision failed")
+	assert.Equal(t, uint32(2), newRev, "expected revision 2")
+
+	// Increment again
+	newRev, err = store.IncrementRevision(ctx, string(dispatcher.DispatcherTypeXDP), 4026531840, 1)
+	require.NoError(t, err, "IncrementRevision (2nd) failed")
+	assert.Equal(t, uint32(3), newRev, "expected revision 3")
+
+	// Verify via Get
+	got, err := store.GetDispatcher(ctx, string(dispatcher.DispatcherTypeXDP), 4026531840, 1)
+	require.NoError(t, err, "GetDispatcher failed")
+	assert.Equal(t, uint32(3), got.Revision, "revision mismatch")
+}
+
+func TestDispatcherStore_UniqueConstraint(t *testing.T) {
+	store, err := NewInMemory(testLogger())
+	require.NoError(t, err, "failed to create store")
+	defer store.Close()
+
+	ctx := context.Background()
+
+	// Create an XDP dispatcher
+	xdpState := managed.DispatcherState{
+		Type:          dispatcher.DispatcherTypeXDP,
+		Nsid:          4026531840,
+		Ifindex:       1,
+		Revision:      1,
+		KernelID:      100,
+		LinkID:        101,
+		LinkPinPath:   "/sys/fs/bpf/bpfman/xdp/dispatcher_4026531840_1_link",
+		ProgPinPath:   "/sys/fs/bpf/bpfman/xdp/dispatcher_4026531840_1_1/dispatcher",
+		NumExtensions: 0,
+	}
+
+	require.NoError(t, store.SaveDispatcher(ctx, xdpState), "SaveDispatcher (xdp) failed")
+
+	// Create a TC-ingress dispatcher on same nsid/ifindex - should work (different type)
+	tcState := managed.DispatcherState{
+		Type:          dispatcher.DispatcherTypeTCIngress,
+		Nsid:          4026531840,
+		Ifindex:       1,
+		Revision:      1,
+		KernelID:      200,
+		LinkID:        201,
+		LinkPinPath:   "/sys/fs/bpf/bpfman/tc-ingress/dispatcher_4026531840_1_link",
+		ProgPinPath:   "/sys/fs/bpf/bpfman/tc-ingress/dispatcher_4026531840_1_1/dispatcher",
+		NumExtensions: 0,
+	}
+
+	require.NoError(t, store.SaveDispatcher(ctx, tcState), "SaveDispatcher (tc-ingress) failed")
+
+	// Verify both exist
+	_, err = store.GetDispatcher(ctx, string(dispatcher.DispatcherTypeXDP), 4026531840, 1)
+	require.NoError(t, err, "GetDispatcher (xdp) failed")
+
+	_, err = store.GetDispatcher(ctx, string(dispatcher.DispatcherTypeTCIngress), 4026531840, 1)
+	require.NoError(t, err, "GetDispatcher (tc-ingress) failed")
+}
+
+func TestDispatcherStore_DifferentInterfaces(t *testing.T) {
+	store, err := NewInMemory(testLogger())
+	require.NoError(t, err, "failed to create store")
+	defer store.Close()
+
+	ctx := context.Background()
+
+	// Create dispatchers for ifindex 1 and 2
+	for ifindex := uint32(1); ifindex <= 2; ifindex++ {
+		state := managed.DispatcherState{
+			Type:          dispatcher.DispatcherTypeXDP,
+			Nsid:          4026531840,
+			Ifindex:       ifindex,
+			Revision:      1,
+			KernelID:      100 + ifindex,
+			LinkID:        200 + ifindex,
+			LinkPinPath:   "/sys/fs/bpf/bpfman/xdp/dispatcher_4026531840_" + string(rune('0'+ifindex)) + "_link",
+			ProgPinPath:   "/sys/fs/bpf/bpfman/xdp/dispatcher_4026531840_" + string(rune('0'+ifindex)) + "_1/dispatcher",
+			NumExtensions: 0,
+		}
+		require.NoError(t, store.SaveDispatcher(ctx, state), "SaveDispatcher (ifindex %d) failed", ifindex)
+	}
+
+	// Verify both exist independently
+	got1, err := store.GetDispatcher(ctx, string(dispatcher.DispatcherTypeXDP), 4026531840, 1)
+	require.NoError(t, err, "GetDispatcher (ifindex 1) failed")
+	assert.Equal(t, uint32(101), got1.KernelID)
+
+	got2, err := store.GetDispatcher(ctx, string(dispatcher.DispatcherTypeXDP), 4026531840, 2)
+	require.NoError(t, err, "GetDispatcher (ifindex 2) failed")
+	assert.Equal(t, uint32(102), got2.KernelID)
 }
