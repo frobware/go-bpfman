@@ -103,6 +103,7 @@ type KernelSource interface {
 	Programs(ctx context.Context) iter.Seq2[kernel.Program, error]
 	GetProgramByID(ctx context.Context, id uint32) (kernel.Program, error)
 	GetLinkByID(ctx context.Context, id uint32) (kernel.Link, error)
+	GetMapByID(ctx context.Context, id uint32) (kernel.Map, error)
 	Maps(ctx context.Context) iter.Seq2[kernel.Map, error]
 	Links(ctx context.Context) iter.Seq2[kernel.Link, error]
 }

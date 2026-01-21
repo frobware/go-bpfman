@@ -286,6 +286,7 @@ type ProgramInfo struct {
 type KernelInfo struct {
 	Program *kernel.Program `json:"program,omitempty"`
 	Links   []kernel.Link   `json:"links,omitempty"`
+	Maps    []kernel.Map    `json:"maps,omitempty"`
 }
 
 // BpfmanInfo contains managed metadata.
@@ -338,7 +339,7 @@ func FilterUnmanaged(programs []ManagedProgram) []ManagedProgram {
 
 // Get retrieves a managed program by its kernel ID.
 // Returns both the stored metadata and the live kernel state, including
-// associated links from both the kernel and the store.
+// associated links and maps from both the kernel and the store.
 // Returns an error if the program exists in the store but not in the kernel,
 // as this indicates an inconsistent state that requires reconciliation.
 func (m *Manager) Get(ctx context.Context, kernelID uint32) (ProgramInfo, error) {
@@ -374,10 +375,22 @@ func (m *Manager) Get(ctx context.Context, kernelID uint32) (ProgramInfo, error)
 		kernelLinks = append(kernelLinks, kl)
 	}
 
+	// Fetch each map from kernel using the program's map IDs
+	var kernelMaps []kernel.Map
+	for _, mapID := range kp.MapIDs {
+		km, err := m.kernel.GetMapByID(ctx, mapID)
+		if err != nil {
+			// Map exists in program but not accessible - skip
+			continue
+		}
+		kernelMaps = append(kernelMaps, km)
+	}
+
 	return ProgramInfo{
 		Kernel: &KernelInfo{
 			Program: &kp,
 			Links:   kernelLinks,
+			Maps:    kernelMaps,
 		},
 		Bpfman: &BpfmanInfo{
 			Program: &metadata,

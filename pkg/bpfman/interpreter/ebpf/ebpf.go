@@ -58,6 +58,22 @@ func (k *Kernel) GetLinkByID(ctx context.Context, id uint32) (kernel.Link, error
 	return infoToLink(info), nil
 }
 
+// GetMapByID retrieves a kernel map by its ID.
+func (k *Kernel) GetMapByID(ctx context.Context, id uint32) (kernel.Map, error) {
+	m, err := ebpf.NewMapFromID(ebpf.MapID(id))
+	if err != nil {
+		return kernel.Map{}, fmt.Errorf("map %d: %w", id, err)
+	}
+	defer m.Close()
+
+	info, err := m.Info()
+	if err != nil {
+		return kernel.Map{}, fmt.Errorf("get info for map %d: %w", id, err)
+	}
+
+	return infoToMap(info, id), nil
+}
+
 // Programs returns an iterator over kernel BPF programs.
 func (k *Kernel) Programs(ctx context.Context) iter.Seq2[kernel.Program, error] {
 	return func(yield func(kernel.Program, error) bool) {

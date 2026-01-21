@@ -124,6 +124,11 @@ func (f *fakeKernel) GetLinkByID(_ context.Context, id uint32) (kernel.Link, err
 	}, nil
 }
 
+func (f *fakeKernel) GetMapByID(_ context.Context, id uint32) (kernel.Map, error) {
+	// fakeKernel doesn't track maps, return a minimal stub
+	return kernel.Map{ID: id}, nil
+}
+
 func (f *fakeKernel) Maps(_ context.Context) iter.Seq2[kernel.Map, error] {
 	return func(yield func(kernel.Map, error) bool) {}
 }
