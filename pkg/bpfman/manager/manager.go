@@ -276,6 +276,24 @@ type ManagedProgram struct {
 	Metadata      *managed.Program `json:"metadata,omitempty"`
 }
 
+// ProgramInfo is the complete view of a managed program.
+type ProgramInfo struct {
+	Kernel *KernelInfo `json:"kernel,omitempty"`
+	Bpfman *BpfmanInfo `json:"bpfman,omitempty"`
+}
+
+// KernelInfo contains live kernel state.
+type KernelInfo struct {
+	Program *kernel.Program `json:"program,omitempty"`
+	Links   []kernel.Link   `json:"links,omitempty"`
+}
+
+// BpfmanInfo contains managed metadata.
+type BpfmanInfo struct {
+	Program *managed.Program `json:"program,omitempty"`
+	Links   []managed.Link   `json:"links,omitempty"`
+}
+
 // joinManagedPrograms is a pure function that joins kernel and store data.
 func joinManagedPrograms(
 	stored map[uint32]managed.Program,
@@ -319,25 +337,52 @@ func FilterUnmanaged(programs []ManagedProgram) []ManagedProgram {
 }
 
 // Get retrieves a managed program by its kernel ID.
-// Returns both the stored metadata and the live kernel state.
+// Returns both the stored metadata and the live kernel state, including
+// associated links from both the kernel and the store.
 // Returns an error if the program exists in the store but not in the kernel,
 // as this indicates an inconsistent state that requires reconciliation.
-func (m *Manager) Get(ctx context.Context, kernelID uint32) (ManagedProgram, error) {
-	// Fetch from store
+func (m *Manager) Get(ctx context.Context, kernelID uint32) (ProgramInfo, error) {
+	// Fetch program from store
 	metadata, err := m.store.Get(ctx, kernelID)
 	if err != nil {
-		return ManagedProgram{}, err
+		return ProgramInfo{}, err
 	}
 
-	// Fetch from kernel
+	// Fetch program from kernel
 	kp, err := m.kernel.GetProgramByID(ctx, kernelID)
 	if err != nil {
-		return ManagedProgram{}, fmt.Errorf("program %d exists in store but not in kernel (requires reconciliation): %w", kernelID, err)
+		return ProgramInfo{}, fmt.Errorf("program %d exists in store but not in kernel (requires reconciliation): %w", kernelID, err)
 	}
 
-	return ManagedProgram{
-		KernelProgram: kp,
-		Metadata:      &metadata,
+	// Fetch links from store
+	storedLinks, err := m.store.ListLinksByProgram(ctx, kernelID)
+	if err != nil {
+		return ProgramInfo{}, fmt.Errorf("list links: %w", err)
+	}
+
+	// Fetch each link from kernel
+	var kernelLinks []kernel.Link
+	for _, sl := range storedLinks {
+		if sl.ID == 0 {
+			continue // Link not pinned or no kernel ID
+		}
+		kl, err := m.kernel.GetLinkByID(ctx, sl.ID)
+		if err != nil {
+			// Link exists in store but not kernel - skip
+			continue
+		}
+		kernelLinks = append(kernelLinks, kl)
+	}
+
+	return ProgramInfo{
+		Kernel: &KernelInfo{
+			Program: &kp,
+			Links:   kernelLinks,
+		},
+		Bpfman: &BpfmanInfo{
+			Program: &metadata,
+			Links:   storedLinks,
+		},
 	}, nil
 }
 

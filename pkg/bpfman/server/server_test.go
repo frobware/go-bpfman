@@ -112,6 +112,18 @@ func (f *fakeKernel) GetProgramByID(_ context.Context, id uint32) (kernel.Progra
 	}, nil
 }
 
+func (f *fakeKernel) GetLinkByID(_ context.Context, id uint32) (kernel.Link, error) {
+	link, ok := f.links[id]
+	if !ok {
+		return kernel.Link{}, fmt.Errorf("link %d not found", id)
+	}
+	return kernel.Link{
+		ID:        id,
+		LinkType:  string(link.Type),
+		ProgramID: 0, // fakeKernel doesn't track program association
+	}, nil
+}
+
 func (f *fakeKernel) Maps(_ context.Context) iter.Seq2[kernel.Map, error] {
 	return func(yield func(kernel.Map, error) bool) {}
 }

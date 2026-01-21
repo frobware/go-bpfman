@@ -42,6 +42,22 @@ func (k *Kernel) GetProgramByID(ctx context.Context, id uint32) (kernel.Program,
 	return infoToProgram(info, id), nil
 }
 
+// GetLinkByID retrieves a kernel link by its ID.
+func (k *Kernel) GetLinkByID(ctx context.Context, id uint32) (kernel.Link, error) {
+	lnk, err := link.NewFromID(link.ID(id))
+	if err != nil {
+		return kernel.Link{}, fmt.Errorf("link %d: %w", id, err)
+	}
+	defer lnk.Close()
+
+	info, err := lnk.Info()
+	if err != nil {
+		return kernel.Link{}, fmt.Errorf("get info for link %d: %w", id, err)
+	}
+
+	return infoToLink(info), nil
+}
+
 // Programs returns an iterator over kernel BPF programs.
 func (k *Kernel) Programs(ctx context.Context) iter.Seq2[kernel.Program, error] {
 	return func(yield func(kernel.Program, error) bool) {
