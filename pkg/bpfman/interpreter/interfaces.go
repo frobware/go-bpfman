@@ -144,6 +144,27 @@ type ProgramAttacher interface {
 	AttachXDP(progPinPath string, ifindex int, linkPinPath string) (*bpfman.AttachedLink, error)
 }
 
+// XDPDispatcherResult holds the result of loading an XDP dispatcher.
+type XDPDispatcherResult struct {
+	DispatcherID  uint32 // Kernel program ID of the dispatcher
+	LinkID        uint32 // Kernel link ID
+	DispatcherPin string // Pin path for dispatcher program
+	LinkPin       string // Pin path for link
+}
+
+// DispatcherAttacher attaches dispatcher programs for multi-program chaining.
+type DispatcherAttacher interface {
+	// AttachXDPDispatcher loads and attaches an XDP dispatcher to an interface.
+	// The dispatcher allows multiple XDP programs to be chained together.
+	// numProgs specifies how many slots to enable, proceedOn is the bitmask for chain behaviour.
+	AttachXDPDispatcher(ifindex int, pinDir string, numProgs int, proceedOn uint32) (*XDPDispatcherResult, error)
+
+	// AttachXDPExtension loads a program from ELF as Extension type and attaches
+	// it to a dispatcher slot. The program is loaded with BPF_PROG_TYPE_EXT
+	// targeting the dispatcher's slot function.
+	AttachXDPExtension(dispatcherPinPath, objectPath, programName string, position int, linkPinPath string) (*bpfman.AttachedLink, error)
+}
+
 // LinkDetacher detaches links from hooks.
 type LinkDetacher interface {
 	// DetachLink removes a pinned link by deleting its pin from bpffs.
@@ -158,6 +179,7 @@ type KernelOperations interface {
 	ProgramUnloader
 	PinInspector
 	ProgramAttacher
+	DispatcherAttacher
 	LinkDetacher
 }
 

@@ -1,0 +1,190 @@
+// Package dispatcher provides XDP and TC dispatcher programs for
+// multi-program chaining.
+//
+// The dispatchers allow multiple BPF programs to be attached to a single
+// interface, with priority ordering and proceed-on semantics. Each dispatcher
+// has 10 program slots (prog0-prog9) that can be replaced at runtime using
+// BPF extension programs (freplace).
+package dispatcher
+
+import (
+	"bytes"
+	_ "embed"
+	"encoding/binary"
+	"fmt"
+
+	"github.com/cilium/ebpf"
+	"github.com/cilium/ebpf/link"
+)
+
+// MaxPrograms is the maximum number of programs that can be chained.
+const MaxPrograms = 10
+
+// XDP dispatcher bytecode - compiled from xdp_dispatcher_v2.bpf.c
+//
+//go:embed xdp_dispatcher_v2.bpf.o
+var xdpDispatcherBytes []byte
+
+// TC dispatcher bytecode - compiled from tc_dispatcher.bpf.c
+//
+//go:embed tc_dispatcher.bpf.o
+var tcDispatcherBytes []byte
+
+// XDPConfig configures the XDP dispatcher.
+// This must match struct xdp_dispatcher_conf in xdp_dispatcher_v2.bpf.c.
+type XDPConfig struct {
+	Magic             uint8
+	DispatcherVersion uint8
+	NumProgsEnabled   uint8
+	IsXDPFrags        uint8
+	ChainCallActions  [MaxPrograms]uint32
+	RunPrios          [MaxPrograms]uint32
+	ProgramFlags      [MaxPrograms]uint32
+}
+
+// TCConfig configures the TC dispatcher.
+// This must match struct tc_dispatcher_config in tc_dispatcher.bpf.c.
+type TCConfig struct {
+	NumProgsEnabled  uint8
+	_                [3]uint8 // padding for alignment
+	ChainCallActions [MaxPrograms]uint32
+	RunPrios         [MaxPrograms]uint32
+}
+
+const (
+	// XDP dispatcher constants from xdp_dispatcher_v2.bpf.c
+	xdpDispatcherMagic   = 236
+	xdpDispatcherVersion = 2
+	defaultPriority      = 50
+)
+
+// XDPAction represents XDP return codes for proceed-on configuration.
+type XDPAction uint32
+
+const (
+	XDPAborted  XDPAction = 0
+	XDPDrop     XDPAction = 1
+	XDPPass     XDPAction = 2
+	XDPTX       XDPAction = 3
+	XDPRedirect XDPAction = 4
+)
+
+// ProceedOnMask returns a bitmask for the given XDP actions.
+// If a program returns one of these actions, the dispatcher continues
+// to the next program in the chain.
+func ProceedOnMask(actions ...XDPAction) uint32 {
+	var mask uint32
+	for _, a := range actions {
+		mask |= 1 << uint32(a)
+	}
+	return mask
+}
+
+// NewXDPConfig creates a default XDP dispatcher config.
+func NewXDPConfig(numProgs int) XDPConfig {
+	cfg := XDPConfig{
+		Magic:             xdpDispatcherMagic,
+		DispatcherVersion: xdpDispatcherVersion,
+		NumProgsEnabled:   uint8(numProgs),
+	}
+	for i := 0; i < MaxPrograms; i++ {
+		cfg.RunPrios[i] = defaultPriority
+	}
+	return cfg
+}
+
+// NewTCConfig creates a default TC dispatcher config.
+func NewTCConfig(numProgs int) TCConfig {
+	cfg := TCConfig{
+		NumProgsEnabled: uint8(numProgs),
+	}
+	for i := 0; i < MaxPrograms; i++ {
+		cfg.RunPrios[i] = defaultPriority
+	}
+	return cfg
+}
+
+// LoadXDPDispatcher loads the XDP dispatcher with the given config.
+func LoadXDPDispatcher(cfg XDPConfig) (*ebpf.CollectionSpec, error) {
+	spec, err := ebpf.LoadCollectionSpecFromReader(bytes.NewReader(xdpDispatcherBytes))
+	if err != nil {
+		return nil, fmt.Errorf("load XDP dispatcher spec: %w", err)
+	}
+
+	// The 'conf' variable is static, so we need to directly set the .rodata
+	// map's contents. The entire .rodata section contains just this config struct.
+	rodata, ok := spec.Maps[".rodata"]
+	if !ok {
+		return nil, fmt.Errorf("XDP dispatcher missing .rodata map")
+	}
+
+	// Serialize config to bytes
+	buf := new(bytes.Buffer)
+	if err := binary.Write(buf, binary.LittleEndian, cfg); err != nil {
+		return nil, fmt.Errorf("serialize XDP config: %w", err)
+	}
+
+	// Set as the map's contents (single entry at key 0)
+	rodata.Contents = []ebpf.MapKV{
+		{Key: uint32(0), Value: buf.Bytes()},
+	}
+
+	return spec, nil
+}
+
+// LoadTCDispatcher loads the TC dispatcher with the given config.
+func LoadTCDispatcher(cfg TCConfig) (*ebpf.CollectionSpec, error) {
+	spec, err := ebpf.LoadCollectionSpecFromReader(bytes.NewReader(tcDispatcherBytes))
+	if err != nil {
+		return nil, fmt.Errorf("load TC dispatcher spec: %w", err)
+	}
+
+	// The 'CONFIG' variable is static, so we need to directly set the .rodata
+	// map's contents.
+	rodata, ok := spec.Maps[".rodata"]
+	if !ok {
+		return nil, fmt.Errorf("TC dispatcher missing .rodata map")
+	}
+
+	// Serialize config to bytes
+	buf := new(bytes.Buffer)
+	if err := binary.Write(buf, binary.LittleEndian, cfg); err != nil {
+		return nil, fmt.Errorf("serialize TC config: %w", err)
+	}
+
+	// Set as the map's contents (single entry at key 0)
+	rodata.Contents = []ebpf.MapKV{
+		{Key: uint32(0), Value: buf.Bytes()},
+	}
+
+	return spec, nil
+}
+
+// SlotName returns the function name for a dispatcher slot (0-9).
+// This is the target function name used for BPF extension attachment.
+func SlotName(position int) string {
+	return fmt.Sprintf("prog%d", position)
+}
+
+// AttachExtension attaches a BPF extension program to a dispatcher slot.
+// The extension program replaces the stub function at the given position.
+//
+// Parameters:
+//   - dispatcher: The loaded dispatcher program (XDP or TC)
+//   - position: The slot position (0-9)
+//   - extension: The extension program to attach (must be type Extension)
+//
+// Returns a link that must be pinned to persist beyond the process lifetime.
+func AttachExtension(dispatcher *ebpf.Program, position int, extension *ebpf.Program) (link.Link, error) {
+	if position < 0 || position >= MaxPrograms {
+		return nil, fmt.Errorf("position %d out of range [0, %d)", position, MaxPrograms)
+	}
+
+	targetFn := SlotName(position)
+	lnk, err := link.AttachFreplace(dispatcher, targetFn, extension)
+	if err != nil {
+		return nil, fmt.Errorf("attach extension to %s: %w", targetFn, err)
+	}
+
+	return lnk, nil
+}

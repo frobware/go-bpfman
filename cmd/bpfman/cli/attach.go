@@ -82,7 +82,6 @@ func (c *KprobeCmd) Run(cli *CLI) error {
 // XDPCmd attaches an XDP program to a network interface.
 type XDPCmd struct {
 	ProgramID   ProgramID `name:"program-id" required:"" help:"Kernel program ID to attach (supports hex with 0x prefix)."`
-	ProgPinPath string    `arg:"" name:"prog-pin-path" help:"Path to the pinned program."`
 	Interface   string    `arg:"" name:"interface" help:"Network interface name (e.g., eth0)."`
 	LinkPinPath string    `name:"link-pin-path" help:"Path to pin the link (optional)."`
 }
@@ -106,15 +105,24 @@ func (c *XDPCmd) Run(cli *CLI) error {
 		return fmt.Errorf("failed to find interface %q: %w", c.Interface, err)
 	}
 
+	ctx := context.Background()
+
 	// Auto-generate link pin path if not provided.
 	// Links must be pinned to persist beyond the CLI command.
 	linkPinPath := c.LinkPinPath
 	if linkPinPath == "" {
-		linkPinPath = filepath.Join(filepath.Dir(c.ProgPinPath), "link")
+		// Get program info to derive link pin path from program's pin directory
+		progInfo, err := mgr.Get(ctx, c.ProgramID.Value)
+		if err != nil {
+			return fmt.Errorf("failed to get program %d: %w", c.ProgramID.Value, err)
+		}
+		if progInfo.Bpfman == nil || progInfo.Bpfman.Program == nil {
+			return fmt.Errorf("program %d not found in bpfman store", c.ProgramID.Value)
+		}
+		linkPinPath = filepath.Join(progInfo.Bpfman.Program.LoadSpec.PinPath, "link")
 	}
 
-	ctx := context.Background()
-	result, err := mgr.AttachXDP(ctx, c.ProgramID.Value, c.ProgPinPath, iface.Index, c.Interface, linkPinPath)
+	result, err := mgr.AttachXDP(ctx, c.ProgramID.Value, iface.Index, c.Interface, linkPinPath)
 	if err != nil {
 		return err
 	}

@@ -14,6 +14,8 @@ import (
 	"github.com/cilium/ebpf/link"
 
 	"github.com/frobware/go-bpfman/pkg/bpfman"
+	"github.com/frobware/go-bpfman/pkg/bpfman/dispatcher"
+	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter"
 	"github.com/frobware/go-bpfman/pkg/bpfman/kernel"
 	"github.com/frobware/go-bpfman/pkg/bpfman/managed"
 )
@@ -705,6 +707,169 @@ func (k *Kernel) AttachXDP(progPinPath string, ifindex int, linkPinPath string) 
 	}
 
 	// Get link info if available
+	info, err := lnk.Info()
+	if err == nil {
+		result.ID = uint32(info.ID)
+	}
+
+	return result, nil
+}
+
+// AttachXDPDispatcher loads and attaches an XDP dispatcher to an interface.
+// The dispatcher allows multiple XDP programs to be chained together.
+func (k *Kernel) AttachXDPDispatcher(ifindex int, pinDir string, numProgs int, proceedOn uint32) (*interpreter.XDPDispatcherResult, error) {
+	// Configure the dispatcher
+	cfg := dispatcher.NewXDPConfig(numProgs)
+	for i := 0; i < dispatcher.MaxPrograms; i++ {
+		cfg.ChainCallActions[i] = proceedOn
+	}
+
+	// Load the dispatcher spec with config injected
+	spec, err := dispatcher.LoadXDPDispatcher(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("load XDP dispatcher spec: %w", err)
+	}
+
+	// Create collection from spec
+	coll, err := ebpf.NewCollection(spec)
+	if err != nil {
+		return nil, fmt.Errorf("create XDP dispatcher collection: %w", err)
+	}
+	defer coll.Close()
+
+	// Get the dispatcher program
+	dispatcherProg := coll.Programs["xdp_dispatcher"]
+	if dispatcherProg == nil {
+		return nil, fmt.Errorf("xdp_dispatcher program not found in collection")
+	}
+
+	// Attach to interface
+	lnk, err := link.AttachXDP(link.XDPOptions{
+		Program:   dispatcherProg,
+		Interface: ifindex,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("attach XDP dispatcher to ifindex %d: %w", ifindex, err)
+	}
+
+	result := &interpreter.XDPDispatcherResult{}
+
+	// Get dispatcher program info
+	progInfo, err := dispatcherProg.Info()
+	if err != nil {
+		lnk.Close()
+		return nil, fmt.Errorf("get dispatcher program info: %w", err)
+	}
+	progID, _ := progInfo.ID()
+	result.DispatcherID = uint32(progID)
+
+	// Get link info
+	linkInfo, err := lnk.Info()
+	if err != nil {
+		lnk.Close()
+		return nil, fmt.Errorf("get dispatcher link info: %w", err)
+	}
+	result.LinkID = uint32(linkInfo.ID)
+
+	// Pin dispatcher and link if pinDir provided
+	if pinDir != "" {
+		if err := os.MkdirAll(pinDir, 0755); err != nil {
+			lnk.Close()
+			return nil, fmt.Errorf("create dispatcher pin directory: %w", err)
+		}
+
+		// Pin dispatcher program
+		dispatcherPinPath := filepath.Join(pinDir, "xdp_dispatcher")
+		if err := dispatcherProg.Pin(dispatcherPinPath); err != nil {
+			lnk.Close()
+			return nil, fmt.Errorf("pin dispatcher program: %w", err)
+		}
+		result.DispatcherPin = dispatcherPinPath
+
+		// Pin link
+		linkPinPath := filepath.Join(pinDir, "link")
+		if err := lnk.Pin(linkPinPath); err != nil {
+			os.Remove(dispatcherPinPath)
+			lnk.Close()
+			return nil, fmt.Errorf("pin dispatcher link: %w", err)
+		}
+		result.LinkPin = linkPinPath
+	}
+
+	return result, nil
+}
+
+// AttachXDPExtension loads a program from ELF as Extension type and attaches
+// it to a dispatcher slot.
+//
+// This is different from simple XDP attachment - the program must be loaded
+// specifically as BPF_PROG_TYPE_EXT with the dispatcher as the attach target.
+// The same ELF bytecode used for direct XDP attachment is reloaded with
+// different type settings.
+func (k *Kernel) AttachXDPExtension(dispatcherPinPath, objectPath, programName string, position int, linkPinPath string) (*bpfman.AttachedLink, error) {
+	// Load the pinned dispatcher to use as attach target
+	dispatcherProg, err := ebpf.LoadPinnedProgram(dispatcherPinPath, nil)
+	if err != nil {
+		return nil, fmt.Errorf("load pinned dispatcher %s: %w", dispatcherPinPath, err)
+	}
+	defer dispatcherProg.Close()
+
+	// Load the collection spec from the ELF file
+	collSpec, err := ebpf.LoadCollectionSpec(objectPath)
+	if err != nil {
+		return nil, fmt.Errorf("load collection spec from %s: %w", objectPath, err)
+	}
+
+	// Verify the program exists in the collection
+	progSpec, ok := collSpec.Programs[programName]
+	if !ok {
+		return nil, fmt.Errorf("program %q not found in %s", programName, objectPath)
+	}
+
+	// Modify the program spec to be Extension type targeting the dispatcher
+	progSpec.Type = ebpf.Extension
+	progSpec.AttachTarget = dispatcherProg
+	progSpec.AttachTo = dispatcher.SlotName(position)
+
+	// Load the collection with the modified program spec.
+	// This ensures any maps the program depends on are also loaded.
+	coll, err := ebpf.NewCollection(collSpec)
+	if err != nil {
+		return nil, fmt.Errorf("load extension collection: %w", err)
+	}
+	defer coll.Close()
+
+	// Get the loaded extension program
+	extensionProg := coll.Programs[programName]
+	if extensionProg == nil {
+		return nil, fmt.Errorf("extension program %q not in loaded collection", programName)
+	}
+
+	// Attach the extension using freplace link
+	lnk, err := link.AttachFreplace(dispatcherProg, progSpec.AttachTo, extensionProg)
+	if err != nil {
+		return nil, fmt.Errorf("attach freplace to %s: %w", progSpec.AttachTo, err)
+	}
+
+	result := &bpfman.AttachedLink{
+		Type: bpfman.AttachXDP,
+	}
+
+	// Pin the link if path provided
+	if linkPinPath != "" {
+		if err := os.MkdirAll(filepath.Dir(linkPinPath), 0755); err != nil {
+			lnk.Close()
+			return nil, fmt.Errorf("create extension link pin directory: %w", err)
+		}
+
+		if err := lnk.Pin(linkPinPath); err != nil {
+			lnk.Close()
+			return nil, fmt.Errorf("pin extension link to %s: %w", linkPinPath, err)
+		}
+		result.PinPath = linkPinPath
+	}
+
+	// Get link info
 	info, err := lnk.Info()
 	if err == nil {
 		result.ID = uint32(info.ID)

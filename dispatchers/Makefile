@@ -28,7 +28,14 @@ OUT_DIR ?= $(CURDIR)
 OBJECTS := $(addprefix $(OUT_DIR)/,$(SOURCES:.bpf.c=.bpf.o))
 DEP_FILES := $(addprefix $(OUT_DIR)/,$(SOURCES:.bpf.c=.bpf.d))
 
-all: $(OBJECTS)
+# Go package directory for embedding
+GO_PKG_DIR := ../pkg/bpfman/dispatcher
+
+all: $(OBJECTS) install
+
+install: $(OBJECTS)
+	cp $(OUT_DIR)/xdp_dispatcher_v2.bpf.o $(GO_PKG_DIR)/
+	cp $(OUT_DIR)/tc_dispatcher.bpf.o $(GO_PKG_DIR)/
 
 $(OUT_DIR)/%.bpf.o: %.bpf.c Makefile | $(OUT_DIR)
 	clang $(LIBBPF_CFLAGS) -g -O2 -target bpfel -c $(TARGET_ARCH_DEFINE) -MD -MP -MF$(OUT_DIR)/$*.bpf.d $< -o $@
@@ -39,6 +46,7 @@ $(OUT_DIR):
 .PHONY: clean
 clean:
 	rm -f $(OBJECTS) $(DEP_FILES)
+	rm -f $(GO_PKG_DIR)/*.bpf.o
 
 .PHONY: test-pkgconfig
 test-pkgconfig:

@@ -472,19 +472,66 @@ func (m *Manager) AttachTracepoint(ctx context.Context, programKernelID uint32, 
 	return summary, nil
 }
 
-// AttachXDP attaches a pinned XDP program to a network interface.
-// programKernelID is required to associate the link with the program in the store.
-func (m *Manager) AttachXDP(ctx context.Context, programKernelID uint32, progPinPath string, ifindex int, ifname string, linkPinPath string) (managed.LinkSummary, error) {
-	// Get program metadata to verify it exists
-	_, err := m.store.Get(ctx, programKernelID)
+// XDP proceed-on action bits (matches XDP return codes).
+const (
+	xdpProceedOnPass = 1 << 2 // Continue to next program on XDP_PASS
+)
+
+// dispatcherPinRoot is where dispatchers are pinned.
+const dispatcherPinRoot = "/sys/fs/bpf/bpfman/dispatchers"
+
+// AttachXDP attaches an XDP program to a network interface using the
+// dispatcher model for multi-program chaining.
+//
+// The dispatcher is created automatically if it doesn't exist for the interface.
+// Programs are attached as extensions (freplace) to dispatcher slots.
+// The program is reloaded from its original ObjectPath as Extension type.
+func (m *Manager) AttachXDP(ctx context.Context, programKernelID uint32, ifindex int, ifname string, linkPinPath string) (managed.LinkSummary, error) {
+	// Get program metadata to access ObjectPath and ProgramName
+	prog, err := m.store.Get(ctx, programKernelID)
 	if err != nil {
 		return managed.LinkSummary{}, fmt.Errorf("get program %d: %w", programKernelID, err)
 	}
 
-	// Attach to the kernel
-	kernelLink, err := m.kernel.AttachXDP(progPinPath, ifindex, linkPinPath)
+	// Dispatcher pin directory for this interface
+	dispatcherPinDir := filepath.Join(dispatcherPinRoot, ifname)
+	dispatcherProgPin := filepath.Join(dispatcherPinDir, "xdp_dispatcher")
+
+	// Check if dispatcher exists, create if not
+	var dispatcherID uint32
+	if _, err := os.Stat(dispatcherProgPin); os.IsNotExist(err) {
+		m.logger.Info("creating XDP dispatcher", "interface", ifname, "pin_dir", dispatcherPinDir)
+
+		// Create dispatcher with 1 slot enabled, proceed on XDP_PASS
+		result, err := m.kernel.AttachXDPDispatcher(ifindex, dispatcherPinDir, 1, xdpProceedOnPass)
+		if err != nil {
+			return managed.LinkSummary{}, fmt.Errorf("create XDP dispatcher for %s: %w", ifname, err)
+		}
+		dispatcherID = result.DispatcherID
+		m.logger.Info("created XDP dispatcher",
+			"interface", ifname,
+			"dispatcher_id", dispatcherID,
+			"dispatcher_pin", result.DispatcherPin)
+	} else if err != nil {
+		return managed.LinkSummary{}, fmt.Errorf("check dispatcher exists: %w", err)
+	} else {
+		m.logger.Debug("using existing dispatcher", "interface", ifname, "dispatcher_pin", dispatcherProgPin)
+		// TODO: Get dispatcher ID from pinned program
+	}
+
+	// Attach user program as extension to slot 0
+	// The program is loaded fresh from the ELF file as Extension type
+	// TODO: Track positions per interface and find next available slot
+	position := 0
+	extensionLink, err := m.kernel.AttachXDPExtension(
+		dispatcherProgPin,
+		prog.LoadSpec.ObjectPath,
+		prog.LoadSpec.ProgramName,
+		position,
+		linkPinPath,
+	)
 	if err != nil {
-		return managed.LinkSummary{}, fmt.Errorf("attach XDP to %s (ifindex %d): %w", ifname, ifindex, err)
+		return managed.LinkSummary{}, fmt.Errorf("attach XDP extension to %s slot %d: %w", ifname, position, err)
 	}
 
 	// Create link metadata
@@ -495,14 +542,18 @@ func (m *Manager) AttachXDP(ctx context.Context, programKernelID uint32, progPin
 		UUID:            linkUUID,
 		LinkType:        managed.LinkTypeXDP,
 		KernelProgramID: programKernelID,
-		KernelLinkID:    kernelLink.ID,
-		PinPath:         kernelLink.PinPath,
+		KernelLinkID:    extensionLink.ID,
+		PinPath:         extensionLink.PinPath,
 		CreatedAt:       now,
 	}
 
 	details := managed.XDPDetails{
-		Interface: ifname,
-		Ifindex:   uint32(ifindex),
+		Interface:    ifname,
+		Ifindex:      uint32(ifindex),
+		Priority:     50, // Default priority
+		Position:     int32(position),
+		ProceedOn:    []int32{2}, // XDP_PASS
+		DispatcherID: dispatcherID,
 	}
 
 	// Save to store
@@ -511,12 +562,13 @@ func (m *Manager) AttachXDP(ctx context.Context, programKernelID uint32, progPin
 		// Don't fail the attachment - the link is already created in the kernel
 		// This is a metadata-only failure
 	} else {
-		m.logger.Info("attached XDP",
+		m.logger.Info("attached XDP via dispatcher",
 			"link_uuid", linkUUID,
 			"program_id", programKernelID,
 			"interface", ifname,
 			"ifindex", ifindex,
-			"pin_path", kernelLink.PinPath)
+			"position", position,
+			"pin_path", extensionLink.PinPath)
 	}
 
 	return summary, nil

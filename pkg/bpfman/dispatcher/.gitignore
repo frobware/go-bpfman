@@ -1,0 +1,2 @@
+# Compiled eBPF dispatcher bytecode (copied from dispatchers/ during build)
+*.bpf.o

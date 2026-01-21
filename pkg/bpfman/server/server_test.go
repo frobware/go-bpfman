@@ -30,6 +30,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/frobware/go-bpfman/pkg/bpfman"
+	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/store/sqlite"
 	"github.com/frobware/go-bpfman/pkg/bpfman/kernel"
 	"github.com/frobware/go-bpfman/pkg/bpfman/managed"
@@ -175,6 +176,28 @@ func (f *fakeKernel) DetachLink(linkPinPath string) error {
 		}
 	}
 	return nil
+}
+
+func (f *fakeKernel) AttachXDPDispatcher(ifindex int, pinDir string, numProgs int, proceedOn uint32) (*interpreter.XDPDispatcherResult, error) {
+	dispatcherID := f.nextID.Add(1)
+	linkID := f.nextID.Add(1)
+	return &interpreter.XDPDispatcherResult{
+		DispatcherID:  dispatcherID,
+		LinkID:        linkID,
+		DispatcherPin: pinDir + "/xdp_dispatcher",
+		LinkPin:       pinDir + "/link",
+	}, nil
+}
+
+func (f *fakeKernel) AttachXDPExtension(dispatcherPinPath, objectPath, programName string, position int, linkPinPath string) (*bpfman.AttachedLink, error) {
+	id := f.nextID.Add(1)
+	link := &bpfman.AttachedLink{
+		ID:      id,
+		PinPath: linkPinPath,
+		Type:    bpfman.AttachXDP,
+	}
+	f.links[id] = link
+	return link, nil
 }
 
 // newTestServer creates a server with fake kernel and real in-memory SQLite.
