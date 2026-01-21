@@ -8,6 +8,7 @@ import (
 
 	"k8s.io/client-go/util/jsonpath"
 
+	"github.com/frobware/go-bpfman/pkg/bpfman/managed"
 	"github.com/frobware/go-bpfman/pkg/bpfman/manager"
 )
 
@@ -177,9 +178,16 @@ func formatProgramInfoTable(info manager.ProgramInfo) string {
 		b.WriteString("  (none)\n")
 	}
 
-	// Links table
+	// Links table - prefer bpfman stored info for attach details
 	b.WriteString("\n  LINKS\n")
-	if info.Kernel != nil && len(info.Kernel.Links) > 0 {
+	if info.Bpfman != nil && len(info.Bpfman.Links) > 0 {
+		fmt.Fprintf(&b, "  %-6s %-15s %s\n", "ID", "TYPE", "ATTACH")
+		for _, l := range info.Bpfman.Links {
+			attachInfo := formatAttachDetails(l.Details)
+			fmt.Fprintf(&b, "  %-6d %-15s %s\n", l.Summary.KernelLinkID, l.Summary.LinkType, attachInfo)
+		}
+	} else if info.Kernel != nil && len(info.Kernel.Links) > 0 {
+		// Fallback to kernel info if no bpfman links
 		fmt.Fprintf(&b, "  %-6s %-15s %s\n", "ID", "TYPE", "ATTACH")
 		for _, l := range info.Kernel.Links {
 			fmt.Fprintf(&b, "  %-6d %-15s %s\n", l.ID, l.LinkType, l.AttachType)
@@ -189,4 +197,37 @@ func formatProgramInfoTable(info manager.ProgramInfo) string {
 	}
 
 	return b.String()
+}
+
+// formatAttachDetails formats type-specific link details for display.
+func formatAttachDetails(details managed.LinkDetails) string {
+	if details == nil {
+		return ""
+	}
+	switch d := details.(type) {
+	case managed.TracepointDetails:
+		return d.Group + "/" + d.Name
+	case managed.KprobeDetails:
+		if d.Retprobe {
+			return "kretprobe:" + d.FnName
+		}
+		return d.FnName
+	case managed.UprobeDetails:
+		if d.Retprobe {
+			return fmt.Sprintf("uretprobe:%s:%s", d.Target, d.FnName)
+		}
+		return fmt.Sprintf("%s:%s", d.Target, d.FnName)
+	case managed.FentryDetails:
+		return d.FnName
+	case managed.FexitDetails:
+		return d.FnName
+	case managed.XDPDetails:
+		return fmt.Sprintf("%s (ifindex=%d, pos=%d)", d.Interface, d.Ifindex, d.Position)
+	case managed.TCDetails:
+		return fmt.Sprintf("%s/%s (ifindex=%d, pos=%d)", d.Interface, d.Direction, d.Ifindex, d.Position)
+	case managed.TCXDetails:
+		return fmt.Sprintf("%s/%s (ifindex=%d)", d.Interface, d.Direction, d.Ifindex)
+	default:
+		return ""
+	}
 }

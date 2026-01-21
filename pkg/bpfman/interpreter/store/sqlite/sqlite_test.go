@@ -32,16 +32,19 @@ func TestForeignKey_LinkRequiresProgram(t *testing.T) {
 	ctx := context.Background()
 
 	// Attempt to create a link referencing a non-existent program.
-	link := managed.Link{
-		UUID:        "orphan-link",
-		ProgramID:   999, // does not exist
-		ProgramUUID: "fake-uuid",
-		Type:        managed.LinkTypeXDP,
-		AttachSpec:  managed.AttachSpec{Type: managed.LinkTypeXDP},
-		CreatedAt:   time.Now(),
+	summary := managed.LinkSummary{
+		UUID:            "orphan-link",
+		LinkType:        managed.LinkTypeTracepoint,
+		KernelProgramID: 999, // does not exist
+		KernelLinkID:    1,
+		CreatedAt:       time.Now(),
+	}
+	details := managed.TracepointDetails{
+		Group: "syscalls",
+		Name:  "sys_enter_openat",
 	}
 
-	err = store.SaveLink(ctx, link)
+	err = store.SaveTracepointLink(ctx, summary, details)
 	require.Error(t, err, "expected FK constraint violation")
 	assert.True(t, strings.Contains(err.Error(), "FOREIGN KEY constraint failed"), "expected FK constraint error, got: %v", err)
 }
@@ -67,19 +70,19 @@ func TestForeignKey_CascadeDeleteRemovesLinks(t *testing.T) {
 
 	// Create two links for that program.
 	for i, linkUUID := range []string{"link-1", "link-2"} {
-		link := managed.Link{
-			UUID:        linkUUID,
-			ProgramID:   kernelID,
-			ProgramUUID: uuid,
-			Type:        managed.LinkTypeKprobe,
-			AttachSpec: managed.AttachSpec{
-				Type:   managed.LinkTypeKprobe,
-				FnName: "test_fn",
-			},
-			ID:        uint32(100 + i),
-			CreatedAt: time.Now(),
+		summary := managed.LinkSummary{
+			UUID:            linkUUID,
+			LinkType:        managed.LinkTypeKprobe,
+			KernelProgramID: kernelID,
+			KernelLinkID:    uint32(100 + i),
+			CreatedAt:       time.Now(),
 		}
-		require.NoError(t, store.SaveLink(ctx, link), "SaveLink(%s) failed", linkUUID)
+		details := managed.KprobeDetails{
+			FnName:   "test_fn",
+			Offset:   0,
+			Retprobe: false,
+		}
+		require.NoError(t, store.SaveKprobeLink(ctx, summary, details), "SaveKprobeLink(%s) failed", linkUUID)
 	}
 
 	// Verify links exist.
@@ -234,4 +237,126 @@ func TestUniqueIndex_NameCanBeReusedAfterDelete(t *testing.T) {
 	require.NoError(t, err, "FindProgramByMetadata failed")
 	assert.Equal(t, uint32(200), kernelID, "kernel_id mismatch")
 	assert.Equal(t, "prog-2", found.UUID, "UUID mismatch")
+}
+
+func TestLinkRegistry_TracepointRoundTrip(t *testing.T) {
+	store, err := NewInMemory(testLogger())
+	require.NoError(t, err, "failed to create store")
+	defer store.Close()
+
+	ctx := context.Background()
+
+	// Create a program first
+	uuid := "test-program"
+	prog := managed.Program{UUID: uuid, CreatedAt: time.Now()}
+	require.NoError(t, store.Reserve(ctx, uuid, prog), "Reserve failed")
+	require.NoError(t, store.CommitReservation(ctx, uuid, 42), "CommitReservation failed")
+
+	// Create a tracepoint link
+	linkUUID := "tracepoint-link-1"
+	summary := managed.LinkSummary{
+		UUID:            linkUUID,
+		LinkType:        managed.LinkTypeTracepoint,
+		KernelProgramID: 42,
+		KernelLinkID:    100,
+		PinPath:         "/sys/fs/bpf/bpfman/test/link",
+		CreatedAt:       time.Now(),
+	}
+	details := managed.TracepointDetails{
+		Group: "syscalls",
+		Name:  "sys_enter_openat",
+	}
+
+	require.NoError(t, store.SaveTracepointLink(ctx, summary, details), "SaveTracepointLink failed")
+
+	// Retrieve and verify
+	gotSummary, gotDetails, err := store.GetLink(ctx, linkUUID)
+	require.NoError(t, err, "GetLink failed")
+
+	assert.Equal(t, summary.UUID, gotSummary.UUID)
+	assert.Equal(t, summary.LinkType, gotSummary.LinkType)
+	assert.Equal(t, summary.KernelProgramID, gotSummary.KernelProgramID)
+	assert.Equal(t, summary.KernelLinkID, gotSummary.KernelLinkID)
+	assert.Equal(t, summary.PinPath, gotSummary.PinPath)
+
+	tpDetails, ok := gotDetails.(managed.TracepointDetails)
+	require.True(t, ok, "expected TracepointDetails")
+	assert.Equal(t, details.Group, tpDetails.Group)
+	assert.Equal(t, details.Name, tpDetails.Name)
+}
+
+func TestLinkRegistry_UUIDUniqueness(t *testing.T) {
+	store, err := NewInMemory(testLogger())
+	require.NoError(t, err, "failed to create store")
+	defer store.Close()
+
+	ctx := context.Background()
+
+	// Create a program first
+	uuid := "test-program"
+	prog := managed.Program{UUID: uuid, CreatedAt: time.Now()}
+	require.NoError(t, store.Reserve(ctx, uuid, prog), "Reserve failed")
+	require.NoError(t, store.CommitReservation(ctx, uuid, 42), "CommitReservation failed")
+
+	// Create first link
+	linkUUID := "duplicate-uuid"
+	summary := managed.LinkSummary{
+		UUID:            linkUUID,
+		LinkType:        managed.LinkTypeTracepoint,
+		KernelProgramID: 42,
+		KernelLinkID:    100,
+		CreatedAt:       time.Now(),
+	}
+	details := managed.TracepointDetails{Group: "syscalls", Name: "sys_enter_openat"}
+
+	require.NoError(t, store.SaveTracepointLink(ctx, summary, details), "first SaveTracepointLink failed")
+
+	// Try to create another link with same UUID
+	summary2 := managed.LinkSummary{
+		UUID:            linkUUID, // same UUID
+		LinkType:        managed.LinkTypeKprobe,
+		KernelProgramID: 42,
+		KernelLinkID:    101,
+		CreatedAt:       time.Now(),
+	}
+	kprobeDetails := managed.KprobeDetails{FnName: "test_fn"}
+
+	err = store.SaveKprobeLink(ctx, summary2, kprobeDetails)
+	require.Error(t, err, "expected UUID uniqueness violation")
+	assert.True(t, strings.Contains(err.Error(), "UNIQUE constraint failed") || strings.Contains(err.Error(), "PRIMARY KEY"),
+		"expected uniqueness error, got: %v", err)
+}
+
+func TestLinkRegistry_CascadeDeleteFromRegistry(t *testing.T) {
+	store, err := NewInMemory(testLogger())
+	require.NoError(t, err, "failed to create store")
+	defer store.Close()
+
+	ctx := context.Background()
+
+	// Create a program first
+	uuid := "test-program"
+	prog := managed.Program{UUID: uuid, CreatedAt: time.Now()}
+	require.NoError(t, store.Reserve(ctx, uuid, prog), "Reserve failed")
+	require.NoError(t, store.CommitReservation(ctx, uuid, 42), "CommitReservation failed")
+
+	// Create a tracepoint link
+	linkUUID := "tp-link"
+	summary := managed.LinkSummary{
+		UUID:            linkUUID,
+		LinkType:        managed.LinkTypeTracepoint,
+		KernelProgramID: 42,
+		KernelLinkID:    100,
+		CreatedAt:       time.Now(),
+	}
+	details := managed.TracepointDetails{Group: "syscalls", Name: "sys_enter_openat"}
+
+	require.NoError(t, store.SaveTracepointLink(ctx, summary, details), "SaveTracepointLink failed")
+
+	// Delete the link via registry
+	require.NoError(t, store.DeleteLink(ctx, linkUUID), "DeleteLink failed")
+
+	// Verify link is gone
+	_, _, err = store.GetLink(ctx, linkUUID)
+	require.Error(t, err, "expected link to be deleted")
 }

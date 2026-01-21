@@ -291,8 +291,14 @@ type KernelInfo struct {
 
 // BpfmanInfo contains managed metadata.
 type BpfmanInfo struct {
-	Program *managed.Program `json:"program,omitempty"`
-	Links   []managed.Link   `json:"links,omitempty"`
+	Program *managed.Program  `json:"program,omitempty"`
+	Links   []LinkWithDetails `json:"links,omitempty"`
+}
+
+// LinkWithDetails combines a link summary with its type-specific details.
+type LinkWithDetails struct {
+	Summary managed.LinkSummary `json:"summary"`
+	Details managed.LinkDetails `json:"details"`
 }
 
 // joinManagedPrograms is a pure function that joins kernel and store data.
@@ -355,19 +361,37 @@ func (m *Manager) Get(ctx context.Context, kernelID uint32) (ProgramInfo, error)
 		return ProgramInfo{}, fmt.Errorf("program %d exists in store but not in kernel (requires reconciliation): %w", kernelID, err)
 	}
 
-	// Fetch links from store
+	// Fetch links from store (summaries only)
 	storedLinks, err := m.store.ListLinksByProgram(ctx, kernelID)
 	if err != nil {
 		return ProgramInfo{}, fmt.Errorf("list links: %w", err)
 	}
 
-	// Fetch each link from kernel
+	// Fetch each link's details and kernel info
 	var kernelLinks []kernel.Link
+	var linksWithDetails []LinkWithDetails
 	for _, sl := range storedLinks {
-		if sl.ID == 0 {
+		// Fetch details for this link
+		_, details, err := m.store.GetLink(ctx, sl.UUID)
+		if err != nil {
+			m.logger.Warn("failed to get link details", "uuid", sl.UUID, "error", err)
+			// Include summary only with nil details
+			linksWithDetails = append(linksWithDetails, LinkWithDetails{
+				Summary: sl,
+				Details: nil,
+			})
+		} else {
+			linksWithDetails = append(linksWithDetails, LinkWithDetails{
+				Summary: sl,
+				Details: details,
+			})
+		}
+
+		// Fetch from kernel if we have a kernel link ID
+		if sl.KernelLinkID == 0 {
 			continue // Link not pinned or no kernel ID
 		}
-		kl, err := m.kernel.GetLinkByID(ctx, sl.ID)
+		kl, err := m.kernel.GetLinkByID(ctx, sl.KernelLinkID)
 		if err != nil {
 			// Link exists in store but not kernel - skip
 			continue
@@ -394,47 +418,46 @@ func (m *Manager) Get(ctx context.Context, kernelID uint32) (ProgramInfo, error)
 		},
 		Bpfman: &BpfmanInfo{
 			Program: &metadata,
-			Links:   storedLinks,
+			Links:   linksWithDetails,
 		},
 	}, nil
 }
 
 // AttachTracepoint attaches a pinned program to a tracepoint.
 // programKernelID is required to associate the link with the program in the store.
-func (m *Manager) AttachTracepoint(ctx context.Context, programKernelID uint32, progPinPath, group, name, linkPinPath string) (managed.Attached, error) {
-	// Get program metadata to get the UUID
-	metadata, err := m.store.Get(ctx, programKernelID)
+func (m *Manager) AttachTracepoint(ctx context.Context, programKernelID uint32, progPinPath, group, name, linkPinPath string) (managed.LinkSummary, error) {
+	// Get program metadata to verify it exists
+	_, err := m.store.Get(ctx, programKernelID)
 	if err != nil {
-		return managed.Attached{}, fmt.Errorf("get program %d: %w", programKernelID, err)
+		return managed.LinkSummary{}, fmt.Errorf("get program %d: %w", programKernelID, err)
 	}
 
 	// Attach to the kernel
 	kernelLink, err := m.kernel.AttachTracepoint(progPinPath, group, name, linkPinPath)
 	if err != nil {
-		return managed.Attached{}, fmt.Errorf("attach tracepoint %s/%s: %w", group, name, err)
+		return managed.LinkSummary{}, fmt.Errorf("attach tracepoint %s/%s: %w", group, name, err)
 	}
 
 	// Create link metadata
 	linkUUID := googleuuid.New().String()
 	now := time.Now()
 
-	link := managed.Link{
-		ID:          kernelLink.ID,
-		UUID:        linkUUID,
-		ProgramID:   programKernelID,
-		ProgramUUID: metadata.UUID,
-		Type:        managed.LinkTypeTracepoint,
-		PinPath:     kernelLink.PinPath,
-		AttachSpec: managed.AttachSpec{
-			Type:            managed.LinkTypeTracepoint,
-			TracepointGroup: group,
-			TracepointName:  name,
-		},
-		CreatedAt: now,
+	summary := managed.LinkSummary{
+		UUID:            linkUUID,
+		LinkType:        managed.LinkTypeTracepoint,
+		KernelProgramID: programKernelID,
+		KernelLinkID:    kernelLink.ID,
+		PinPath:         kernelLink.PinPath,
+		CreatedAt:       now,
+	}
+
+	details := managed.TracepointDetails{
+		Group: group,
+		Name:  name,
 	}
 
 	// Save to store
-	if err := m.store.SaveLink(ctx, link); err != nil {
+	if err := m.store.SaveTracepointLink(ctx, summary, details); err != nil {
 		m.logger.Error("failed to save link metadata", "uuid", linkUUID, "error", err)
 		// Don't fail the attachment - the link is already created in the kernel
 		// This is a metadata-only failure
@@ -446,29 +469,21 @@ func (m *Manager) AttachTracepoint(ctx context.Context, programKernelID uint32, 
 			"pin_path", kernelLink.PinPath)
 	}
 
-	return managed.Attached{
-		LinkID:      kernelLink.ID,
-		UUID:        linkUUID,
-		ProgramID:   programKernelID,
-		ProgramUUID: metadata.UUID,
-		Type:        managed.LinkTypeTracepoint,
-		PinPath:     kernelLink.PinPath,
-		AttachSpec:  link.AttachSpec,
-	}, nil
+	return summary, nil
 }
 
-// ListLinks returns all managed links.
-func (m *Manager) ListLinks(ctx context.Context) ([]managed.Link, error) {
+// ListLinks returns all managed links (summaries only).
+func (m *Manager) ListLinks(ctx context.Context) ([]managed.LinkSummary, error) {
 	return m.store.ListLinks(ctx)
 }
 
 // ListLinksByProgram returns all links for a given program.
-func (m *Manager) ListLinksByProgram(ctx context.Context, programKernelID uint32) ([]managed.Link, error) {
+func (m *Manager) ListLinksByProgram(ctx context.Context, programKernelID uint32) ([]managed.LinkSummary, error) {
 	return m.store.ListLinksByProgram(ctx, programKernelID)
 }
 
-// GetLink retrieves a link by UUID.
-func (m *Manager) GetLink(ctx context.Context, uuid string) (managed.Link, error) {
+// GetLink retrieves a link by UUID, returning both summary and type-specific details.
+func (m *Manager) GetLink(ctx context.Context, uuid string) (managed.LinkSummary, managed.LinkDetails, error) {
 	return m.store.GetLink(ctx, uuid)
 }
 
@@ -477,19 +492,19 @@ func (m *Manager) GetLink(ctx context.Context, uuid string) (managed.Link, error
 // This detaches the link from the kernel (if pinned) and removes it from the
 // store. The associated program remains loaded.
 func (m *Manager) Detach(ctx context.Context, linkUUID string) error {
-	// Fetch link from store
-	link, err := m.store.GetLink(ctx, linkUUID)
+	// Fetch link summary from store
+	summary, _, err := m.store.GetLink(ctx, linkUUID)
 	if err != nil {
 		return fmt.Errorf("get link %s: %w", linkUUID, err)
 	}
 
 	// Detach from kernel if pinned
-	if link.PinPath != "" {
-		if err := m.kernel.DetachLink(link.PinPath); err != nil {
-			m.logger.Error("failed to detach link from kernel", "uuid", linkUUID, "pin_path", link.PinPath, "error", err)
+	if summary.PinPath != "" {
+		if err := m.kernel.DetachLink(summary.PinPath); err != nil {
+			m.logger.Error("failed to detach link from kernel", "uuid", linkUUID, "pin_path", summary.PinPath, "error", err)
 			// Continue to delete from store - the pin may already be gone
 		} else {
-			m.logger.Info("detached link", "uuid", linkUUID, "pin_path", link.PinPath)
+			m.logger.Info("detached link", "uuid", linkUUID, "pin_path", summary.PinPath)
 		}
 	}
 
@@ -498,6 +513,6 @@ func (m *Manager) Detach(ctx context.Context, linkUUID string) error {
 		return fmt.Errorf("delete link %s from store: %w", linkUUID, err)
 	}
 
-	m.logger.Info("removed link", "uuid", linkUUID, "type", link.Type, "program_id", link.ProgramID)
+	m.logger.Info("removed link", "uuid", linkUUID, "type", summary.LinkType, "program_id", summary.KernelProgramID)
 	return nil
 }

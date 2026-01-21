@@ -56,6 +56,12 @@ type GetLinkCmd struct {
 	LinkUUID LinkUUID `arg:"" name:"link-uuid" help:"Link UUID."`
 }
 
+// LinkInfo combines summary and details for JSON output.
+type LinkInfo struct {
+	Summary interface{} `json:"summary"`
+	Details interface{} `json:"details"`
+}
+
 // Run executes the get link command.
 func (c *GetLinkCmd) Run(cli *CLI) error {
 	// Set up logger
@@ -72,12 +78,17 @@ func (c *GetLinkCmd) Run(cli *CLI) error {
 	defer cleanup()
 
 	ctx := context.Background()
-	link, err := mgr.GetLink(ctx, c.LinkUUID.Value)
+	summary, details, err := mgr.GetLink(ctx, c.LinkUUID.Value)
 	if err != nil {
 		return err
 	}
 
-	output, err := json.MarshalIndent(link, "", "  ")
+	info := LinkInfo{
+		Summary: summary,
+		Details: details,
+	}
+
+	output, err := json.MarshalIndent(info, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal result: %w", err)
 	}

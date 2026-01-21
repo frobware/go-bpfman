@@ -12,21 +12,31 @@ import (
 )
 
 // LinkWriter writes link metadata to the store.
+// Each link type has its own save method to enforce type safety.
 type LinkWriter interface {
-	SaveLink(ctx context.Context, link managed.Link) error
+	SaveTracepointLink(ctx context.Context, summary managed.LinkSummary, details managed.TracepointDetails) error
+	SaveKprobeLink(ctx context.Context, summary managed.LinkSummary, details managed.KprobeDetails) error
+	SaveUprobeLink(ctx context.Context, summary managed.LinkSummary, details managed.UprobeDetails) error
+	SaveFentryLink(ctx context.Context, summary managed.LinkSummary, details managed.FentryDetails) error
+	SaveFexitLink(ctx context.Context, summary managed.LinkSummary, details managed.FexitDetails) error
+	SaveXDPLink(ctx context.Context, summary managed.LinkSummary, details managed.XDPDetails) error
+	SaveTCLink(ctx context.Context, summary managed.LinkSummary, details managed.TCDetails) error
+	SaveTCXLink(ctx context.Context, summary managed.LinkSummary, details managed.TCXDetails) error
 	DeleteLink(ctx context.Context, uuid string) error
 }
 
 // LinkReader reads link metadata from the store.
+// GetLink performs a two-phase lookup: registry then type-specific details.
 type LinkReader interface {
-	GetLink(ctx context.Context, uuid string) (managed.Link, error)
-	GetLinkByKernelID(ctx context.Context, kernelLinkID uint32) (managed.Link, error)
+	GetLink(ctx context.Context, uuid string) (managed.LinkSummary, managed.LinkDetails, error)
+	GetLinkByKernelID(ctx context.Context, kernelLinkID uint32) (managed.LinkSummary, managed.LinkDetails, error)
 }
 
 // LinkLister lists links from the store.
+// Returns only LinkSummary for efficiency; use GetLink for full details.
 type LinkLister interface {
-	ListLinks(ctx context.Context) ([]managed.Link, error)
-	ListLinksByProgram(ctx context.Context, programKernelID uint32) ([]managed.Link, error)
+	ListLinks(ctx context.Context) ([]managed.LinkSummary, error)
+	ListLinksByProgram(ctx context.Context, programKernelID uint32) ([]managed.LinkSummary, error)
 }
 
 // LinkStore combines all link store operations.

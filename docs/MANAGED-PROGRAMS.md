@@ -1,20 +1,45 @@
 # Managed Programs
 
 This document explains what bpfman stores for each program type and why.
-The guiding principle is: **only store what cannot be queried from the
-kernel**.
+
+## Guiding Principle
+
+**Only store what cannot be queried from the kernel.**
+
+The kernel is the authoritative source for runtime state. bpfman persists
+intent and abstractions that exist only in userland.
+
+## Three Layers of State
+
+Understanding bpfman's storage model requires distinguishing three layers:
+
+1. **Kernel state** (authoritative, queryable)
+   - Program IDs, types, map IDs, link targets
+   - Queried live via `bpf_prog_info`, `bpf_link_info`, `bpf_map_info`
+
+2. **bpfman-managed intent** (authoritative, persisted)
+   - UUIDs, user metadata, load specs, priorities
+   - Cannot be reconstructed from kernel - must be stored
+
+3. **Derived state** (reconstructed on startup)
+   - Pin path conventions, dispatcher positions
+   - Computable from intent + kernel state
+
+This separation makes reconciliation inevitable rather than optional: on
+startup, bpfman must verify that persisted intent matches kernel reality.
 
 ## Program Types
 
-bpfman supports eight program types, divided into two categories based on
+bpfman supports eight program types, divided into three categories based on
 their attachment model:
 
 ### Single-Attach Programs
 
-These attach directly to a hook point. One link per attachment.
+These attach directly to a hook point. One link per attachment. The kernel
+manages the attachment entirely.
 
-| Type | Hook Point | Use Case |
-|------|------------|----------|
+| Type | Hook Point | Example |
+|------|------------|---------|
 | Tracepoint | Kernel tracepoint | `syscalls/sys_enter_openat` |
 | Kprobe | Kernel function entry | `do_sys_open` |
 | Kretprobe | Kernel function return | `do_sys_open` return |
@@ -23,16 +48,37 @@ These attach directly to a hook point. One link per attachment.
 | Fentry | Kernel function entry (BTF) | `tcp_connect` |
 | Fexit | Kernel function exit (BTF) | `tcp_connect` exit |
 
-### Multi-Attach Programs (Dispatcher-Based)
+### Dispatcher-Based Programs (Userland Multi-Attach)
 
-These use a dispatcher to multiplex multiple programs through a single
-kernel attachment point.
+The kernel only allows **one** XDP or TC program per interface. To support
+multiple programs, bpfman loads a **dispatcher** program and chains user
+programs through it as BPF extensions.
 
-| Type | Hook Point | Use Case |
-|------|------------|----------|
-| XDP | Network interface (ingress) | Packet filtering, DDoS mitigation |
-| TC | Traffic control (ingress/egress) | Traffic shaping, policy |
-| TCX | Traffic control extended | Modern TC replacement (kernel 6.6+) |
+| Type | Hook Point | Notes |
+|------|------------|-------|
+| XDP | Network interface (ingress) | Single kernel attachment, userland multiplexing |
+| TC | Traffic control (ingress/egress) | Single kernel attachment, userland multiplexing |
+
+The dispatcher is a **userland illusion**, not a kernel feature. The kernel
+sees one program; bpfman maintains the abstraction of multiple programs with
+priorities and flow control.
+
+### Kernel Multi-Attach Programs
+
+TCX (Traffic Control eXtended, kernel 6.6+) supports multiple attachments
+natively in the kernel - no dispatcher needed.
+
+| Type | Hook Point | Notes |
+|------|------------|-------|
+| TCX | Traffic control (ingress/egress) | Kernel-native multi-attach |
+
+However, the kernel does not define user ordering semantics. It maintains
+attachment order but doesn't understand user-assigned priorities. bpfman
+must still store priority to reconstruct intended ordering after restart.
+
+TCX sits in a middle ground:
+- No dispatcher complexity (kernel handles multiplexing)
+- Still requires priority storage (kernel doesn't preserve user intent)
 
 ## The Dispatcher Model
 
@@ -75,7 +121,9 @@ The dispatcher:
 3. Returns the final verdict to the kernel
 
 This abstraction exists **only in bpfman** - the kernel knows nothing about
-the individual programs or their ordering.
+the individual programs, their priorities, or their ordering. This is the
+crux of the storage design: dispatchers create state the kernel cannot
+describe.
 
 ## What the Kernel Knows
 
@@ -101,15 +149,22 @@ The kernel exposes information through `bpf_prog_info` and `bpf_link_info`:
 
 | Field | Why store it |
 |-------|--------------|
-| UUID | Our identifier, kernel doesn't know it |
+| UUID | Our identifier, kernel doesn't assign one |
 | User metadata | Labels for discovery (e.g., `application=stats`) |
 | Load spec | Bytecode source, program name, global data |
 | Owner | Who loaded it |
-| Pin path | Convention-derivable, but stored for efficiency |
+| Pin path | See below |
+
+**Why store pin paths?**
+
+Pin paths are convention-derivable, but we store them because:
+- Avoids divergence if conventions evolve
+- Enables forensic/debug tooling without recomputation
+- Supports reconciliation without re-deriving policy
 
 ### For Single-Attach Links
 
-Most attach parameters are queryable from kernel link info, but we store:
+Most attach parameters are queryable from kernel link info. We store:
 
 | Field | Why store it |
 |-------|--------------|
@@ -136,13 +191,23 @@ These fields **cannot** be queried from the kernel:
 | Network namespace | nsid for namespace-aware attachments |
 | Dispatcher ID | Which dispatcher this belongs to |
 
+**Priority vs Position:**
+
+- **Priority** is user intent - never recomputable from kernel state
+- **Position** is derived from priority ordering - always recomputable
+
+Both are stored, but for different reasons: priority is authoritative intent,
+position is cached computation. On reconciliation, positions are recalculated
+from priorities.
+
 ### For TCX Links
 
-TCX is simpler than XDP/TC - no dispatcher needed, but still multi-attach:
+TCX requires less storage than dispatcher-based types, but more than
+single-attach:
 
 | Field | Why store it |
 |-------|--------------|
-| Priority | Ordering among TCX programs |
+| Priority | Ordering among TCX programs (kernel doesn't preserve) |
 | Interface | Which network interface |
 | Direction | Ingress/egress |
 | Network namespace | nsid |
@@ -159,6 +224,20 @@ Each dispatcher (per interface + direction) requires:
 | Mode | XDP mode (driver/skb) |
 | Extension count | Number of attached programs |
 | Namespace ID | Network namespace |
+
+**Invariant:** Exactly one dispatcher exists per
+`(dispatcher_type, ifindex, direction, nsid)`. This is enforced via unique
+constraint in the schema.
+
+## Non-Goals
+
+bpfman's storage is deliberately limited:
+
+- **Not a full kernel mirror** - We don't cache queryable kernel state
+- **Not a generic eBPF inventory** - We only track what we loaded
+- **Not managing external programs** - Programs loaded by other tools are invisible
+
+If it's not loaded through bpfman, it's not managed by bpfman.
 
 ## Schema Design
 
@@ -187,53 +266,27 @@ CREATE TABLE program_metadata_index (
     FOREIGN KEY (kernel_id) REFERENCES managed_programs(kernel_id) ON DELETE CASCADE
 );
 
--- Links for all attachment types
-CREATE TABLE managed_links (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    uuid TEXT NOT NULL UNIQUE,
-    kernel_link_id INTEGER,
-    program_kernel_id INTEGER NOT NULL,
-    link_type TEXT NOT NULL,
-    pin_path TEXT,
-
-    -- Single-attach fields (tracepoint, kprobe, etc.)
-    -- Stored for convenience, but mostly queryable from kernel
-    attach_target TEXT,           -- function name, tracepoint, binary path
-    attach_offset INTEGER,
-    attach_retprobe INTEGER,
-    attach_pid INTEGER,
-
-    -- Multi-attach fields (XDP, TC, TCX)
-    interface TEXT,
-    direction TEXT,               -- ingress/egress
-    priority INTEGER,
-    position INTEGER,             -- 0-9 for dispatcher slot
-    proceed_on TEXT,              -- JSON array of action masks
-    netns TEXT,
-    nsid INTEGER,
-    dispatcher_id INTEGER,
-
-    created_at TEXT NOT NULL,
-    FOREIGN KEY (program_kernel_id) REFERENCES managed_programs(kernel_id) ON DELETE CASCADE
-);
-
 -- Dispatcher state (XDP/TC only)
+-- Invariant: exactly one dispatcher per (type, ifindex, direction, nsid)
 CREATE TABLE dispatchers (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    dispatcher_type TEXT NOT NULL,  -- xdp, tc
+    id INTEGER PRIMARY KEY,
+    type TEXT NOT NULL,              -- 'xdp' or 'tc'
     interface TEXT NOT NULL,
     ifindex INTEGER NOT NULL,
-    direction TEXT,                 -- NULL for XDP, ingress/egress for TC
-    mode TEXT,                      -- driver/skb for XDP
+    direction TEXT,                  -- NULL for XDP, 'ingress'/'egress' for TC
+    mode TEXT,                       -- 'driver'/'skb' for XDP
     revision INTEGER NOT NULL,
     extension_count INTEGER NOT NULL,
     netns TEXT,
     nsid INTEGER,
     pin_path TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    UNIQUE (dispatcher_type, ifindex, direction, nsid)
+    UNIQUE (type, ifindex, direction, nsid)
 );
 ```
+
+See [SCHEMA-DESIGN.md](SCHEMA-DESIGN.md) for detailed discussion of link
+table design and the polymorphic query problem.
 
 ## Storage Decision Tree
 
@@ -250,7 +303,7 @@ Is it queryable from kernel?
               ├─► Our identifiers: UUID
               ├─► Our metadata: labels, owner, load spec
               ├─► Our abstractions: dispatcher state, priority, position
-              └─► Pin paths (convention-derivable but stored for efficiency)
+              └─► Pin paths (for efficiency and forensics)
 ```
 
 ## Reconciliation
@@ -267,7 +320,8 @@ When bpfman starts, it must reconcile stored state with kernel reality:
 For dispatchers, reconciliation is more complex:
 1. Check if dispatcher program still attached
 2. Verify extension programs match stored positions
-3. Rebuild dispatcher if inconsistent
+3. Recalculate positions from priorities if inconsistent
+4. Rebuild dispatcher if necessary
 
 ## Example: XDP Attachment Flow
 
@@ -304,7 +358,7 @@ bpfman attach xdp --priority=100 --iface=eth0 <program-id>
 - Dispatcher internally calls extensions by position
 
 **bpfman state after attachment:**
-- `managed_links`: records priority=100, position=0, interface=eth0
+- `xdp_links`: records priority=100, position=0, interface=eth0
 - `dispatchers`: revision=1, extension_count=1
 
 ## Summary
@@ -316,9 +370,9 @@ bpfman attach xdp --priority=100 --iface=eth0 <program-id>
 | Uprobe | Single-attach | Minimal |
 | Fentry | Single-attach | Minimal |
 | Fexit | Single-attach | Minimal |
-| XDP | Dispatcher | Full (priority, position, proceed_on, dispatcher) |
-| TC | Dispatcher | Full |
-| TCX | Multi-attach | Medium (priority, interface, direction) |
+| XDP | Dispatcher (userland) | Full (priority, position, proceed_on, dispatcher) |
+| TC | Dispatcher (userland) | Full |
+| TCX | Kernel multi-attach | Medium (priority, no dispatcher) |
 
 The dispatcher model is the key complexity. Without it, most link state
 would be queryable from the kernel. With it, bpfman must store the

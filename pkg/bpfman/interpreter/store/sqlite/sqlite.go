@@ -4,6 +4,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -17,6 +18,9 @@ import (
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/store"
 	"github.com/frobware/go-bpfman/pkg/bpfman/managed"
 )
+
+//go:embed schema.sql
+var schemaSQL string
 
 // Store implements interpreter.ProgramStore using SQLite.
 type Store struct {
@@ -79,88 +83,10 @@ func (s *Store) Close() error {
 }
 
 func (s *Store) migrate() error {
-	// Step 1: Create tables (without state-dependent indexes)
-	schema := `
-	CREATE TABLE IF NOT EXISTS managed_programs (
-		kernel_id INTEGER PRIMARY KEY,
-		uuid TEXT,
-		metadata TEXT NOT NULL,
-		created_at TEXT NOT NULL
-	);
-
-	CREATE INDEX IF NOT EXISTS idx_managed_programs_uuid ON managed_programs(uuid);
-
-	-- Index table for fast metadata key/value lookups (used by CSI)
-	CREATE TABLE IF NOT EXISTS program_metadata_index (
-		kernel_id INTEGER NOT NULL,
-		key TEXT NOT NULL,
-		value TEXT NOT NULL,
-		PRIMARY KEY (kernel_id, key),
-		FOREIGN KEY (kernel_id) REFERENCES managed_programs(kernel_id) ON DELETE CASCADE
-	);
-
-	CREATE INDEX IF NOT EXISTS idx_program_metadata_key_value ON program_metadata_index(key, value);
-
-	-- Links table for BPF attachments
-	CREATE TABLE IF NOT EXISTS managed_links (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		uuid TEXT NOT NULL UNIQUE,
-		program_kernel_id INTEGER NOT NULL,
-		program_uuid TEXT NOT NULL,
-		link_type TEXT NOT NULL,
-		kernel_link_id INTEGER,
-		pin_path TEXT,
-		attach_spec TEXT NOT NULL,
-		created_at TEXT NOT NULL,
-		FOREIGN KEY (program_kernel_id) REFERENCES managed_programs(kernel_id) ON DELETE CASCADE
-	);
-
-	CREATE INDEX IF NOT EXISTS idx_managed_links_program ON managed_links(program_kernel_id);
-	CREATE INDEX IF NOT EXISTS idx_managed_links_uuid ON managed_links(uuid);
-	`
-	if _, err := s.db.Exec(schema); err != nil {
-		return err
+	// Execute the embedded schema
+	if _, err := s.db.Exec(schemaSQL); err != nil {
+		return fmt.Errorf("failed to execute schema: %w", err)
 	}
-
-	// Step 2: Add state columns if missing (for existing databases)
-	// SQLite doesn't support IF NOT EXISTS for ALTER TABLE, so we check first.
-	var count int
-	err := s.db.QueryRow(`
-		SELECT COUNT(*) FROM pragma_table_info('managed_programs') WHERE name = 'state'
-	`).Scan(&count)
-	if err != nil {
-		return err
-	}
-	if count == 0 {
-		// Columns don't exist, add them
-		migrations := []string{
-			`ALTER TABLE managed_programs ADD COLUMN state TEXT NOT NULL DEFAULT 'loaded'`,
-			`ALTER TABLE managed_programs ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''`,
-			`ALTER TABLE managed_programs ADD COLUMN error_message TEXT NOT NULL DEFAULT ''`,
-		}
-		for _, m := range migrations {
-			if _, err := s.db.Exec(m); err != nil {
-				return err
-			}
-		}
-	}
-
-	// Step 3: Create state index (now that column definitely exists)
-	_, err = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_managed_programs_state ON managed_programs(state)`)
-	if err != nil {
-		return err
-	}
-
-	// Step 4: Enforce uniqueness for bpfman.io/ProgramName metadata.
-	// This partial unique index ensures no two programs can claim the same name.
-	// Failures here will trigger rollback in the manager's transactional load.
-	_, err = s.db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_program_name
-		ON program_metadata_index(value)
-		WHERE key = 'bpfman.io/ProgramName'`)
-	if err != nil {
-		return err
-	}
-
 	return nil
 }
 
@@ -571,29 +497,15 @@ func (s *Store) ListByState(ctx context.Context, state managed.State) ([]interpr
 	return result, rows.Err()
 }
 
-// SaveLink stores link metadata.
-func (s *Store) SaveLink(ctx context.Context, link managed.Link) error {
-	attachSpecJSON, err := json.Marshal(link.AttachSpec)
-	if err != nil {
-		return fmt.Errorf("failed to marshal attach spec: %w", err)
-	}
-
-	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO managed_links (uuid, program_kernel_id, program_uuid, link_type, kernel_link_id, pin_path, attach_spec, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		link.UUID, link.ProgramID, link.ProgramUUID, string(link.Type), link.ID, link.PinPath, string(attachSpecJSON), link.CreatedAt.Format(time.RFC3339))
-	if err != nil {
-		return fmt.Errorf("failed to insert link: %w", err)
-	}
-
-	s.logger.Debug("saved link", "uuid", link.UUID, "program_id", link.ProgramID, "type", link.Type)
-	return nil
-}
+// ----------------------------------------------------------------------------
+// Link Registry Operations
+// ----------------------------------------------------------------------------
 
 // DeleteLink removes link metadata by UUID.
+// Due to CASCADE, this also removes the corresponding detail table entry.
 func (s *Store) DeleteLink(ctx context.Context, uuid string) error {
 	result, err := s.db.ExecContext(ctx,
-		"DELETE FROM managed_links WHERE uuid = ?",
+		"DELETE FROM link_registry WHERE uuid = ?",
 		uuid)
 	if err != nil {
 		return fmt.Errorf("failed to delete link: %w", err)
@@ -611,115 +523,596 @@ func (s *Store) DeleteLink(ctx context.Context, uuid string) error {
 	return nil
 }
 
-// GetLink retrieves link metadata by UUID.
-func (s *Store) GetLink(ctx context.Context, uuid string) (managed.Link, error) {
-	row := s.db.QueryRowContext(ctx,
-		`SELECT uuid, program_kernel_id, program_uuid, link_type, kernel_link_id, pin_path, attach_spec, created_at
-		 FROM managed_links WHERE uuid = ?`, uuid)
+// GetLink retrieves link metadata by UUID using two-phase lookup.
+func (s *Store) GetLink(ctx context.Context, uuid string) (managed.LinkSummary, managed.LinkDetails, error) {
+	// Phase 1: Get summary from registry
+	summary, err := s.getLinkSummaryByUUID(ctx, uuid)
+	if err != nil {
+		return managed.LinkSummary{}, nil, err
+	}
 
-	return s.scanLink(row)
+	// Phase 2: Get details based on link type
+	details, err := s.getLinkDetails(ctx, summary.LinkType, uuid)
+	if err != nil {
+		return managed.LinkSummary{}, nil, err
+	}
+
+	return summary, details, nil
 }
 
 // GetLinkByKernelID retrieves link metadata by kernel link ID.
-func (s *Store) GetLinkByKernelID(ctx context.Context, kernelLinkID uint32) (managed.Link, error) {
+func (s *Store) GetLinkByKernelID(ctx context.Context, kernelLinkID uint32) (managed.LinkSummary, managed.LinkDetails, error) {
+	// Phase 1: Get summary from registry
 	row := s.db.QueryRowContext(ctx,
-		`SELECT uuid, program_kernel_id, program_uuid, link_type, kernel_link_id, pin_path, attach_spec, created_at
-		 FROM managed_links WHERE kernel_link_id = ?`, kernelLinkID)
+		`SELECT uuid, link_type, kernel_program_id, kernel_link_id, pin_path, created_at
+		 FROM link_registry WHERE kernel_link_id = ?`, kernelLinkID)
 
-	return s.scanLink(row)
+	summary, err := s.scanLinkSummary(row)
+	if err != nil {
+		return managed.LinkSummary{}, nil, err
+	}
+
+	// Phase 2: Get details based on link type
+	details, err := s.getLinkDetails(ctx, summary.LinkType, summary.UUID)
+	if err != nil {
+		return managed.LinkSummary{}, nil, err
+	}
+
+	return summary, details, nil
 }
 
-// ListLinks returns all links.
-func (s *Store) ListLinks(ctx context.Context) ([]managed.Link, error) {
+// ListLinks returns all links (summary only).
+func (s *Store) ListLinks(ctx context.Context) ([]managed.LinkSummary, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT uuid, program_kernel_id, program_uuid, link_type, kernel_link_id, pin_path, attach_spec, created_at
-		 FROM managed_links`)
+		`SELECT uuid, link_type, kernel_program_id, kernel_link_id, pin_path, created_at
+		 FROM link_registry`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	return s.scanLinks(rows)
+	return s.scanLinkSummaries(rows)
 }
 
 // ListLinksByProgram returns all links for a given program kernel ID.
-func (s *Store) ListLinksByProgram(ctx context.Context, programKernelID uint32) ([]managed.Link, error) {
+func (s *Store) ListLinksByProgram(ctx context.Context, programKernelID uint32) ([]managed.LinkSummary, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT uuid, program_kernel_id, program_uuid, link_type, kernel_link_id, pin_path, attach_spec, created_at
-		 FROM managed_links WHERE program_kernel_id = ?`, programKernelID)
+		`SELECT uuid, link_type, kernel_program_id, kernel_link_id, pin_path, created_at
+		 FROM link_registry WHERE kernel_program_id = ?`, programKernelID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	return s.scanLinks(rows)
+	return s.scanLinkSummaries(rows)
 }
 
-func (s *Store) scanLink(row *sql.Row) (managed.Link, error) {
-	var link managed.Link
+// ----------------------------------------------------------------------------
+// Type-Specific Link Save Methods
+// ----------------------------------------------------------------------------
+
+// SaveTracepointLink saves a tracepoint link atomically.
+func (s *Store) SaveTracepointLink(ctx context.Context, summary managed.LinkSummary, details managed.TracepointDetails) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	if err := s.insertLinkRegistry(ctx, tx, summary); err != nil {
+		return err
+	}
+
+	_, err = tx.ExecContext(ctx,
+		`INSERT INTO tracepoint_link_details (uuid, tracepoint_group, tracepoint_name)
+		 VALUES (?, ?, ?)`,
+		summary.UUID, details.Group, details.Name)
+	if err != nil {
+		return fmt.Errorf("failed to insert tracepoint details: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	s.logger.Debug("saved tracepoint link", "uuid", summary.UUID, "group", details.Group, "name", details.Name)
+	return nil
+}
+
+// SaveKprobeLink saves a kprobe/kretprobe link atomically.
+func (s *Store) SaveKprobeLink(ctx context.Context, summary managed.LinkSummary, details managed.KprobeDetails) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	if err := s.insertLinkRegistry(ctx, tx, summary); err != nil {
+		return err
+	}
+
+	retprobe := 0
+	if details.Retprobe {
+		retprobe = 1
+	}
+
+	_, err = tx.ExecContext(ctx,
+		`INSERT INTO kprobe_link_details (uuid, fn_name, offset, retprobe)
+		 VALUES (?, ?, ?, ?)`,
+		summary.UUID, details.FnName, details.Offset, retprobe)
+	if err != nil {
+		return fmt.Errorf("failed to insert kprobe details: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	s.logger.Debug("saved kprobe link", "uuid", summary.UUID, "fn_name", details.FnName)
+	return nil
+}
+
+// SaveUprobeLink saves a uprobe/uretprobe link atomically.
+func (s *Store) SaveUprobeLink(ctx context.Context, summary managed.LinkSummary, details managed.UprobeDetails) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	if err := s.insertLinkRegistry(ctx, tx, summary); err != nil {
+		return err
+	}
+
+	retprobe := 0
+	if details.Retprobe {
+		retprobe = 1
+	}
+
+	_, err = tx.ExecContext(ctx,
+		`INSERT INTO uprobe_link_details (uuid, target, fn_name, offset, pid, retprobe)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		summary.UUID, details.Target, details.FnName, details.Offset, details.PID, retprobe)
+	if err != nil {
+		return fmt.Errorf("failed to insert uprobe details: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	s.logger.Debug("saved uprobe link", "uuid", summary.UUID, "target", details.Target)
+	return nil
+}
+
+// SaveFentryLink saves a fentry link atomically.
+func (s *Store) SaveFentryLink(ctx context.Context, summary managed.LinkSummary, details managed.FentryDetails) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	if err := s.insertLinkRegistry(ctx, tx, summary); err != nil {
+		return err
+	}
+
+	_, err = tx.ExecContext(ctx,
+		`INSERT INTO fentry_link_details (uuid, fn_name)
+		 VALUES (?, ?)`,
+		summary.UUID, details.FnName)
+	if err != nil {
+		return fmt.Errorf("failed to insert fentry details: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	s.logger.Debug("saved fentry link", "uuid", summary.UUID, "fn_name", details.FnName)
+	return nil
+}
+
+// SaveFexitLink saves a fexit link atomically.
+func (s *Store) SaveFexitLink(ctx context.Context, summary managed.LinkSummary, details managed.FexitDetails) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	if err := s.insertLinkRegistry(ctx, tx, summary); err != nil {
+		return err
+	}
+
+	_, err = tx.ExecContext(ctx,
+		`INSERT INTO fexit_link_details (uuid, fn_name)
+		 VALUES (?, ?)`,
+		summary.UUID, details.FnName)
+	if err != nil {
+		return fmt.Errorf("failed to insert fexit details: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	s.logger.Debug("saved fexit link", "uuid", summary.UUID, "fn_name", details.FnName)
+	return nil
+}
+
+// SaveXDPLink saves an XDP link atomically.
+func (s *Store) SaveXDPLink(ctx context.Context, summary managed.LinkSummary, details managed.XDPDetails) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	if err := s.insertLinkRegistry(ctx, tx, summary); err != nil {
+		return err
+	}
+
+	proceedOnJSON, err := json.Marshal(details.ProceedOn)
+	if err != nil {
+		return fmt.Errorf("failed to marshal proceed_on: %w", err)
+	}
+
+	_, err = tx.ExecContext(ctx,
+		`INSERT INTO xdp_link_details (uuid, interface, ifindex, priority, position, proceed_on, netns, nsid, dispatcher_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		summary.UUID, details.Interface, details.Ifindex, details.Priority, details.Position,
+		string(proceedOnJSON), details.Netns, details.Nsid, details.DispatcherID)
+	if err != nil {
+		return fmt.Errorf("failed to insert xdp details: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	s.logger.Debug("saved xdp link", "uuid", summary.UUID, "interface", details.Interface)
+	return nil
+}
+
+// SaveTCLink saves a TC link atomically.
+func (s *Store) SaveTCLink(ctx context.Context, summary managed.LinkSummary, details managed.TCDetails) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	if err := s.insertLinkRegistry(ctx, tx, summary); err != nil {
+		return err
+	}
+
+	proceedOnJSON, err := json.Marshal(details.ProceedOn)
+	if err != nil {
+		return fmt.Errorf("failed to marshal proceed_on: %w", err)
+	}
+
+	_, err = tx.ExecContext(ctx,
+		`INSERT INTO tc_link_details (uuid, interface, ifindex, direction, priority, position, proceed_on, netns, nsid, dispatcher_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		summary.UUID, details.Interface, details.Ifindex, details.Direction, details.Priority, details.Position,
+		string(proceedOnJSON), details.Netns, details.Nsid, details.DispatcherID)
+	if err != nil {
+		return fmt.Errorf("failed to insert tc details: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	s.logger.Debug("saved tc link", "uuid", summary.UUID, "interface", details.Interface, "direction", details.Direction)
+	return nil
+}
+
+// SaveTCXLink saves a TCX link atomically.
+func (s *Store) SaveTCXLink(ctx context.Context, summary managed.LinkSummary, details managed.TCXDetails) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	if err := s.insertLinkRegistry(ctx, tx, summary); err != nil {
+		return err
+	}
+
+	_, err = tx.ExecContext(ctx,
+		`INSERT INTO tcx_link_details (uuid, interface, ifindex, direction, priority, netns, nsid)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		summary.UUID, details.Interface, details.Ifindex, details.Direction, details.Priority, details.Netns, details.Nsid)
+	if err != nil {
+		return fmt.Errorf("failed to insert tcx details: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	s.logger.Debug("saved tcx link", "uuid", summary.UUID, "interface", details.Interface, "direction", details.Direction)
+	return nil
+}
+
+// ----------------------------------------------------------------------------
+// Helper Functions
+// ----------------------------------------------------------------------------
+
+// insertLinkRegistry inserts a record into the link_registry table within a transaction.
+func (s *Store) insertLinkRegistry(ctx context.Context, tx *sql.Tx, summary managed.LinkSummary) error {
+	_, err := tx.ExecContext(ctx,
+		`INSERT INTO link_registry (uuid, link_type, kernel_program_id, kernel_link_id, pin_path, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		summary.UUID, string(summary.LinkType), summary.KernelProgramID,
+		summary.KernelLinkID, summary.PinPath, summary.CreatedAt.Format(time.RFC3339))
+	if err != nil {
+		return fmt.Errorf("failed to insert link registry: %w", err)
+	}
+	return nil
+}
+
+// getLinkSummaryByUUID retrieves a link summary by UUID.
+func (s *Store) getLinkSummaryByUUID(ctx context.Context, uuid string) (managed.LinkSummary, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT uuid, link_type, kernel_program_id, kernel_link_id, pin_path, created_at
+		 FROM link_registry WHERE uuid = ?`, uuid)
+	return s.scanLinkSummary(row)
+}
+
+// scanLinkSummary scans a single row into a LinkSummary.
+func (s *Store) scanLinkSummary(row *sql.Row) (managed.LinkSummary, error) {
+	var summary managed.LinkSummary
 	var linkType string
 	var kernelLinkID sql.NullInt64
 	var pinPath sql.NullString
-	var attachSpecJSON string
 	var createdAtStr string
 
-	err := row.Scan(&link.UUID, &link.ProgramID, &link.ProgramUUID, &linkType, &kernelLinkID, &pinPath, &attachSpecJSON, &createdAtStr)
+	err := row.Scan(&summary.UUID, &linkType, &summary.KernelProgramID, &kernelLinkID, &pinPath, &createdAtStr)
 	if err == sql.ErrNoRows {
-		return managed.Link{}, fmt.Errorf("link: %w", store.ErrNotFound)
+		return managed.LinkSummary{}, fmt.Errorf("link: %w", store.ErrNotFound)
 	}
 	if err != nil {
-		return managed.Link{}, err
+		return managed.LinkSummary{}, err
 	}
 
-	link.Type = managed.LinkType(linkType)
+	summary.LinkType = managed.LinkType(linkType)
 	if kernelLinkID.Valid {
-		link.ID = uint32(kernelLinkID.Int64)
+		summary.KernelLinkID = uint32(kernelLinkID.Int64)
 	}
 	if pinPath.Valid {
-		link.PinPath = pinPath.String
+		summary.PinPath = pinPath.String
 	}
+	summary.CreatedAt, _ = time.Parse(time.RFC3339, createdAtStr)
 
-	if err := json.Unmarshal([]byte(attachSpecJSON), &link.AttachSpec); err != nil {
-		return managed.Link{}, fmt.Errorf("failed to unmarshal attach spec: %w", err)
-	}
-
-	link.CreatedAt, _ = time.Parse(time.RFC3339, createdAtStr)
-
-	return link, nil
+	return summary, nil
 }
 
-func (s *Store) scanLinks(rows *sql.Rows) ([]managed.Link, error) {
-	var result []managed.Link
+// scanLinkSummaries scans multiple rows into a slice of LinkSummary.
+func (s *Store) scanLinkSummaries(rows *sql.Rows) ([]managed.LinkSummary, error) {
+	var result []managed.LinkSummary
 
 	for rows.Next() {
-		var link managed.Link
+		var summary managed.LinkSummary
 		var linkType string
 		var kernelLinkID sql.NullInt64
 		var pinPath sql.NullString
-		var attachSpecJSON string
 		var createdAtStr string
 
-		err := rows.Scan(&link.UUID, &link.ProgramID, &link.ProgramUUID, &linkType, &kernelLinkID, &pinPath, &attachSpecJSON, &createdAtStr)
+		err := rows.Scan(&summary.UUID, &linkType, &summary.KernelProgramID, &kernelLinkID, &pinPath, &createdAtStr)
 		if err != nil {
 			return nil, err
 		}
 
-		link.Type = managed.LinkType(linkType)
+		summary.LinkType = managed.LinkType(linkType)
 		if kernelLinkID.Valid {
-			link.ID = uint32(kernelLinkID.Int64)
+			summary.KernelLinkID = uint32(kernelLinkID.Int64)
 		}
 		if pinPath.Valid {
-			link.PinPath = pinPath.String
+			summary.PinPath = pinPath.String
 		}
+		summary.CreatedAt, _ = time.Parse(time.RFC3339, createdAtStr)
 
-		if err := json.Unmarshal([]byte(attachSpecJSON), &link.AttachSpec); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal attach spec for %s: %w", link.UUID, err)
-		}
-
-		link.CreatedAt, _ = time.Parse(time.RFC3339, createdAtStr)
-
-		result = append(result, link)
+		result = append(result, summary)
 	}
 
 	return result, rows.Err()
+}
+
+// getLinkDetails retrieves the type-specific details for a link.
+func (s *Store) getLinkDetails(ctx context.Context, linkType managed.LinkType, uuid string) (managed.LinkDetails, error) {
+	switch linkType {
+	case managed.LinkTypeTracepoint:
+		return s.getTracepointDetails(ctx, uuid)
+	case managed.LinkTypeKprobe, managed.LinkTypeKretprobe:
+		return s.getKprobeDetails(ctx, uuid)
+	case managed.LinkTypeUprobe, managed.LinkTypeUretprobe:
+		return s.getUprobeDetails(ctx, uuid)
+	case managed.LinkTypeFentry:
+		return s.getFentryDetails(ctx, uuid)
+	case managed.LinkTypeFexit:
+		return s.getFexitDetails(ctx, uuid)
+	case managed.LinkTypeXDP:
+		return s.getXDPDetails(ctx, uuid)
+	case managed.LinkTypeTC:
+		return s.getTCDetails(ctx, uuid)
+	case managed.LinkTypeTCX:
+		return s.getTCXDetails(ctx, uuid)
+	default:
+		return nil, fmt.Errorf("unknown link type: %s", linkType)
+	}
+}
+
+func (s *Store) getTracepointDetails(ctx context.Context, uuid string) (managed.TracepointDetails, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT tracepoint_group, tracepoint_name FROM tracepoint_link_details WHERE uuid = ?`, uuid)
+
+	var details managed.TracepointDetails
+	err := row.Scan(&details.Group, &details.Name)
+	if err == sql.ErrNoRows {
+		return managed.TracepointDetails{}, fmt.Errorf("tracepoint details for %s: %w", uuid, store.ErrNotFound)
+	}
+	if err != nil {
+		return managed.TracepointDetails{}, err
+	}
+	return details, nil
+}
+
+func (s *Store) getKprobeDetails(ctx context.Context, uuid string) (managed.KprobeDetails, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT fn_name, offset, retprobe FROM kprobe_link_details WHERE uuid = ?`, uuid)
+
+	var details managed.KprobeDetails
+	var retprobe int
+	err := row.Scan(&details.FnName, &details.Offset, &retprobe)
+	if err == sql.ErrNoRows {
+		return managed.KprobeDetails{}, fmt.Errorf("kprobe details for %s: %w", uuid, store.ErrNotFound)
+	}
+	if err != nil {
+		return managed.KprobeDetails{}, err
+	}
+	details.Retprobe = retprobe == 1
+	return details, nil
+}
+
+func (s *Store) getUprobeDetails(ctx context.Context, uuid string) (managed.UprobeDetails, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT target, fn_name, offset, pid, retprobe FROM uprobe_link_details WHERE uuid = ?`, uuid)
+
+	var details managed.UprobeDetails
+	var fnName sql.NullString
+	var pid sql.NullInt64
+	var retprobe int
+	err := row.Scan(&details.Target, &fnName, &details.Offset, &pid, &retprobe)
+	if err == sql.ErrNoRows {
+		return managed.UprobeDetails{}, fmt.Errorf("uprobe details for %s: %w", uuid, store.ErrNotFound)
+	}
+	if err != nil {
+		return managed.UprobeDetails{}, err
+	}
+	if fnName.Valid {
+		details.FnName = fnName.String
+	}
+	if pid.Valid {
+		details.PID = int32(pid.Int64)
+	}
+	details.Retprobe = retprobe == 1
+	return details, nil
+}
+
+func (s *Store) getFentryDetails(ctx context.Context, uuid string) (managed.FentryDetails, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT fn_name FROM fentry_link_details WHERE uuid = ?`, uuid)
+
+	var details managed.FentryDetails
+	err := row.Scan(&details.FnName)
+	if err == sql.ErrNoRows {
+		return managed.FentryDetails{}, fmt.Errorf("fentry details for %s: %w", uuid, store.ErrNotFound)
+	}
+	if err != nil {
+		return managed.FentryDetails{}, err
+	}
+	return details, nil
+}
+
+func (s *Store) getFexitDetails(ctx context.Context, uuid string) (managed.FexitDetails, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT fn_name FROM fexit_link_details WHERE uuid = ?`, uuid)
+
+	var details managed.FexitDetails
+	err := row.Scan(&details.FnName)
+	if err == sql.ErrNoRows {
+		return managed.FexitDetails{}, fmt.Errorf("fexit details for %s: %w", uuid, store.ErrNotFound)
+	}
+	if err != nil {
+		return managed.FexitDetails{}, err
+	}
+	return details, nil
+}
+
+func (s *Store) getXDPDetails(ctx context.Context, uuid string) (managed.XDPDetails, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT interface, ifindex, priority, position, proceed_on, netns, nsid, dispatcher_id
+		 FROM xdp_link_details WHERE uuid = ?`, uuid)
+
+	var details managed.XDPDetails
+	var proceedOnJSON string
+	var netns sql.NullString
+	var nsid sql.NullInt64
+	err := row.Scan(&details.Interface, &details.Ifindex, &details.Priority, &details.Position,
+		&proceedOnJSON, &netns, &nsid, &details.DispatcherID)
+	if err == sql.ErrNoRows {
+		return managed.XDPDetails{}, fmt.Errorf("xdp details for %s: %w", uuid, store.ErrNotFound)
+	}
+	if err != nil {
+		return managed.XDPDetails{}, err
+	}
+
+	if err := json.Unmarshal([]byte(proceedOnJSON), &details.ProceedOn); err != nil {
+		return managed.XDPDetails{}, fmt.Errorf("failed to unmarshal proceed_on: %w", err)
+	}
+	if netns.Valid {
+		details.Netns = netns.String
+	}
+	if nsid.Valid {
+		details.Nsid = uint32(nsid.Int64)
+	}
+	return details, nil
+}
+
+func (s *Store) getTCDetails(ctx context.Context, uuid string) (managed.TCDetails, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT interface, ifindex, direction, priority, position, proceed_on, netns, nsid, dispatcher_id
+		 FROM tc_link_details WHERE uuid = ?`, uuid)
+
+	var details managed.TCDetails
+	var proceedOnJSON string
+	var netns sql.NullString
+	var nsid sql.NullInt64
+	err := row.Scan(&details.Interface, &details.Ifindex, &details.Direction, &details.Priority, &details.Position,
+		&proceedOnJSON, &netns, &nsid, &details.DispatcherID)
+	if err == sql.ErrNoRows {
+		return managed.TCDetails{}, fmt.Errorf("tc details for %s: %w", uuid, store.ErrNotFound)
+	}
+	if err != nil {
+		return managed.TCDetails{}, err
+	}
+
+	if err := json.Unmarshal([]byte(proceedOnJSON), &details.ProceedOn); err != nil {
+		return managed.TCDetails{}, fmt.Errorf("failed to unmarshal proceed_on: %w", err)
+	}
+	if netns.Valid {
+		details.Netns = netns.String
+	}
+	if nsid.Valid {
+		details.Nsid = uint32(nsid.Int64)
+	}
+	return details, nil
+}
+
+func (s *Store) getTCXDetails(ctx context.Context, uuid string) (managed.TCXDetails, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT interface, ifindex, direction, priority, netns, nsid
+		 FROM tcx_link_details WHERE uuid = ?`, uuid)
+
+	var details managed.TCXDetails
+	var netns sql.NullString
+	var nsid sql.NullInt64
+	err := row.Scan(&details.Interface, &details.Ifindex, &details.Direction, &details.Priority, &netns, &nsid)
+	if err == sql.ErrNoRows {
+		return managed.TCXDetails{}, fmt.Errorf("tcx details for %s: %w", uuid, store.ErrNotFound)
+	}
+	if err != nil {
+		return managed.TCXDetails{}, err
+	}
+
+	if netns.Valid {
+		details.Netns = netns.String
+	}
+	if nsid.Valid {
+		details.Nsid = uint32(nsid.Int64)
+	}
+	return details, nil
 }
