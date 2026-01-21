@@ -1,3 +1,5 @@
+all: bpfman-build
+
 help:
 	@echo "Build:"
 	@echo "  build-all                   Build all binaries"
