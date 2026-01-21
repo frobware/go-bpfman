@@ -17,6 +17,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/frobware/go-bpfman/pkg/bpfman"
+	"github.com/frobware/go-bpfman/pkg/bpfman/config"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/ebpf"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/store"
@@ -48,6 +49,8 @@ type RunConfig struct {
 	DBPath        string
 	CSISupport    bool
 	CSISocketPath string
+	Logger        *slog.Logger
+	Config        config.Config
 }
 
 // Run starts the bpfman daemon with the given configuration.
@@ -64,7 +67,10 @@ func Run(ctx context.Context, cfg RunConfig) error {
 		cfg.CSISocketPath = DefaultCSISocketPath
 	}
 
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logger := cfg.Logger
+	if logger == nil {
+		logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	}
 
 	// Open shared SQLite store
 	st, err := sqlite.New(cfg.DBPath, logger)

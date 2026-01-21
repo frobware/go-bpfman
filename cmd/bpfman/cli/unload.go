@@ -3,8 +3,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"log/slog"
-	"os"
 
 	"github.com/frobware/go-bpfman/pkg/bpfman/manager"
 )
@@ -16,8 +14,14 @@ type UnloadCmd struct {
 
 // Run executes the unload command.
 func (c *UnloadCmd) Run(cli *CLI) error {
+	// Set up logger
+	logger, err := cli.Logger()
+	if err != nil {
+		return fmt.Errorf("failed to create logger: %w", err)
+	}
+
 	// Set up manager
-	mgr, cleanup, err := manager.Setup(cli.DB.Path, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	mgr, cleanup, err := manager.Setup(cli.DB.Path, logger)
 	if err != nil {
 		return fmt.Errorf("failed to set up manager: %w", err)
 	}

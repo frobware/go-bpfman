@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"os/signal"
 	"syscall"
 
@@ -17,11 +18,23 @@ type ServeCmd struct {
 
 // Run executes the serve command.
 func (c *ServeCmd) Run(cli *CLI) error {
+	logger, err := cli.Logger()
+	if err != nil {
+		return fmt.Errorf("failed to create logger: %w", err)
+	}
+
+	appConfig, err := cli.LoadConfig()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
 	cfg := server.RunConfig{
 		SocketPath:    c.Socket,
 		DBPath:        cli.DB.Path,
 		CSISupport:    c.CSISupport,
 		CSISocketPath: c.CSISocket,
+		Logger:        logger,
+		Config:        appConfig,
 	}
 
 	// Create context that cancels on SIGINT/SIGTERM

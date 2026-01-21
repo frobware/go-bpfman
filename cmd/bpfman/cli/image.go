@@ -3,8 +3,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"log/slog"
-	"os"
 
 	"github.com/frobware/go-bpfman/pkg/bpfman/config"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/image/cosign"
@@ -20,27 +18,22 @@ type ImageVerifyCmd struct {
 	ImageURL string `arg:"" name:"image" help:"OCI image reference (e.g., quay.io/bpfman-bytecode/xdp_pass:latest)."`
 
 	// Signing configuration
-	ConfigFile    string `name:"config" help:"Path to bpfman config file." default:"${default_config_path}"`
-	AllowUnsigned *bool  `name:"allow-unsigned" help:"Allow unsigned images (overrides config file)."`
-	Debug         bool   `name:"debug" short:"d" help:"Enable debug logging."`
+	AllowUnsigned *bool `name:"allow-unsigned" help:"Allow unsigned images (overrides config file)."`
 }
 
 // Run executes the image verify command.
 func (c *ImageVerifyCmd) Run(cli *CLI) error {
-	logLevel := slog.LevelInfo
-	if c.Debug {
-		logLevel = slog.LevelDebug
+	logger, err := cli.Logger()
+	if err != nil {
+		return fmt.Errorf("failed to create logger: %w", err)
 	}
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: logLevel,
-	}))
 
 	logger.Info("verifying image signature", "image", c.ImageURL)
 
-	// Load configuration
-	cfg, err := config.Load(c.ConfigFile)
+	// Load configuration (use CLI's config, not the deprecated --config flag)
+	cfg, err := cli.LoadConfig()
 	if err != nil {
-		logger.Warn("failed to load config file, using defaults", "path", c.ConfigFile, "error", err)
+		logger.Warn("failed to load config file, using defaults", "path", cli.Config, "error", err)
 		cfg = config.DefaultConfig()
 	}
 

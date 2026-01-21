@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
-	"os"
 	"path/filepath"
 
 	"github.com/google/uuid"
@@ -35,17 +33,17 @@ type LoadImageCmd struct {
 	CacheDir     string          `name:"cache-dir" help:"Image cache directory (default: ~/.cache/bpfman/images)."`
 
 	// Signing configuration (overrides config file)
-	ConfigFile       string `name:"config" help:"Path to bpfman config file." default:"${default_config_path}"`
-	AllowUnsigned    *bool  `name:"allow-unsigned" help:"Allow loading unsigned images (overrides config file)."`
-	VerifySignatures *bool  `name:"verify-signatures" help:"Verify image signatures (overrides config file)."`
+	AllowUnsigned    *bool `name:"allow-unsigned" help:"Allow loading unsigned images (overrides config file)."`
+	VerifySignatures *bool `name:"verify-signatures" help:"Verify image signatures (overrides config file)."`
 }
 
 // Run executes the load image command.
 func (c *LoadImageCmd) Run(cli *CLI) error {
 	// Set up logger
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}))
+	logger, err := cli.Logger()
+	if err != nil {
+		return fmt.Errorf("failed to create logger: %w", err)
+	}
 
 	logger.Info("loading BPF programs from OCI image",
 		"image", c.ImageURL,
@@ -53,10 +51,10 @@ func (c *LoadImageCmd) Run(cli *CLI) error {
 		"pull_policy", c.PullPolicy.Value,
 	)
 
-	// Load configuration
-	cfg, err := config.Load(c.ConfigFile)
+	// Load configuration (use CLI's config, not the deprecated --config flag)
+	cfg, err := cli.LoadConfig()
 	if err != nil {
-		logger.Warn("failed to load config file, using defaults", "path", c.ConfigFile, "error", err)
+		logger.Warn("failed to load config file, using defaults", "path", cli.Config, "error", err)
 		cfg = config.DefaultConfig()
 	}
 

@@ -1,0 +1,10 @@
+# Default bpfman configuration
+# These values are embedded at build time and used as baseline defaults.
+
+[signing]
+allow_unsigned = true
+verify_enabled = true
+
+[logging]
+level = "info"
+format = "text"

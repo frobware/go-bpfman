@@ -1,12 +1,30 @@
 // Package config handles bpfman daemon configuration.
+//
+// Configuration is loaded with overlay semantics:
+//
+//  1. Start with built-in defaults (embedded via go:embed from default.toml)
+//  2. Overlay with config file values (if file exists)
+//  3. CLI flags and environment variables override at runtime (handled by CLI layer)
+//
+// This ensures a valid configuration is always available, even when no
+// config file exists. The TOML decoder only sets fields present in the
+// file, leaving unspecified fields at their default values.
+//
+// If the config file exists but is invalid, Load returns an error rather
+// than silently falling back to defaults.
 package config
 
 import (
+	_ "embed"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 )
+
+//go:embed default.toml
+var defaultConfigTOML string
 
 const (
 	// DefaultConfigPath is the default path to the bpfman config file.
@@ -16,6 +34,39 @@ const (
 // Config is the top-level bpfman configuration.
 type Config struct {
 	Signing SigningConfig `toml:"signing"`
+	Logging LoggingConfig `toml:"logging"`
+}
+
+// LoggingConfig controls logging behaviour.
+type LoggingConfig struct {
+	// Level is the log spec (e.g., "info" or "info,manager=debug").
+	Level string `toml:"level"`
+	// Format is the output format: "text" or "json".
+	Format string `toml:"format"`
+	// Components provides an alternative way to specify per-component levels.
+	Components map[string]string `toml:"components"`
+}
+
+// ToSpec converts the LoggingConfig to a log spec string.
+// If Level is set, it takes precedence. Otherwise, Components are used.
+func (c *LoggingConfig) ToSpec() string {
+	if c.Level != "" {
+		return c.Level
+	}
+
+	// Build spec from components
+	if len(c.Components) == 0 {
+		return ""
+	}
+
+	parts := make([]string, 0, len(c.Components)+1)
+	parts = append(parts, "info") // default base level
+
+	for component, level := range c.Components {
+		parts = append(parts, component+"="+level)
+	}
+
+	return strings.Join(parts, ",")
 }
 
 // SigningConfig controls image signature verification.
@@ -32,19 +83,30 @@ type SigningConfig struct {
 	VerifyEnabled bool `toml:"verify_enabled"`
 }
 
-// DefaultConfig returns the default configuration with permissive defaults.
-// This matches the Rust bpfman defaults for fail-safe operation.
+// DefaultConfig returns the default configuration from the embedded default.toml.
+// This provides a valid baseline that is always available.
 func DefaultConfig() Config {
-	return Config{
-		Signing: SigningConfig{
-			AllowUnsigned: true,
-			VerifyEnabled: true,
-		},
+	var cfg Config
+	if _, err := toml.Decode(defaultConfigTOML, &cfg); err != nil {
+		// This should never happen since default.toml is embedded at build time.
+		// If it does, return a minimal safe config.
+		return Config{
+			Signing: SigningConfig{AllowUnsigned: true, VerifyEnabled: true},
+			Logging: LoggingConfig{Level: "info", Format: "text"},
+		}
 	}
+	return cfg
 }
 
-// Load reads configuration from a file path.
-// If the file does not exist, returns the default configuration.
+// Load reads configuration from a file path with overlay semantics.
+//
+// Behaviour:
+//   - File missing: returns default configuration (no error)
+//   - File exists and valid: overlays file values onto defaults
+//   - File exists but invalid: returns error (fail fast)
+//
+// The TOML decoder only sets fields present in the file, so unspecified
+// fields retain their default values from default.toml.
 func Load(path string) (Config, error) {
 	if path == "" {
 		path = DefaultConfigPath

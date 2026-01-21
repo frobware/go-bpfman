@@ -1,14 +1,21 @@
 package cli
 
 import (
+	"log/slog"
+	"os"
 	"reflect"
 
 	"github.com/alecthomas/kong"
+
+	"github.com/frobware/go-bpfman/pkg/bpfman/config"
+	"github.com/frobware/go-bpfman/pkg/logging"
 )
 
 // CLI is the root command structure for bpfman.
 type CLI struct {
-	DB DBPath `name:"db" help:"SQLite database path." default:"${default_db_path}"`
+	DB     DBPath `name:"db" help:"SQLite database path." default:"${default_db_path}"`
+	Config string `name:"config" help:"Config file path." default:"${default_config_path}"`
+	Log    string `name:"log" help:"Log spec (e.g., 'info,manager=debug')." env:"BPFMAN_LOG"`
 
 	Serve  ServeCmd  `cmd:"" help:"Start the gRPC daemon."`
 	Load   LoadCmd   `cmd:"" help:"Load a BPF program from an object file."`
@@ -46,4 +53,34 @@ func KongOptions() []kong.Option {
 			"default_config_path": "/etc/bpfman/bpfman.toml",
 		},
 	}
+}
+
+// LoadConfig loads the configuration from the config file path.
+func (c *CLI) LoadConfig() (config.Config, error) {
+	return config.Load(c.Config)
+}
+
+// Logger creates a logger using the CLI options and config file.
+// Precedence: --log CLI flag > BPFMAN_LOG env > config file > defaults.
+// Note: Kong handles CLI > env precedence via the env tag, so c.Log
+// already contains the effective value from either source.
+func (c *CLI) Logger() (*slog.Logger, error) {
+	cfg, err := c.LoadConfig()
+	if err != nil {
+		return nil, err
+	}
+
+	format, err := logging.ParseFormat(cfg.Logging.Format)
+	if err != nil {
+		return nil, err
+	}
+
+	opts := logging.Options{
+		CLISpec:    c.Log, // Kong merged: CLI flag > BPFMAN_LOG env
+		ConfigSpec: cfg.Logging.ToSpec(),
+		Format:     format,
+		Output:     os.Stdout,
+	}
+
+	return logging.New(opts)
 }

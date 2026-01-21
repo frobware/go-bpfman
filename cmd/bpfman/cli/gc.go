@@ -3,8 +3,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"log/slog"
-	"os"
 	"time"
 
 	"github.com/frobware/go-bpfman/pkg/bpfman/manager"
@@ -40,8 +38,14 @@ func (c *GCCmd) Run(cli *CLI) error {
 		cfg.IncludeOrphans = c.Orphans
 	}
 
+	// Set up logger
+	logger, err := cli.Logger()
+	if err != nil {
+		return fmt.Errorf("failed to create logger: %w", err)
+	}
+
 	// Set up manager
-	mgr, cleanup, err := manager.Setup(cli.DB.Path, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	mgr, cleanup, err := manager.Setup(cli.DB.Path, logger)
 	if err != nil {
 		return fmt.Errorf("failed to set up manager: %w", err)
 	}

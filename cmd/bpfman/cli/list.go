@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
-	"os"
 
 	"github.com/frobware/go-bpfman/pkg/bpfman/manager"
 )
@@ -23,8 +21,14 @@ type ListProgramsCmd struct {
 
 // Run executes the list programs command.
 func (c *ListProgramsCmd) Run(cli *CLI) error {
+	// Set up logger
+	logger, err := cli.Logger()
+	if err != nil {
+		return fmt.Errorf("failed to create logger: %w", err)
+	}
+
 	// Set up manager
-	mgr, cleanup, err := manager.Setup(cli.DB.Path, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	mgr, cleanup, err := manager.Setup(cli.DB.Path, logger)
 	if err != nil {
 		return fmt.Errorf("failed to set up manager: %w", err)
 	}
@@ -61,8 +65,14 @@ type ListLinksCmd struct {
 
 // Run executes the list links command.
 func (c *ListLinksCmd) Run(cli *CLI) error {
+	// Set up logger
+	logger, err := cli.Logger()
+	if err != nil {
+		return fmt.Errorf("failed to create logger: %w", err)
+	}
+
 	// Set up manager
-	mgr, cleanup, err := manager.Setup(cli.DB.Path, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	mgr, cleanup, err := manager.Setup(cli.DB.Path, logger)
 	if err != nil {
 		return fmt.Errorf("failed to set up manager: %w", err)
 	}
