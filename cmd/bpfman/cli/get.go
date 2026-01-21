@@ -41,7 +41,7 @@ func (c *GetProgramCmd) Run(cli *CLI) error {
 		return err
 	}
 
-	output, err := FormatProgramInfo(info, c.Output)
+	output, err := FormatProgramInfo(info, &c.OutputFlags)
 	if err != nil {
 		return err
 	}

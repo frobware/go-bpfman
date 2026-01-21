@@ -1,22 +1,27 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
 
+	"k8s.io/client-go/util/jsonpath"
+
 	"github.com/frobware/go-bpfman/pkg/bpfman/manager"
 )
 
-// FormatProgramInfo formats a ProgramInfo according to the specified format.
-func FormatProgramInfo(info manager.ProgramInfo, format OutputFormat) (string, error) {
-	switch format {
+// FormatProgramInfo formats a ProgramInfo according to the specified output flags.
+func FormatProgramInfo(info manager.ProgramInfo, flags *OutputFlags) (string, error) {
+	switch flags.Format() {
 	case OutputFormatJSON:
 		return formatProgramInfoJSON(info)
 	case OutputFormatTree:
 		return formatProgramInfoTree(info), nil
 	case OutputFormatTable:
 		return formatProgramInfoTable(info), nil
+	case OutputFormatJSONPath:
+		return formatProgramInfoJSONPath(info, flags.JSONPathExpr())
 	default:
 		return formatProgramInfoTable(info), nil
 	}
@@ -28,6 +33,33 @@ func formatProgramInfoJSON(info manager.ProgramInfo) (string, error) {
 		return "", fmt.Errorf("failed to marshal result: %w", err)
 	}
 	return string(output) + "\n", nil
+}
+
+func formatProgramInfoJSONPath(info manager.ProgramInfo, expr string) (string, error) {
+	// Parse the JSONPath expression
+	jp := jsonpath.New("output")
+	if err := jp.Parse(expr); err != nil {
+		return "", fmt.Errorf("invalid jsonpath expression %q: %w", expr, err)
+	}
+
+	// Convert to generic interface for jsonpath
+	jsonBytes, err := json.Marshal(info)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal: %w", err)
+	}
+
+	var data interface{}
+	if err := json.Unmarshal(jsonBytes, &data); err != nil {
+		return "", fmt.Errorf("failed to unmarshal: %w", err)
+	}
+
+	// Execute the JSONPath expression
+	var buf bytes.Buffer
+	if err := jp.Execute(&buf, data); err != nil {
+		return "", fmt.Errorf("jsonpath execution failed: %w", err)
+	}
+
+	return buf.String() + "\n", nil
 }
 
 func formatProgramInfoTree(info manager.ProgramInfo) string {

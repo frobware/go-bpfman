@@ -21,14 +21,39 @@ type GlobalDataFlags struct {
 type OutputFormat string
 
 const (
-	OutputFormatTable OutputFormat = "table"
-	OutputFormatTree  OutputFormat = "tree"
-	OutputFormatJSON  OutputFormat = "json"
+	OutputFormatTable    OutputFormat = "table"
+	OutputFormatTree     OutputFormat = "tree"
+	OutputFormatJSON     OutputFormat = "json"
+	OutputFormatJSONPath OutputFormat = "jsonpath"
 )
 
 // OutputFlags provides output formatting flags.
 type OutputFlags struct {
-	Output OutputFormat `short:"o" help:"Output format (table, tree, json)." default:"table" enum:"table,tree,json"`
+	Output string `short:"o" help:"Output format: table, tree, json, jsonpath=EXPR." default:"table"`
+}
+
+// Format returns the base format type.
+func (f *OutputFlags) Format() OutputFormat {
+	switch {
+	case f.Output == "table":
+		return OutputFormatTable
+	case f.Output == "tree":
+		return OutputFormatTree
+	case f.Output == "json":
+		return OutputFormatJSON
+	case len(f.Output) > 9 && f.Output[:9] == "jsonpath=":
+		return OutputFormatJSONPath
+	default:
+		return OutputFormatTable
+	}
+}
+
+// JSONPathExpr returns the JSONPath expression if format is jsonpath=EXPR.
+func (f *OutputFlags) JSONPathExpr() string {
+	if len(f.Output) > 9 && f.Output[:9] == "jsonpath=" {
+		return f.Output[9:]
+	}
+	return ""
 }
 
 // TTLFlag provides a TTL duration flag.
