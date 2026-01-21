@@ -173,3 +173,12 @@ type ImagePuller interface {
 	// the cache is cleaned.
 	Pull(ctx context.Context, ref ImageRef) (PulledImage, error)
 }
+
+// SignatureVerifier verifies OCI image signatures.
+type SignatureVerifier interface {
+	// Verify checks that the image has a valid signature.
+	// Returns nil if verification succeeds or is not required.
+	// Returns an error if the image signature is invalid or missing
+	// (when unsigned images are not allowed).
+	Verify(ctx context.Context, imageRef string) error
+}

@@ -54,6 +54,7 @@ type cachedMetadata struct {
 type Puller struct {
 	cacheDir string
 	logger   *slog.Logger
+	verifier interpreter.SignatureVerifier
 }
 
 // Option configures a Puller.
@@ -70,6 +71,14 @@ func WithCacheDir(dir string) Option {
 func WithLogger(logger *slog.Logger) Option {
 	return func(p *Puller) {
 		p.logger = logger
+	}
+}
+
+// WithVerifier sets the signature verifier.
+// If not set, no signature verification is performed.
+func WithVerifier(v interpreter.SignatureVerifier) Option {
+	return func(p *Puller) {
+		p.verifier = v
 	}
 }
 
@@ -157,6 +166,21 @@ func (p *Puller) Pull(ctx context.Context, ref interpreter.ImageRef) (interprete
 	}
 
 	logger.Info("image resolved", "digest", desc.Digest.String(), "media_type", desc.MediaType)
+
+	// Verify image signature if a verifier is configured
+	if p.verifier != nil {
+		// Use the resolved digest for verification to ensure we verify what we pull
+		verifyRef := ref.URL
+		if desc.Digest != "" {
+			// Append digest to ensure we verify the exact image
+			verifyRef = ref.URL + "@" + desc.Digest.String()
+		}
+		if err := p.verifier.Verify(ctx, verifyRef); err != nil {
+			logger.Error("image signature verification failed", "error", err)
+			return interpreter.PulledImage{}, fmt.Errorf("signature verification failed: %w", err)
+		}
+		logger.Info("image signature verified")
+	}
 
 	// Handle OCI image index (multi-platform manifest list)
 	manifestDesc := desc

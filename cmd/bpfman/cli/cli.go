@@ -18,6 +18,7 @@ type CLI struct {
 	List   ListCmd   `cmd:"" help:"List managed programs or links."`
 	Get    GetCmd    `cmd:"" help:"Get details of a program or link."`
 	GC     GCCmd     `cmd:"" help:"Garbage collect stale resources."`
+	Image  ImageCmd  `cmd:"" help:"Image operations (verify signatures)."`
 }
 
 // KongOptions returns the Kong configuration options for the CLI.
@@ -42,6 +43,7 @@ func KongOptions() []kong.Option {
 			"default_db_path":     "/run/bpfman/state.db",
 			"default_socket_path": "/run/bpfman-sock/bpfman.sock",
 			"default_csi_socket":  "/run/bpfman/csi/csi.sock",
+			"default_config_path": "/etc/bpfman/bpfman.toml",
 		},
 	}
 }

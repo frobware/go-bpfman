@@ -11,7 +11,10 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/frobware/go-bpfman/pkg/bpfman"
+	"github.com/frobware/go-bpfman/pkg/bpfman/config"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter"
+	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/image/cosign"
+	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/image/noop"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/image/oci"
 	"github.com/frobware/go-bpfman/pkg/bpfman/managed"
 	"github.com/frobware/go-bpfman/pkg/bpfman/manager"
@@ -30,6 +33,11 @@ type LoadImageCmd struct {
 	Password     string          `name:"password" help:"Registry password for authentication."`
 	RegistryAuth string          `name:"registry-auth" help:"Base64-encoded registry auth (alternative to username/password)."`
 	CacheDir     string          `name:"cache-dir" help:"Image cache directory (default: ~/.cache/bpfman/images)."`
+
+	// Signing configuration (overrides config file)
+	ConfigFile       string `name:"config" help:"Path to bpfman config file." default:"${default_config_path}"`
+	AllowUnsigned    *bool  `name:"allow-unsigned" help:"Allow loading unsigned images (overrides config file)."`
+	VerifySignatures *bool  `name:"verify-signatures" help:"Verify image signatures (overrides config file)."`
 }
 
 // Run executes the load image command.
@@ -45,14 +53,50 @@ func (c *LoadImageCmd) Run(cli *CLI) error {
 		"pull_policy", c.PullPolicy.Value,
 	)
 
+	// Load configuration
+	cfg, err := config.Load(c.ConfigFile)
+	if err != nil {
+		logger.Warn("failed to load config file, using defaults", "path", c.ConfigFile, "error", err)
+		cfg = config.DefaultConfig()
+	}
+
+	// Apply CLI overrides to signing config
+	if c.AllowUnsigned != nil {
+		cfg.Signing.AllowUnsigned = *c.AllowUnsigned
+	}
+	if c.VerifySignatures != nil {
+		cfg.Signing.VerifyEnabled = *c.VerifySignatures
+	}
+
+	logger.Debug("signing configuration",
+		"verify_enabled", cfg.Signing.VerifyEnabled,
+		"allow_unsigned", cfg.Signing.AllowUnsigned,
+	)
+
 	// Parse pull policy
 	pullPolicy, ok := managed.ParseImagePullPolicy(c.PullPolicy.Value)
 	if !ok {
 		return fmt.Errorf("invalid pull policy %q", c.PullPolicy.Value)
 	}
 
+	// Build signature verifier based on configuration
+	var verifier interpreter.SignatureVerifier
+	if cfg.Signing.ShouldVerify() {
+		logger.Info("signature verification enabled")
+		verifier = cosign.NewVerifier(
+			cosign.WithLogger(logger),
+			cosign.WithAllowUnsigned(cfg.Signing.AllowUnsigned),
+		)
+	} else {
+		logger.Info("signature verification disabled")
+		verifier = noop.Verifier{}
+	}
+
 	// Create image puller options
-	pullerOpts := []oci.Option{oci.WithLogger(logger)}
+	pullerOpts := []oci.Option{
+		oci.WithLogger(logger),
+		oci.WithVerifier(verifier),
+	}
 	if c.CacheDir != "" {
 		pullerOpts = append(pullerOpts, oci.WithCacheDir(c.CacheDir))
 	}
