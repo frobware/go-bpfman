@@ -472,6 +472,56 @@ func (m *Manager) AttachTracepoint(ctx context.Context, programKernelID uint32, 
 	return summary, nil
 }
 
+// AttachXDP attaches a pinned XDP program to a network interface.
+// programKernelID is required to associate the link with the program in the store.
+func (m *Manager) AttachXDP(ctx context.Context, programKernelID uint32, progPinPath string, ifindex int, ifname string, linkPinPath string) (managed.LinkSummary, error) {
+	// Get program metadata to verify it exists
+	_, err := m.store.Get(ctx, programKernelID)
+	if err != nil {
+		return managed.LinkSummary{}, fmt.Errorf("get program %d: %w", programKernelID, err)
+	}
+
+	// Attach to the kernel
+	kernelLink, err := m.kernel.AttachXDP(progPinPath, ifindex, linkPinPath)
+	if err != nil {
+		return managed.LinkSummary{}, fmt.Errorf("attach XDP to %s (ifindex %d): %w", ifname, ifindex, err)
+	}
+
+	// Create link metadata
+	linkUUID := googleuuid.New().String()
+	now := time.Now()
+
+	summary := managed.LinkSummary{
+		UUID:            linkUUID,
+		LinkType:        managed.LinkTypeXDP,
+		KernelProgramID: programKernelID,
+		KernelLinkID:    kernelLink.ID,
+		PinPath:         kernelLink.PinPath,
+		CreatedAt:       now,
+	}
+
+	details := managed.XDPDetails{
+		Interface: ifname,
+		Ifindex:   uint32(ifindex),
+	}
+
+	// Save to store
+	if err := m.store.SaveXDPLink(ctx, summary, details); err != nil {
+		m.logger.Error("failed to save link metadata", "uuid", linkUUID, "error", err)
+		// Don't fail the attachment - the link is already created in the kernel
+		// This is a metadata-only failure
+	} else {
+		m.logger.Info("attached XDP",
+			"link_uuid", linkUUID,
+			"program_id", programKernelID,
+			"interface", ifname,
+			"ifindex", ifindex,
+			"pin_path", kernelLink.PinPath)
+	}
+
+	return summary, nil
+}
+
 // ListLinks returns all managed links (summaries only).
 func (m *Manager) ListLinks(ctx context.Context) ([]managed.LinkSummary, error) {
 	return m.store.ListLinks(ctx)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"path/filepath"
 
 	"github.com/frobware/go-bpfman/pkg/bpfman/manager"
@@ -13,6 +14,7 @@ import (
 type AttachCmd struct {
 	Tracepoint TracepointCmd `cmd:"" help:"Attach to a tracepoint."`
 	Kprobe     KprobeCmd     `cmd:"" help:"Attach to a kprobe."`
+	Xdp        XDPCmd        `cmd:"" help:"Attach XDP program to a network interface."`
 }
 
 // TracepointCmd attaches a program to a tracepoint.
@@ -75,4 +77,53 @@ type KprobeCmd struct {
 func (c *KprobeCmd) Run(cli *CLI) error {
 	// Kprobe is not yet implemented in the manager
 	return fmt.Errorf("kprobe attachment not yet implemented")
+}
+
+// XDPCmd attaches an XDP program to a network interface.
+type XDPCmd struct {
+	ProgramID   ProgramID `name:"program-id" required:"" help:"Kernel program ID to attach (supports hex with 0x prefix)."`
+	ProgPinPath string    `arg:"" name:"prog-pin-path" help:"Path to the pinned program."`
+	Interface   string    `arg:"" name:"interface" help:"Network interface name (e.g., eth0)."`
+	LinkPinPath string    `name:"link-pin-path" help:"Path to pin the link (optional)."`
+}
+
+// Run executes the XDP attach command.
+func (c *XDPCmd) Run(cli *CLI) error {
+	logger, err := cli.Logger()
+	if err != nil {
+		return fmt.Errorf("failed to create logger: %w", err)
+	}
+
+	mgr, cleanup, err := manager.Setup(cli.DB.Path, logger)
+	if err != nil {
+		return fmt.Errorf("failed to set up manager: %w", err)
+	}
+	defer cleanup()
+
+	// Resolve interface name to ifindex
+	iface, err := net.InterfaceByName(c.Interface)
+	if err != nil {
+		return fmt.Errorf("failed to find interface %q: %w", c.Interface, err)
+	}
+
+	// Auto-generate link pin path if not provided.
+	// Links must be pinned to persist beyond the CLI command.
+	linkPinPath := c.LinkPinPath
+	if linkPinPath == "" {
+		linkPinPath = filepath.Join(filepath.Dir(c.ProgPinPath), "link")
+	}
+
+	ctx := context.Background()
+	result, err := mgr.AttachXDP(ctx, c.ProgramID.Value, c.ProgPinPath, iface.Index, c.Interface, linkPinPath)
+	if err != nil {
+		return err
+	}
+
+	output, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal result: %w", err)
+	}
+
+	fmt.Println(string(output))
+	return nil
 }

@@ -140,6 +140,8 @@ type PinInspector interface {
 type ProgramAttacher interface {
 	// AttachTracepoint attaches a pinned program to a tracepoint.
 	AttachTracepoint(progPinPath, group, name, linkPinPath string) (*bpfman.AttachedLink, error)
+	// AttachXDP attaches a pinned XDP program to a network interface.
+	AttachXDP(progPinPath string, ifindex int, linkPinPath string) (*bpfman.AttachedLink, error)
 }
 
 // LinkDetacher detaches links from hooks.

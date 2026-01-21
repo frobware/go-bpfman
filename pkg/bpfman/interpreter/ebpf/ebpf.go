@@ -669,3 +669,46 @@ func (k *Kernel) AttachTracepoint(progPinPath, group, name, linkPinPath string) 
 
 	return result, nil
 }
+
+// AttachXDP attaches a pinned XDP program to a network interface.
+func (k *Kernel) AttachXDP(progPinPath string, ifindex int, linkPinPath string) (*bpfman.AttachedLink, error) {
+	prog, err := ebpf.LoadPinnedProgram(progPinPath, nil)
+	if err != nil {
+		return nil, fmt.Errorf("load pinned program %s: %w", progPinPath, err)
+	}
+	defer prog.Close()
+
+	lnk, err := link.AttachXDP(link.XDPOptions{
+		Program:   prog,
+		Interface: ifindex,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("attach XDP to ifindex %d: %w", ifindex, err)
+	}
+
+	result := &bpfman.AttachedLink{
+		Type: bpfman.AttachXDP,
+	}
+
+	// Pin the link if a path is provided
+	if linkPinPath != "" {
+		if err := os.MkdirAll(filepath.Dir(linkPinPath), 0755); err != nil {
+			lnk.Close()
+			return nil, fmt.Errorf("create link pin directory: %w", err)
+		}
+
+		if err := lnk.Pin(linkPinPath); err != nil {
+			lnk.Close()
+			return nil, fmt.Errorf("pin link to %s: %w", linkPinPath, err)
+		}
+		result.PinPath = linkPinPath
+	}
+
+	// Get link info if available
+	info, err := lnk.Info()
+	if err == nil {
+		result.ID = uint32(info.ID)
+	}
+
+	return result, nil
+}

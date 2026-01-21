@@ -156,6 +156,17 @@ func (f *fakeKernel) AttachTracepoint(progPinPath, group, name, linkPinPath stri
 	return link, nil
 }
 
+func (f *fakeKernel) AttachXDP(progPinPath string, ifindex int, linkPinPath string) (*bpfman.AttachedLink, error) {
+	id := f.nextID.Add(1)
+	link := &bpfman.AttachedLink{
+		ID:      id,
+		PinPath: linkPinPath,
+		Type:    bpfman.AttachXDP,
+	}
+	f.links[id] = link
+	return link, nil
+}
+
 func (f *fakeKernel) DetachLink(linkPinPath string) error {
 	for id, link := range f.links {
 		if link.PinPath == linkPinPath {
