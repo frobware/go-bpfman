@@ -117,3 +117,35 @@ func dbPathMapper() kong.MapperFunc {
 		return nil
 	}
 }
+
+// programSpecMapper creates a Kong mapper for ProgramSpec.
+func programSpecMapper() kong.MapperFunc {
+	return func(ctx *kong.DecodeContext, target reflect.Value) error {
+		var s string
+		if err := ctx.Scan.PopValueInto("type:name", &s); err != nil {
+			return err
+		}
+		ps, err := ParseProgramSpec(s)
+		if err != nil {
+			return err
+		}
+		target.Set(reflect.ValueOf(ps))
+		return nil
+	}
+}
+
+// imagePullPolicyMapper creates a Kong mapper for ImagePullPolicy.
+func imagePullPolicyMapper() kong.MapperFunc {
+	return func(ctx *kong.DecodeContext, target reflect.Value) error {
+		var s string
+		if err := ctx.Scan.PopValueInto("policy", &s); err != nil {
+			return err
+		}
+		pp, err := ParseImagePullPolicy(s)
+		if err != nil {
+			return err
+		}
+		target.Set(reflect.ValueOf(pp))
+		return nil
+	}
+}

@@ -15,9 +15,10 @@ import (
 	"github.com/frobware/go-bpfman/pkg/bpfman/server"
 )
 
-// LoadCmd loads a BPF program from an object file.
+// LoadCmd loads a BPF program from an object file or OCI image.
 type LoadCmd struct {
-	File LoadFileCmd `cmd:"" default:"withargs" help:"Load from a local object file."`
+	File  LoadFileCmd  `cmd:"" default:"withargs" help:"Load from a local object file."`
+	Image LoadImageCmd `cmd:"" help:"Load from an OCI container image."`
 }
 
 // LoadFileCmd loads a BPF program from a local object file.

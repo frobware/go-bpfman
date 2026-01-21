@@ -36,6 +36,8 @@ func KongOptions() []kong.Option {
 		kong.TypeMapper(reflect.TypeOf(GlobalData{}), globalDataMapper()),
 		kong.TypeMapper(reflect.TypeOf(ObjectPath{}), objectPathMapper()),
 		kong.TypeMapper(reflect.TypeOf(DBPath{}), dbPathMapper()),
+		kong.TypeMapper(reflect.TypeOf(ProgramSpec{}), programSpecMapper()),
+		kong.TypeMapper(reflect.TypeOf(ImagePullPolicy{}), imagePullPolicyMapper()),
 		kong.Vars{
 			"default_db_path":     "/run/bpfman/state.db",
 			"default_socket_path": "/run/bpfman-sock/bpfman.sock",

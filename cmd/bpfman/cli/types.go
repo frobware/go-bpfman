@@ -218,3 +218,57 @@ func GlobalDataMap(gds []GlobalData) map[string][]byte {
 	}
 	return m
 }
+
+// ProgramSpec represents a TYPE:NAME program specification for image loading.
+type ProgramSpec struct {
+	Type string // Program type (e.g., "xdp", "tc", "tracepoint")
+	Name string // Program name within the ELF
+}
+
+// ParseProgramSpec parses a TYPE:NAME string (e.g., "xdp:xdp_pass").
+func ParseProgramSpec(s string) (ProgramSpec, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ProgramSpec{}, fmt.Errorf("program spec cannot be empty")
+	}
+
+	idx := strings.Index(s, ":")
+	if idx <= 0 {
+		return ProgramSpec{}, fmt.Errorf("invalid program spec %q: expected TYPE:NAME format (e.g., xdp:my_prog)", s)
+	}
+
+	progType := strings.TrimSpace(s[:idx])
+	progName := strings.TrimSpace(s[idx+1:])
+
+	if progType == "" {
+		return ProgramSpec{}, fmt.Errorf("invalid program spec %q: type cannot be empty", s)
+	}
+	if progName == "" {
+		return ProgramSpec{}, fmt.Errorf("invalid program spec %q: name cannot be empty", s)
+	}
+
+	return ProgramSpec{
+		Type: progType,
+		Name: progName,
+	}, nil
+}
+
+// ImagePullPolicy represents a CLI-friendly pull policy string.
+type ImagePullPolicy struct {
+	Value string
+}
+
+// ParseImagePullPolicy parses a pull policy string.
+func ParseImagePullPolicy(s string) (ImagePullPolicy, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ImagePullPolicy{Value: "IfNotPresent"}, nil
+	}
+
+	switch strings.ToLower(s) {
+	case "always", "ifnotpresent", "never":
+		return ImagePullPolicy{Value: s}, nil
+	default:
+		return ImagePullPolicy{}, fmt.Errorf("invalid pull policy %q: must be Always, IfNotPresent, or Never", s)
+	}
+}

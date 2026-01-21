@@ -137,3 +137,39 @@ type KernelOperations interface {
 	PinInspector
 	ProgramAttacher
 }
+
+// ImageRef describes an OCI image to pull.
+type ImageRef struct {
+	// URL is the OCI image reference (e.g., "quay.io/bpfman-bytecode/xdp_pass:latest").
+	URL string
+	// PullPolicy specifies when to pull the image.
+	PullPolicy managed.ImagePullPolicy
+	// Auth contains optional authentication credentials. Nil for anonymous access.
+	Auth *ImageAuth
+}
+
+// ImageAuth contains credentials for authenticating to an OCI registry.
+type ImageAuth struct {
+	Username string
+	Password string
+}
+
+// PulledImage is the result of successfully pulling an OCI image.
+type PulledImage struct {
+	// ObjectPath is the path to the extracted ELF bytecode file.
+	ObjectPath string
+	// Programs maps program names to their types from the io.ebpf.programs label.
+	Programs map[string]string
+	// Maps maps map names to their types from the io.ebpf.maps label.
+	Maps map[string]string
+	// Digest is the resolved image digest.
+	Digest string
+}
+
+// ImagePuller fetches BPF bytecode from OCI images.
+type ImagePuller interface {
+	// Pull downloads an image and returns the extracted bytecode.
+	// The returned ObjectPath is valid until the puller is closed or
+	// the cache is cleaned.
+	Pull(ctx context.Context, ref ImageRef) (PulledImage, error)
+}

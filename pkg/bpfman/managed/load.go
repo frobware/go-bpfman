@@ -9,6 +9,7 @@ type LoadSpec struct {
 	ProgramType bpfman.ProgramType `json:"program_type"`
 	PinPath     string             `json:"pin_path"`
 	GlobalData  map[string][]byte  `json:"global_data,omitempty"`
+	ImageSource *ImageSource       `json:"image_source,omitempty"`
 }
 
 // Loaded is the result of successfully loading a program.

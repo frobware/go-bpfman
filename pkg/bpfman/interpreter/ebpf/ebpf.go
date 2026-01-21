@@ -7,6 +7,7 @@ import (
 	"iter"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
@@ -175,8 +176,14 @@ func (k *Kernel) Load(ctx context.Context, spec managed.LoadSpec) (managed.Loade
 		return managed.Loaded{}, fmt.Errorf("failed to pin program: %w", err)
 	}
 
-	// Explicitly pin all maps
+	// Explicitly pin all maps (skip internal maps like .rodata, .bss, .data)
 	for name, m := range coll.Maps {
+		// Skip internal maps - these are compiler-generated sections that
+		// become maps, and they don't need to be pinned separately.
+		// Also, bpffs paths starting with '.' can be problematic.
+		if strings.HasPrefix(name, ".") {
+			continue
+		}
 		mapPinPath := filepath.Join(spec.PinPath, name)
 		if err := m.Pin(mapPinPath); err != nil {
 			// Ignore if already pinned
