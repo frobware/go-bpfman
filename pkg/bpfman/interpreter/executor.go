@@ -30,6 +30,21 @@ func (e *Executor) Execute(ctx context.Context, a action.Action) error {
 	case action.DeleteProgram:
 		return e.store.Delete(ctx, a.KernelID)
 
+	case action.MarkProgramUnloading:
+		return e.store.MarkUnloading(ctx, a.KernelID)
+
+	case action.DeleteLink:
+		return e.store.DeleteLink(ctx, a.UUID)
+
+	case action.SaveTracepointLink:
+		return e.store.SaveTracepointLink(ctx, a.Summary, a.Details)
+
+	case action.SaveXDPLink:
+		return e.store.SaveXDPLink(ctx, a.Summary, a.Details)
+
+	case action.SaveTCLink:
+		return e.store.SaveTCLink(ctx, a.Summary, a.Details)
+
 	case action.LoadProgram:
 		_, err := e.kernel.Load(ctx, a.Spec)
 		return err
@@ -48,6 +63,9 @@ func (e *Executor) Execute(ctx context.Context, a action.Action) error {
 
 	case action.DeleteDispatcher:
 		return e.store.DeleteDispatcher(ctx, a.Type, a.Nsid, a.Ifindex)
+
+	case action.DetachLink:
+		return e.kernel.DetachLink(a.PinPath)
 
 	case action.RemovePin:
 		return e.kernel.RemovePin(a.Path)

@@ -184,29 +184,33 @@ func (k *Kernel) ensureClsactQdisc(ifindex int) error {
 
 ### 3. Manager Method
 
-Add to `pkg/bpfman/manager/manager.go`:
+Add to `pkg/bpfman/manager/manager.go`. Note that all store operations go
+through the executor using reified effects (actions), following the
+FETCH/COMPUTE/EXECUTE pattern:
 
 ```go
 // AttachTC attaches a TC program to a network interface using the
 // dispatcher model for multi-program chaining.
 //
 // direction must be "ingress" or "egress".
+//
+// Pattern: FETCH -> KERNEL I/O -> COMPUTE -> EXECUTE
 func (m *Manager) AttachTC(ctx context.Context, programKernelID uint32,
     ifindex int, ifname, direction, linkPinPath string,
 ) (managed.LinkSummary, error) {
-    // Get program metadata
+    // FETCH: Get program metadata
     prog, err := m.store.Get(ctx, programKernelID)
     if err != nil {
         return managed.LinkSummary{}, fmt.Errorf("get program %d: %w", programKernelID, err)
     }
 
-    // Get network namespace ID
+    // FETCH: Get network namespace ID
     nsid, err := netns.GetCurrentNsid()
     if err != nil {
         return managed.LinkSummary{}, fmt.Errorf("get current nsid: %w", err)
     }
 
-    // Determine dispatcher type from direction
+    // COMPUTE: Determine dispatcher type from direction
     var dispType dispatcher.DispatcherType
     switch direction {
     case "ingress":
@@ -217,9 +221,10 @@ func (m *Manager) AttachTC(ctx context.Context, programKernelID uint32,
         return managed.LinkSummary{}, fmt.Errorf("invalid direction: %s", direction)
     }
 
-    // Look up or create dispatcher
+    // FETCH: Look up existing dispatcher or create new one
     dispState, err := m.store.GetDispatcher(ctx, string(dispType), nsid, uint32(ifindex))
     if errors.Is(err, store.ErrNotFound) {
+        // KERNEL I/O + EXECUTE: Create new dispatcher
         dispState, err = m.createTCDispatcher(ctx, nsid, uint32(ifindex), direction)
         if err != nil {
             return managed.LinkSummary{}, fmt.Errorf("create TC dispatcher: %w", err)
@@ -228,13 +233,24 @@ func (m *Manager) AttachTC(ctx context.Context, programKernelID uint32,
         return managed.LinkSummary{}, fmt.Errorf("get dispatcher: %w", err)
     }
 
-    // ... rest follows XDP pattern: compute paths, attach extension,
-    // update dispatcher count, save link metadata ...
+    // KERNEL I/O: Attach extension (returns IDs)
+    // ... attach TC extension ...
+
+    // COMPUTE: Build save actions from kernel result
+    saveActions := computeAttachTCActions(...)
+
+    // EXECUTE: Save through executor
+    if err := m.executor.ExecuteAll(ctx, saveActions); err != nil {
+        // ... handle error ...
+    }
+
+    return summary, nil
 }
 
 func (m *Manager) createTCDispatcher(ctx context.Context, nsid uint64,
     ifindex uint32, direction string,
 ) (managed.DispatcherState, error) {
+    // COMPUTE: Determine dispatcher type and paths
     var dispType dispatcher.DispatcherType
     switch direction {
     case "ingress":
@@ -248,6 +264,7 @@ func (m *Manager) createTCDispatcher(ctx context.Context, nsid uint64,
     revisionDir := dispatcher.DispatcherRevisionDir(dispType, nsid, ifindex, revision)
     progPinPath := dispatcher.DispatcherProgPath(revisionDir)
 
+    // KERNEL I/O: Create dispatcher (returns IDs)
     result, err := m.kernel.AttachTCDispatcher(
         int(ifindex),
         direction,
@@ -260,19 +277,12 @@ func (m *Manager) createTCDispatcher(ctx context.Context, nsid uint64,
         return managed.DispatcherState{}, err
     }
 
-    state := managed.DispatcherState{
-        Type:          dispType,
-        Nsid:          nsid,
-        Ifindex:       ifindex,
-        Revision:      revision,
-        KernelID:      result.DispatcherID,
-        LinkID:        result.LinkID,
-        LinkPinPath:   linkPinPath,
-        ProgPinPath:   progPinPath,
-        NumExtensions: 0,
-    }
+    // COMPUTE: Build save action from kernel result
+    state := computeDispatcherState(dispType, nsid, ifindex, revision, result, progPinPath, linkPinPath)
+    saveAction := action.SaveDispatcher{State: state}
 
-    if err := m.store.SaveDispatcher(ctx, state); err != nil {
+    // EXECUTE: Save through executor
+    if err := m.executor.Execute(ctx, saveAction); err != nil {
         return managed.DispatcherState{}, fmt.Errorf("save dispatcher: %w", err)
     }
 
@@ -368,16 +378,21 @@ For TC egress on the same interface:
 
 ## Cleanup Behaviour
 
-The existing cleanup infrastructure handles TC dispatchers automatically:
+The existing cleanup infrastructure handles TC dispatchers automatically
+using the FETCH/COMPUTE/EXECUTE pattern:
 
-1. `Detach` calls `maybeCleanupDispatcher`
+1. `Detach` fetches the link details and dispatcher state
 2. `extractDispatcherKey` recognises `TCDetails` and returns the correct
-   dispatcher type based on direction
-3. `computeDispatcherCleanupActions` generates the appropriate `RemovePin`
-   and `DeleteDispatcher` actions
-4. The executor removes pins and deletes the dispatcher from the store
+   dispatcher type based on direction (ingress or egress)
+3. `computeDetachActions` builds the complete action sequence, calling
+   `computeDispatcherCleanupActions` internally to generate `RemovePin`
+   and `DeleteDispatcher` actions when the dispatcher has no remaining
+   extensions
+4. The executor runs all actions (detach link, delete link, dispatcher
+   cleanup)
 
-No changes needed to the cleanup code path.
+No changes needed to the cleanup code path - TC dispatchers are handled
+by the same generic infrastructure as XDP dispatchers.
 
 ## Dependencies
 

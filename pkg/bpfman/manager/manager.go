@@ -179,8 +179,10 @@ func (m *Manager) Load(ctx context.Context, spec managed.LoadSpec, opts LoadOpts
 //
 // If phase 2 fails, the program remains in state=unloading which GC
 // can detect and clean up (no kernel program but DB entry exists).
+//
+// Pattern: FETCH -> COMPUTE -> EXECUTE
 func (m *Manager) Unload(ctx context.Context, kernelID uint32) error {
-	// FETCH - get metadata to find pin path
+	// FETCH: Get metadata and links
 	metadata, err := m.store.Get(ctx, kernelID)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return err
@@ -190,43 +192,50 @@ func (m *Manager) Unload(ctx context.Context, kernelID uint32) error {
 		return nil
 	}
 
-	// Phase 1 (2PC): Mark state=unloading
-	if err := m.store.MarkUnloading(ctx, kernelID); err != nil {
-		return fmt.Errorf("mark unloading: %w", err)
-	}
-	m.logger.Info("marked program for unload", "kernel_id", kernelID)
+	links, _ := m.store.ListLinksByProgram(ctx, kernelID)
 
-	// Phase 2 (2PC): Unpin links, program, then delete from DB
+	// COMPUTE: Build unload actions
+	actions := computeUnloadActions(kernelID, metadata.LoadSpec.PinPath, links)
 
-	// Unpin any links associated with this program
-	links, listErr := m.store.ListLinksByProgram(ctx, kernelID)
-	if listErr == nil {
-		for _, link := range links {
-			if link.PinPath != "" {
-				if err := m.kernel.DetachLink(link.PinPath); err != nil {
-					m.logger.Warn("failed to unpin link", "uuid", link.UUID, "pin_path", link.PinPath, "error", err)
-				} else {
-					m.logger.Info("unpinned link", "uuid", link.UUID, "pin_path", link.PinPath)
-				}
-			}
-		}
-	}
+	m.logger.Info("unloading program", "kernel_id", kernelID, "links", len(links))
 
-	// Unpin program from kernel
-	if err := m.kernel.Unload(ctx, metadata.LoadSpec.PinPath); err != nil {
-		m.logger.Error("failed to unpin program", "kernel_id", kernelID, "error", err)
-		// Continue to delete from DB - the kernel state is uncertain but
-		// we're in state=unloading so GC can reconcile later
-	}
-
-	// Delete from store (cascade deletes links)
-	if err := m.store.Delete(ctx, kernelID); err != nil {
-		m.logger.Error("failed to delete from store", "kernel_id", kernelID, "error", err)
-		return fmt.Errorf("delete from store: %w", err)
+	// EXECUTE: Run all actions (2PC semantics preserved by action order)
+	if err := m.executor.ExecuteAll(ctx, actions); err != nil {
+		return fmt.Errorf("execute unload actions: %w", err)
 	}
 
 	m.logger.Info("unloaded program", "kernel_id", kernelID)
 	return nil
+}
+
+// computeUnloadActions is a pure function that computes the actions needed
+// to unload a program and its associated links.
+//
+// Action order preserves 2PC semantics:
+// 1. MarkProgramUnloading (Phase 1)
+// 2. DetachLink for each link (Phase 2 start)
+// 3. UnloadProgram (Phase 2 continue)
+// 4. DeleteProgram (Phase 2 complete)
+func computeUnloadActions(kernelID uint32, pinPath string, links []managed.LinkSummary) []action.Action {
+	actions := []action.Action{
+		// Phase 1: Mark intent
+		action.MarkProgramUnloading{KernelID: kernelID},
+	}
+
+	// Phase 2: Detach links
+	for _, link := range links {
+		if link.PinPath != "" {
+			actions = append(actions, action.DetachLink{PinPath: link.PinPath})
+		}
+	}
+
+	// Phase 2: Unload program and delete metadata
+	actions = append(actions,
+		action.UnloadProgram{PinPath: pinPath},
+		action.DeleteProgram{KernelID: kernelID},
+	)
+
+	return actions
 }
 
 // List returns all managed programs with their kernel info.
@@ -427,39 +436,27 @@ func (m *Manager) Get(ctx context.Context, kernelID uint32) (ProgramInfo, error)
 
 // AttachTracepoint attaches a pinned program to a tracepoint.
 // programKernelID is required to associate the link with the program in the store.
+//
+// Pattern: FETCH -> KERNEL I/O -> COMPUTE -> EXECUTE
 func (m *Manager) AttachTracepoint(ctx context.Context, programKernelID uint32, progPinPath, group, name, linkPinPath string) (managed.LinkSummary, error) {
-	// Get program metadata to verify it exists
+	// FETCH: Verify program exists
 	_, err := m.store.Get(ctx, programKernelID)
 	if err != nil {
 		return managed.LinkSummary{}, fmt.Errorf("get program %d: %w", programKernelID, err)
 	}
 
-	// Attach to the kernel
+	// KERNEL I/O: Attach to the kernel (returns IDs needed for store action)
 	kernelLink, err := m.kernel.AttachTracepoint(progPinPath, group, name, linkPinPath)
 	if err != nil {
 		return managed.LinkSummary{}, fmt.Errorf("attach tracepoint %s/%s: %w", group, name, err)
 	}
 
-	// Create link metadata
+	// COMPUTE: Build save action from kernel result
 	linkUUID := googleuuid.New().String()
-	now := time.Now()
+	saveAction := computeAttachTracepointAction(linkUUID, programKernelID, kernelLink.ID, kernelLink.PinPath, group, name)
 
-	summary := managed.LinkSummary{
-		UUID:            linkUUID,
-		LinkType:        managed.LinkTypeTracepoint,
-		KernelProgramID: programKernelID,
-		KernelLinkID:    kernelLink.ID,
-		PinPath:         kernelLink.PinPath,
-		CreatedAt:       now,
-	}
-
-	details := managed.TracepointDetails{
-		Group: group,
-		Name:  name,
-	}
-
-	// Save to store
-	if err := m.store.SaveTracepointLink(ctx, summary, details); err != nil {
+	// EXECUTE: Save link metadata
+	if err := m.executor.Execute(ctx, saveAction); err != nil {
 		m.logger.Error("failed to save link metadata", "uuid", linkUUID, "error", err)
 		// Don't fail the attachment - the link is already created in the kernel
 		// This is a metadata-only failure
@@ -471,7 +468,26 @@ func (m *Manager) AttachTracepoint(ctx context.Context, programKernelID uint32, 
 			"pin_path", kernelLink.PinPath)
 	}
 
-	return summary, nil
+	return saveAction.Summary, nil
+}
+
+// computeAttachTracepointAction is a pure function that builds the save action
+// for a tracepoint attachment.
+func computeAttachTracepointAction(linkUUID string, programKernelID, kernelLinkID uint32, pinPath, group, name string) action.SaveTracepointLink {
+	return action.SaveTracepointLink{
+		Summary: managed.LinkSummary{
+			UUID:            linkUUID,
+			LinkType:        managed.LinkTypeTracepoint,
+			KernelProgramID: programKernelID,
+			KernelLinkID:    kernelLinkID,
+			PinPath:         pinPath,
+			CreatedAt:       time.Now(),
+		},
+		Details: managed.TracepointDetails{
+			Group: group,
+			Name:  name,
+		},
+	}
 }
 
 // XDP proceed-on action bits (matches XDP return codes).
@@ -490,23 +506,25 @@ const (
 //   - Dispatcher link: /sys/fs/bpf/bpfman/xdp/dispatcher_{nsid}_{ifindex}_link
 //   - Dispatcher prog: /sys/fs/bpf/bpfman/xdp/dispatcher_{nsid}_{ifindex}_{revision}/dispatcher
 //   - Extension links: /sys/fs/bpf/bpfman/xdp/dispatcher_{nsid}_{ifindex}_{revision}/link_{position}
+//
+// Pattern: FETCH -> KERNEL I/O -> COMPUTE -> EXECUTE
 func (m *Manager) AttachXDP(ctx context.Context, programKernelID uint32, ifindex int, ifname string, linkPinPath string) (managed.LinkSummary, error) {
-	// Get program metadata to access ObjectPath and ProgramName
+	// FETCH: Get program metadata to access ObjectPath and ProgramName
 	prog, err := m.store.Get(ctx, programKernelID)
 	if err != nil {
 		return managed.LinkSummary{}, fmt.Errorf("get program %d: %w", programKernelID, err)
 	}
 
-	// Get network namespace ID
+	// FETCH: Get network namespace ID
 	nsid, err := netns.GetCurrentNsid()
 	if err != nil {
 		return managed.LinkSummary{}, fmt.Errorf("get current nsid: %w", err)
 	}
 
-	// Look up or create dispatcher
+	// FETCH: Look up existing dispatcher or create new one
 	dispState, err := m.store.GetDispatcher(ctx, string(dispatcher.DispatcherTypeXDP), nsid, uint32(ifindex))
 	if errors.Is(err, store.ErrNotFound) {
-		// Create new dispatcher
+		// KERNEL I/O + EXECUTE: Create new dispatcher
 		dispState, err = m.createXDPDispatcher(ctx, nsid, uint32(ifindex))
 		if err != nil {
 			return managed.LinkSummary{}, fmt.Errorf("create XDP dispatcher for %s: %w", ifname, err)
@@ -522,19 +540,15 @@ func (m *Manager) AttachXDP(ctx context.Context, programKernelID uint32, ifindex
 		"revision", dispState.Revision,
 		"dispatcher_id", dispState.KernelID)
 
-	// Calculate extension link path using new convention
+	// COMPUTE: Calculate extension link path
 	revisionDir := dispatcher.DispatcherRevisionDir(dispatcher.DispatcherTypeXDP, nsid, uint32(ifindex), dispState.Revision)
-
-	// Find next available position (TODO: query store for used positions)
 	position := int(dispState.NumExtensions)
 	extensionLinkPath := dispatcher.ExtensionLinkPath(revisionDir, position)
-
-	// Override linkPinPath with the computed path if not provided
 	if linkPinPath == "" {
 		linkPinPath = extensionLinkPath
 	}
 
-	// Attach user program as extension
+	// KERNEL I/O: Attach user program as extension (returns IDs)
 	extensionLink, err := m.kernel.AttachXDPExtension(
 		dispState.ProgPinPath,
 		prog.LoadSpec.ObjectPath,
@@ -546,38 +560,22 @@ func (m *Manager) AttachXDP(ctx context.Context, programKernelID uint32, ifindex
 		return managed.LinkSummary{}, fmt.Errorf("attach XDP extension to %s slot %d: %w", ifname, position, err)
 	}
 
-	// Update dispatcher extension count
-	dispState.NumExtensions++
-	if err := m.store.SaveDispatcher(ctx, dispState); err != nil {
-		m.logger.Warn("failed to update dispatcher extension count", "error", err)
-	}
-
-	// Create link metadata
+	// COMPUTE: Build save actions from kernel result
 	linkUUID := googleuuid.New().String()
-	now := time.Now()
+	saveActions := computeAttachXDPActions(
+		linkUUID,
+		programKernelID,
+		extensionLink.ID,
+		extensionLink.PinPath,
+		ifname,
+		uint32(ifindex),
+		nsid,
+		position,
+		dispState,
+	)
 
-	summary := managed.LinkSummary{
-		UUID:            linkUUID,
-		LinkType:        managed.LinkTypeXDP,
-		KernelProgramID: programKernelID,
-		KernelLinkID:    extensionLink.ID,
-		PinPath:         extensionLink.PinPath,
-		CreatedAt:       now,
-	}
-
-	details := managed.XDPDetails{
-		Interface:    ifname,
-		Ifindex:      uint32(ifindex),
-		Priority:     50, // Default priority
-		Position:     int32(position),
-		ProceedOn:    []int32{2}, // XDP_PASS
-		Nsid:         nsid,
-		DispatcherID: dispState.KernelID,
-		Revision:     dispState.Revision,
-	}
-
-	// Save to store
-	if err := m.store.SaveXDPLink(ctx, summary, details); err != nil {
+	// EXECUTE: Save dispatcher update and link metadata
+	if err := m.executor.ExecuteAll(ctx, saveActions); err != nil {
 		m.logger.Error("failed to save link metadata", "uuid", linkUUID, "error", err)
 		// Don't fail the attachment - the link is already created in the kernel
 		// This is a metadata-only failure
@@ -593,12 +591,68 @@ func (m *Manager) AttachXDP(ctx context.Context, programKernelID uint32, ifindex
 			"pin_path", extensionLink.PinPath)
 	}
 
-	return summary, nil
+	// Extract summary from computed action for return value
+	for _, a := range saveActions {
+		if saveXDP, ok := a.(action.SaveXDPLink); ok {
+			return saveXDP.Summary, nil
+		}
+	}
+	// Shouldn't happen, but return a constructed summary as fallback
+	return managed.LinkSummary{
+		UUID:            linkUUID,
+		LinkType:        managed.LinkTypeXDP,
+		KernelProgramID: programKernelID,
+		KernelLinkID:    extensionLink.ID,
+		PinPath:         extensionLink.PinPath,
+		CreatedAt:       time.Now(),
+	}, nil
+}
+
+// computeAttachXDPActions is a pure function that builds the actions needed
+// to save XDP attachment metadata (dispatcher update + link save).
+func computeAttachXDPActions(
+	linkUUID string,
+	programKernelID, kernelLinkID uint32,
+	pinPath, ifname string,
+	ifindex uint32,
+	nsid uint64,
+	position int,
+	dispState managed.DispatcherState,
+) []action.Action {
+	// Update dispatcher extension count
+	updatedDispState := dispState
+	updatedDispState.NumExtensions++
+
+	return []action.Action{
+		action.SaveDispatcher{State: updatedDispState},
+		action.SaveXDPLink{
+			Summary: managed.LinkSummary{
+				UUID:            linkUUID,
+				LinkType:        managed.LinkTypeXDP,
+				KernelProgramID: programKernelID,
+				KernelLinkID:    kernelLinkID,
+				PinPath:         pinPath,
+				CreatedAt:       time.Now(),
+			},
+			Details: managed.XDPDetails{
+				Interface:    ifname,
+				Ifindex:      ifindex,
+				Priority:     50, // Default priority
+				Position:     int32(position),
+				ProceedOn:    []int32{2}, // XDP_PASS
+				Nsid:         nsid,
+				DispatcherID: dispState.KernelID,
+				Revision:     dispState.Revision,
+			},
+		},
+	}
 }
 
 // createXDPDispatcher creates a new XDP dispatcher for the given interface.
+//
+// Pattern: COMPUTE -> KERNEL I/O -> COMPUTE -> EXECUTE
 func (m *Manager) createXDPDispatcher(ctx context.Context, nsid uint64, ifindex uint32) (managed.DispatcherState, error) {
-	// Calculate paths according to Rust bpfman convention
+	// COMPUTE: Calculate paths according to Rust bpfman convention
 	revision := uint32(1)
 	linkPinPath := dispatcher.DispatcherLinkPath(dispatcher.DispatcherTypeXDP, nsid, ifindex)
 	revisionDir := dispatcher.DispatcherRevisionDir(dispatcher.DispatcherTypeXDP, nsid, ifindex, revision)
@@ -611,7 +665,7 @@ func (m *Manager) createXDPDispatcher(ctx context.Context, nsid uint64, ifindex 
 		"prog_pin_path", progPinPath,
 		"link_pin_path", linkPinPath)
 
-	// Create dispatcher with 1 slot enabled, proceed on XDP_PASS
+	// KERNEL I/O: Create dispatcher (returns IDs)
 	result, err := m.kernel.AttachXDPDispatcherWithPaths(
 		int(ifindex),
 		progPinPath,
@@ -623,21 +677,12 @@ func (m *Manager) createXDPDispatcher(ctx context.Context, nsid uint64, ifindex 
 		return managed.DispatcherState{}, err
 	}
 
-	// Create dispatcher state
-	state := managed.DispatcherState{
-		Type:          dispatcher.DispatcherTypeXDP,
-		Nsid:          nsid,
-		Ifindex:       ifindex,
-		Revision:      revision,
-		KernelID:      result.DispatcherID,
-		LinkID:        result.LinkID,
-		LinkPinPath:   linkPinPath,
-		ProgPinPath:   progPinPath,
-		NumExtensions: 0,
-	}
+	// COMPUTE: Build save action from kernel result
+	state := computeDispatcherState(dispatcher.DispatcherTypeXDP, nsid, ifindex, revision, result, progPinPath, linkPinPath)
+	saveAction := action.SaveDispatcher{State: state}
 
-	// Save to store
-	if err := m.store.SaveDispatcher(ctx, state); err != nil {
+	// EXECUTE: Save through executor
+	if err := m.executor.Execute(ctx, saveAction); err != nil {
 		return managed.DispatcherState{}, fmt.Errorf("save dispatcher: %w", err)
 	}
 
@@ -650,6 +695,28 @@ func (m *Manager) createXDPDispatcher(ctx context.Context, nsid uint64, ifindex 
 		"link_pin_path", linkPinPath)
 
 	return state, nil
+}
+
+// computeDispatcherState is a pure function that builds a DispatcherState
+// from kernel attach results.
+func computeDispatcherState(
+	dispType dispatcher.DispatcherType,
+	nsid uint64,
+	ifindex, revision uint32,
+	result *interpreter.XDPDispatcherResult,
+	progPinPath, linkPinPath string,
+) managed.DispatcherState {
+	return managed.DispatcherState{
+		Type:          dispType,
+		Nsid:          nsid,
+		Ifindex:       ifindex,
+		Revision:      revision,
+		KernelID:      result.DispatcherID,
+		LinkID:        result.LinkID,
+		LinkPinPath:   linkPinPath,
+		ProgPinPath:   progPinPath,
+		NumExtensions: 0,
+	}
 }
 
 // ListLinks returns all managed links (summaries only).
@@ -675,90 +742,71 @@ func (m *Manager) GetLink(ctx context.Context, uuid string) (managed.LinkSummary
 // For XDP and TC links attached via dispatchers, this also decrements the
 // dispatcher's extension count. If the dispatcher has no remaining extensions,
 // it is cleaned up automatically (pins removed and deleted from store).
+//
+// Pattern: FETCH -> COMPUTE -> EXECUTE
 func (m *Manager) Detach(ctx context.Context, linkUUID string) error {
-	// Fetch link summary and details from store
+	// FETCH: Get link summary and details
 	summary, details, err := m.store.GetLink(ctx, linkUUID)
 	if err != nil {
 		return fmt.Errorf("get link %s: %w", linkUUID, err)
 	}
 
-	// Detach from kernel if pinned
-	if summary.PinPath != "" {
-		if err := m.kernel.DetachLink(summary.PinPath); err != nil {
-			m.logger.Error("failed to detach link from kernel", "uuid", linkUUID, "pin_path", summary.PinPath, "error", err)
-			// Continue to delete from store - the pin may already be gone
-		} else {
-			m.logger.Info("detached link", "uuid", linkUUID, "pin_path", summary.PinPath)
-		}
-	}
-
-	// Delete from store
-	if err := m.store.DeleteLink(ctx, linkUUID); err != nil {
-		return fmt.Errorf("delete link %s from store: %w", linkUUID, err)
-	}
-
-	// Handle dispatcher cleanup for XDP/TC links
+	// FETCH: Get dispatcher state if this is a dispatcher-based link
+	var dispState *managed.DispatcherState
 	if summary.LinkType == managed.LinkTypeXDP || summary.LinkType == managed.LinkTypeTC {
-		if err := m.maybeCleanupDispatcher(ctx, details); err != nil {
-			m.logger.Warn("failed to cleanup dispatcher", "error", err)
+		dispType, nsid, ifindex, err := extractDispatcherKey(details)
+		if err != nil {
+			return fmt.Errorf("extract dispatcher key: %w", err)
 		}
+		if dispType != "" {
+			state, err := m.store.GetDispatcher(ctx, string(dispType), nsid, ifindex)
+			if err != nil {
+				m.logger.Warn("failed to get dispatcher for cleanup", "error", err)
+			} else {
+				dispState = &state
+			}
+		}
+	}
+
+	// COMPUTE: Build actions for detach
+	actions := computeDetachActions(summary, dispState)
+
+	// Log before executing
+	m.logger.Info("detaching link",
+		"uuid", linkUUID,
+		"type", summary.LinkType,
+		"program_id", summary.KernelProgramID,
+		"pin_path", summary.PinPath)
+
+	// EXECUTE: Run all actions
+	if err := m.executor.ExecuteAll(ctx, actions); err != nil {
+		return fmt.Errorf("execute detach actions: %w", err)
 	}
 
 	m.logger.Info("removed link", "uuid", linkUUID, "type", summary.LinkType, "program_id", summary.KernelProgramID)
 	return nil
 }
 
-// maybeCleanupDispatcher decrements the dispatcher's extension count and
-// cleans up the dispatcher if no extensions remain.
-//
-// Pattern: FETCH -> COMPUTE -> EXECUTE
-func (m *Manager) maybeCleanupDispatcher(ctx context.Context, details managed.LinkDetails) error {
-	// FETCH: Extract dispatcher key from link details
-	dispType, nsid, ifindex, err := extractDispatcherKey(details)
-	if err != nil {
-		return err
-	}
-	if dispType == "" {
-		// Not a dispatcher-based link type
-		return nil
+// computeDetachActions is a pure function that computes the actions needed
+// to detach a link and optionally clean up its dispatcher.
+func computeDetachActions(summary managed.LinkSummary, dispState *managed.DispatcherState) []action.Action {
+	var actions []action.Action
+
+	// Detach link from kernel if pinned
+	if summary.PinPath != "" {
+		actions = append(actions, action.DetachLink{PinPath: summary.PinPath})
 	}
 
-	// FETCH: Get dispatcher state
-	dispState, err := m.store.GetDispatcher(ctx, string(dispType), nsid, ifindex)
-	if err != nil {
-		return fmt.Errorf("get dispatcher: %w", err)
+	// Delete link from store
+	actions = append(actions, action.DeleteLink{UUID: summary.UUID})
+
+	// Handle dispatcher cleanup if applicable
+	if dispState != nil {
+		dispatcherActions := computeDispatcherCleanupActions(*dispState)
+		actions = append(actions, dispatcherActions...)
 	}
 
-	// COMPUTE: Determine actions based on extension count
-	actions := computeDispatcherCleanupActions(dispState)
-
-	// Log before executing
-	if len(actions) > 1 {
-		m.logger.Info("removing empty dispatcher",
-			"type", dispState.Type,
-			"nsid", dispState.Nsid,
-			"ifindex", dispState.Ifindex)
-	} else {
-		m.logger.Debug("decremented dispatcher extension count",
-			"type", dispType,
-			"nsid", nsid,
-			"ifindex", ifindex,
-			"remaining", dispState.NumExtensions-1)
-	}
-
-	// EXECUTE: Run computed actions
-	if err := m.executor.ExecuteAll(ctx, actions); err != nil {
-		return fmt.Errorf("execute dispatcher cleanup: %w", err)
-	}
-
-	if len(actions) > 1 {
-		m.logger.Info("removed dispatcher",
-			"type", dispState.Type,
-			"nsid", dispState.Nsid,
-			"ifindex", dispState.Ifindex)
-	}
-
-	return nil
+	return actions
 }
 
 // extractDispatcherKey extracts dispatcher identification from link details.

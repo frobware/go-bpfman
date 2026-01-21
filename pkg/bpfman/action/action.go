@@ -27,6 +27,46 @@ type DeleteProgram struct {
 
 func (DeleteProgram) isAction() {}
 
+// MarkProgramUnloading transitions a program to unloading state.
+type MarkProgramUnloading struct {
+	KernelID uint32
+}
+
+func (MarkProgramUnloading) isAction() {}
+
+// Link actions - operations on link metadata
+
+// DeleteLink removes a link from the store.
+type DeleteLink struct {
+	UUID string
+}
+
+func (DeleteLink) isAction() {}
+
+// SaveTracepointLink saves a tracepoint link to the store.
+type SaveTracepointLink struct {
+	Summary managed.LinkSummary
+	Details managed.TracepointDetails
+}
+
+func (SaveTracepointLink) isAction() {}
+
+// SaveXDPLink saves an XDP link to the store.
+type SaveXDPLink struct {
+	Summary managed.LinkSummary
+	Details managed.XDPDetails
+}
+
+func (SaveXDPLink) isAction() {}
+
+// SaveTCLink saves a TC link to the store.
+type SaveTCLink struct {
+	Summary managed.LinkSummary
+	Details managed.TCDetails
+}
+
+func (SaveTCLink) isAction() {}
+
 // Kernel actions - operations on the BPF subsystem
 
 // LoadProgram loads a BPF program into the kernel.
@@ -74,6 +114,15 @@ type DeleteDispatcher struct {
 }
 
 func (DeleteDispatcher) isAction() {}
+
+// Kernel link actions - operations on kernel links
+
+// DetachLink removes a link pin from bpffs, releasing the kernel link.
+type DetachLink struct {
+	PinPath string
+}
+
+func (DetachLink) isAction() {}
 
 // Filesystem actions - operations on bpffs pins
 
