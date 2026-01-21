@@ -173,9 +173,9 @@ func TestNew_Precedence(t *testing.T) {
 			wantLevel: LevelWarn,
 		},
 		{
-			name:      "default is info",
+			name:      "default is warn",
 			opts:      Options{},
-			wantLevel: LevelInfo,
+			wantLevel: LevelWarn,
 		},
 	}
 

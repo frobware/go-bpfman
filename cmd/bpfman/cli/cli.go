@@ -60,10 +60,9 @@ func (c *CLI) LoadConfig() (config.Config, error) {
 	return config.Load(c.Config)
 }
 
-// Logger creates a logger using the CLI options and config file.
-// Precedence: --log CLI flag > BPFMAN_LOG env > config file > defaults.
-// Note: Kong handles CLI > env precedence via the env tag, so c.Log
-// already contains the effective value from either source.
+// Logger creates a logger for CLI commands.
+// CLI commands default to WARN level for quieter output.
+// Use LoggerFromConfig for long-running services like serve.
 func (c *CLI) Logger() (*slog.Logger, error) {
 	cfg, err := c.LoadConfig()
 	if err != nil {
@@ -75,11 +74,41 @@ func (c *CLI) Logger() (*slog.Logger, error) {
 		return nil, err
 	}
 
+	// CLI commands default to warn unless --log is specified
+	spec := c.Log
+	if spec == "" {
+		spec = "warn"
+	}
+
 	opts := logging.Options{
-		CLISpec:    c.Log, // Kong merged: CLI flag > BPFMAN_LOG env
+		CLISpec:    spec,
 		ConfigSpec: cfg.Logging.ToSpec(),
 		Format:     format,
 		Output:     os.Stderr,
+	}
+
+	return logging.New(opts)
+}
+
+// LoggerFromConfig creates a logger using config file settings.
+// Used by long-running services (serve) where INFO level is appropriate.
+// Output goes to stdout for daemon/container log collection.
+func (c *CLI) LoggerFromConfig() (*slog.Logger, error) {
+	cfg, err := c.LoadConfig()
+	if err != nil {
+		return nil, err
+	}
+
+	format, err := logging.ParseFormat(cfg.Logging.Format)
+	if err != nil {
+		return nil, err
+	}
+
+	opts := logging.Options{
+		CLISpec:    c.Log,
+		ConfigSpec: cfg.Logging.ToSpec(),
+		Format:     format,
+		Output:     os.Stdout,
 	}
 
 	return logging.New(opts)

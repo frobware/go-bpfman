@@ -18,7 +18,7 @@ type ServeCmd struct {
 
 // Run executes the serve command.
 func (c *ServeCmd) Run(cli *CLI) error {
-	logger, err := cli.Logger()
+	logger, err := cli.LoggerFromConfig()
 	if err != nil {
 		return fmt.Errorf("failed to create logger: %w", err)
 	}

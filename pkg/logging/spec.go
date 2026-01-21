@@ -24,10 +24,10 @@ type Spec struct {
 
 // ParseSpec parses a log specification string.
 // The format is: <base-level>[,<component>=<level>]...
-// An empty string defaults to info level with no component overrides.
+// An empty string defaults to warn level with no component overrides.
 func ParseSpec(s string) (Spec, error) {
 	spec := Spec{
-		BaseLevel:  LevelInfo,
+		BaseLevel:  LevelWarn,
 		Components: make(map[string]Level),
 	}
 

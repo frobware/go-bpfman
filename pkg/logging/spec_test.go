@@ -17,9 +17,9 @@ func TestParseSpec(t *testing.T) {
 		errContain string
 	}{
 		{
-			name:     "empty string defaults to info",
+			name:     "empty string defaults to warn",
 			input:    "",
-			wantBase: LevelInfo,
+			wantBase: LevelWarn,
 		},
 		{
 			name:     "base level only",
@@ -47,7 +47,7 @@ func TestParseSpec(t *testing.T) {
 		{
 			name:      "component only (no base level specified)",
 			input:     "manager=debug",
-			wantBase:  LevelInfo,
+			wantBase:  LevelWarn,
 			wantComps: map[string]Level{"manager": LevelDebug},
 		},
 		{
