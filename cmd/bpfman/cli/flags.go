@@ -17,9 +17,18 @@ type GlobalDataFlags struct {
 	GlobalData []GlobalData `short:"g" name:"global" help:"NAME=HEX global data (can be repeated)."`
 }
 
+// OutputFormat represents the output format type.
+type OutputFormat string
+
+const (
+	OutputFormatTable OutputFormat = "table"
+	OutputFormatTree  OutputFormat = "tree"
+	OutputFormatJSON  OutputFormat = "json"
+)
+
 // OutputFlags provides output formatting flags.
 type OutputFlags struct {
-	JSON bool `help:"Output as JSON."`
+	Output OutputFormat `short:"o" help:"Output format (table, tree, json)." default:"table" enum:"table,tree,json"`
 }
 
 // TTLFlag provides a TTL duration flag.

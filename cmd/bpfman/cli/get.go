@@ -36,17 +36,17 @@ func (c *GetProgramCmd) Run(cli *CLI) error {
 	defer cleanup()
 
 	ctx := context.Background()
-	metadata, err := mgr.Get(ctx, c.ProgramID.Value)
+	info, err := mgr.Get(ctx, c.ProgramID.Value)
 	if err != nil {
 		return err
 	}
 
-	output, err := json.MarshalIndent(metadata, "", "  ")
+	output, err := FormatProgramInfo(info, c.Output)
 	if err != nil {
-		return fmt.Errorf("failed to marshal result: %w", err)
+		return err
 	}
 
-	fmt.Println(string(output))
+	fmt.Print(output)
 	return nil
 }
 

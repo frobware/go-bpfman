@@ -79,7 +79,7 @@ func (c *CLI) Logger() (*slog.Logger, error) {
 		CLISpec:    c.Log, // Kong merged: CLI flag > BPFMAN_LOG env
 		ConfigSpec: cfg.Logging.ToSpec(),
 		Format:     format,
-		Output:     os.Stdout,
+		Output:     os.Stderr,
 	}
 
 	return logging.New(opts)
