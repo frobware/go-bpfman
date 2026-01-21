@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 
 	"github.com/frobware/go-bpfman/pkg/bpfman/manager"
 )
@@ -38,8 +39,15 @@ func (c *TracepointCmd) Run(cli *CLI) error {
 	}
 	defer cleanup()
 
+	// Auto-generate link pin path if not provided.
+	// Links must be pinned to persist beyond the CLI command.
+	linkPinPath := c.LinkPinPath
+	if linkPinPath == "" {
+		linkPinPath = filepath.Join(filepath.Dir(c.ProgPinPath), "link")
+	}
+
 	ctx := context.Background()
-	result, err := mgr.AttachTracepoint(ctx, c.ProgramID.Value, c.ProgPinPath, c.Group, c.Name, c.LinkPinPath)
+	result, err := mgr.AttachTracepoint(ctx, c.ProgramID.Value, c.ProgPinPath, c.Group, c.Name, linkPinPath)
 	if err != nil {
 		return err
 	}
