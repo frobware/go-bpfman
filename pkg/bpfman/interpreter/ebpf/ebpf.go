@@ -99,8 +99,27 @@ func (k *Kernel) Maps(ctx context.Context) iter.Seq2[kernel.Map, error] {
 // Links returns an iterator over kernel BPF links.
 func (k *Kernel) Links(ctx context.Context) iter.Seq2[kernel.Link, error] {
 	return func(yield func(kernel.Link, error) bool) {
-		// Links iteration not directly supported, would need /sys/fs/bpf traversal
-		// For now, return empty iterator
+		it := new(link.Iterator)
+		defer it.Close()
+
+		for it.Next() {
+			info, err := it.Link.Info()
+			if err != nil {
+				if !yield(kernel.Link{}, err) {
+					return
+				}
+				continue
+			}
+
+			kl := infoToLink(info)
+			if !yield(kl, nil) {
+				return
+			}
+		}
+
+		if err := it.Err(); err != nil {
+			yield(kernel.Link{}, err)
+		}
 	}
 }
 
@@ -241,6 +260,61 @@ func infoToMap(info *ebpf.MapInfo, id uint32) kernel.Map {
 		MaxEntries: info.MaxEntries,
 		Flags:      uint32(info.Flags),
 	}
+}
+
+func infoToLink(info *link.Info) kernel.Link {
+	kl := kernel.Link{
+		ID:        uint32(info.ID),
+		ProgramID: uint32(info.Program),
+		LinkType:  linkTypeString(info.Type),
+	}
+
+	// Extract type-specific info where available.
+	if tracing := info.Tracing(); tracing != nil {
+		kl.AttachType = fmt.Sprintf("%d", tracing.AttachType)
+		kl.TargetObjID = tracing.TargetObjId
+		kl.TargetBTFId = uint32(tracing.TargetBtfId)
+	} else if xdp := info.XDP(); xdp != nil {
+		kl.TargetObjID = xdp.Ifindex
+	} else if tcx := info.TCX(); tcx != nil {
+		kl.AttachType = fmt.Sprintf("%d", tcx.AttachType)
+		kl.TargetObjID = tcx.Ifindex
+	} else if cgroup := info.Cgroup(); cgroup != nil {
+		kl.AttachType = fmt.Sprintf("%d", cgroup.AttachType)
+	} else if netns := info.NetNs(); netns != nil {
+		kl.AttachType = fmt.Sprintf("%d", netns.AttachType)
+		kl.TargetObjID = netns.NetnsIno
+	} else if netkit := info.Netkit(); netkit != nil {
+		kl.AttachType = fmt.Sprintf("%d", netkit.AttachType)
+		kl.TargetObjID = netkit.Ifindex
+	}
+
+	return kl
+}
+
+// linkTypeString converts a link.Type to a human-readable string.
+func linkTypeString(t link.Type) string {
+	// These values come from include/uapi/linux/bpf.h (BPF_LINK_TYPE_*)
+	names := map[link.Type]string{
+		0:  "unspec",
+		1:  "raw_tracepoint",
+		2:  "tracing",
+		3:  "cgroup",
+		4:  "iter",
+		5:  "netns",
+		6:  "xdp",
+		7:  "perf_event",
+		8:  "kprobe_multi",
+		9:  "struct_ops",
+		10: "netfilter",
+		11: "tcx",
+		12: "uprobe_multi",
+		13: "netkit",
+	}
+	if name, ok := names[t]; ok {
+		return name
+	}
+	return fmt.Sprintf("unknown(%d)", t)
 }
 
 // ============================================================================
