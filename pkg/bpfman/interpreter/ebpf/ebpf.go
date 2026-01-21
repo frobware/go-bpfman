@@ -631,6 +631,18 @@ func (k *Kernel) DetachLink(linkPinPath string) error {
 	return nil
 }
 
+// RemovePin removes a pin or empty directory from bpffs.
+// Returns nil if the path does not exist.
+func (k *Kernel) RemovePin(path string) error {
+	if err := os.Remove(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil // Already gone
+		}
+		return fmt.Errorf("remove pin %s: %w", path, err)
+	}
+	return nil
+}
+
 // AttachTracepoint attaches a pinned program to a tracepoint.
 func (k *Kernel) AttachTracepoint(progPinPath, group, name, linkPinPath string) (*bpfman.AttachedLink, error) {
 	prog, err := ebpf.LoadPinnedProgram(progPinPath, nil)

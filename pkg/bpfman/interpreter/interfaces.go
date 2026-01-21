@@ -202,6 +202,13 @@ type LinkDetacher interface {
 	DetachLink(linkPinPath string) error
 }
 
+// PinRemover removes pins from bpffs.
+type PinRemover interface {
+	// RemovePin removes a pin or empty directory from bpffs.
+	// Returns nil if the path does not exist.
+	RemovePin(path string) error
+}
+
 // KernelOperations combines all kernel operations.
 type KernelOperations interface {
 	KernelSource
@@ -211,6 +218,7 @@ type KernelOperations interface {
 	ProgramAttacher
 	DispatcherAttacher
 	LinkDetacher
+	PinRemover
 }
 
 // ImageRef describes an OCI image to pull.

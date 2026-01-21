@@ -211,6 +211,10 @@ func (f *fakeKernel) AttachXDPExtension(dispatcherPinPath, objectPath, programNa
 	return link, nil
 }
 
+func (f *fakeKernel) RemovePin(path string) error {
+	return nil // Fake implementation - no-op
+}
+
 // newTestServer creates a server with fake kernel and real in-memory SQLite.
 func newTestServer(t *testing.T) *Server {
 	t.Helper()

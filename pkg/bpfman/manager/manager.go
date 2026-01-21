@@ -54,12 +54,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"time"
 
 	googleuuid "github.com/google/uuid"
 
+	"github.com/frobware/go-bpfman/pkg/bpfman/action"
 	"github.com/frobware/go-bpfman/pkg/bpfman/compute"
 	"github.com/frobware/go-bpfman/pkg/bpfman/dispatcher"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter"
@@ -203,9 +203,9 @@ func (m *Manager) Unload(ctx context.Context, kernelID uint32) error {
 	if listErr == nil {
 		for _, link := range links {
 			if link.PinPath != "" {
-				if err := os.Remove(link.PinPath); err != nil && !os.IsNotExist(err) {
+				if err := m.kernel.DetachLink(link.PinPath); err != nil {
 					m.logger.Warn("failed to unpin link", "uuid", link.UUID, "pin_path", link.PinPath, "error", err)
-				} else if err == nil {
+				} else {
 					m.logger.Info("unpinned link", "uuid", link.UUID, "pin_path", link.PinPath)
 				}
 			}
@@ -710,92 +710,105 @@ func (m *Manager) Detach(ctx context.Context, linkUUID string) error {
 
 // maybeCleanupDispatcher decrements the dispatcher's extension count and
 // cleans up the dispatcher if no extensions remain.
+//
+// Pattern: FETCH -> COMPUTE -> EXECUTE
 func (m *Manager) maybeCleanupDispatcher(ctx context.Context, details managed.LinkDetails) error {
-	var dispType dispatcher.DispatcherType
-	var nsid uint64
-	var ifindex uint32
-
-	switch d := details.(type) {
-	case managed.XDPDetails:
-		dispType = dispatcher.DispatcherTypeXDP
-		nsid = d.Nsid
-		ifindex = d.Ifindex
-	case managed.TCDetails:
-		switch d.Direction {
-		case "ingress":
-			dispType = dispatcher.DispatcherTypeTCIngress
-		case "egress":
-			dispType = dispatcher.DispatcherTypeTCEgress
-		default:
-			return fmt.Errorf("unknown TC direction: %s", d.Direction)
-		}
-		nsid = d.Nsid
-		ifindex = d.Ifindex
-	default:
+	// FETCH: Extract dispatcher key from link details
+	dispType, nsid, ifindex, err := extractDispatcherKey(details)
+	if err != nil {
+		return err
+	}
+	if dispType == "" {
 		// Not a dispatcher-based link type
 		return nil
 	}
 
-	// Get dispatcher state
+	// FETCH: Get dispatcher state
 	dispState, err := m.store.GetDispatcher(ctx, string(dispType), nsid, ifindex)
 	if err != nil {
 		return fmt.Errorf("get dispatcher: %w", err)
 	}
 
-	// Decrement extension count
-	if dispState.NumExtensions > 0 {
-		dispState.NumExtensions--
-	}
+	// COMPUTE: Determine actions based on extension count
+	actions := computeDispatcherCleanupActions(dispState)
 
-	// If still has extensions, just save updated count
-	if dispState.NumExtensions > 0 {
-		if err := m.store.SaveDispatcher(ctx, dispState); err != nil {
-			return fmt.Errorf("save dispatcher: %w", err)
-		}
+	// Log before executing
+	if len(actions) > 1 {
+		m.logger.Info("removing empty dispatcher",
+			"type", dispState.Type,
+			"nsid", dispState.Nsid,
+			"ifindex", dispState.Ifindex)
+	} else {
 		m.logger.Debug("decremented dispatcher extension count",
 			"type", dispType,
 			"nsid", nsid,
 			"ifindex", ifindex,
-			"remaining", dispState.NumExtensions)
-		return nil
+			"remaining", dispState.NumExtensions-1)
 	}
 
-	// No extensions left - clean up dispatcher
-	return m.cleanupDispatcher(ctx, dispState)
-}
-
-// cleanupDispatcher removes a dispatcher's pins and deletes it from the store.
-func (m *Manager) cleanupDispatcher(ctx context.Context, state managed.DispatcherState) error {
-	m.logger.Info("removing empty dispatcher",
-		"type", state.Type,
-		"nsid", state.Nsid,
-		"ifindex", state.Ifindex)
-
-	// Remove dispatcher link pin (stable link outside revision dir)
-	if err := os.Remove(state.LinkPinPath); err != nil && !os.IsNotExist(err) {
-		m.logger.Warn("failed to remove dispatcher link pin", "path", state.LinkPinPath, "error", err)
+	// EXECUTE: Run computed actions
+	if err := m.executor.ExecuteAll(ctx, actions); err != nil {
+		return fmt.Errorf("execute dispatcher cleanup: %w", err)
 	}
 
-	// Remove dispatcher program pin
-	if err := os.Remove(state.ProgPinPath); err != nil && !os.IsNotExist(err) {
-		m.logger.Warn("failed to remove dispatcher prog pin", "path", state.ProgPinPath, "error", err)
+	if len(actions) > 1 {
+		m.logger.Info("removed dispatcher",
+			"type", dispState.Type,
+			"nsid", dispState.Nsid,
+			"ifindex", dispState.Ifindex)
 	}
-
-	// Remove revision directory (should be empty now)
-	revisionDir := filepath.Dir(state.ProgPinPath)
-	if err := os.Remove(revisionDir); err != nil && !os.IsNotExist(err) {
-		m.logger.Warn("failed to remove revision directory", "path", revisionDir, "error", err)
-	}
-
-	// Delete from store
-	if err := m.store.DeleteDispatcher(ctx, string(state.Type), state.Nsid, state.Ifindex); err != nil {
-		return fmt.Errorf("delete dispatcher from store: %w", err)
-	}
-
-	m.logger.Info("removed dispatcher",
-		"type", state.Type,
-		"nsid", state.Nsid,
-		"ifindex", state.Ifindex)
 
 	return nil
+}
+
+// extractDispatcherKey extracts dispatcher identification from link details.
+// Returns empty dispType if the link type doesn't use dispatchers.
+func extractDispatcherKey(details managed.LinkDetails) (dispType dispatcher.DispatcherType, nsid uint64, ifindex uint32, err error) {
+	switch d := details.(type) {
+	case managed.XDPDetails:
+		return dispatcher.DispatcherTypeXDP, d.Nsid, d.Ifindex, nil
+	case managed.TCDetails:
+		switch d.Direction {
+		case "ingress":
+			return dispatcher.DispatcherTypeTCIngress, d.Nsid, d.Ifindex, nil
+		case "egress":
+			return dispatcher.DispatcherTypeTCEgress, d.Nsid, d.Ifindex, nil
+		default:
+			return "", 0, 0, fmt.Errorf("unknown TC direction: %s", d.Direction)
+		}
+	default:
+		return "", 0, 0, nil
+	}
+}
+
+// computeDispatcherCleanupActions is a pure function that computes the actions
+// needed to update or remove a dispatcher after an extension is detached.
+func computeDispatcherCleanupActions(state managed.DispatcherState) []action.Action {
+	// Decrement extension count
+	newCount := state.NumExtensions
+	if newCount > 0 {
+		newCount--
+	}
+
+	// If still has extensions, just save updated count
+	if newCount > 0 {
+		updatedState := state
+		updatedState.NumExtensions = newCount
+		return []action.Action{
+			action.SaveDispatcher{State: updatedState},
+		}
+	}
+
+	// No extensions left - remove dispatcher completely
+	revisionDir := filepath.Dir(state.ProgPinPath)
+	return []action.Action{
+		action.RemovePin{Path: state.LinkPinPath},
+		action.RemovePin{Path: state.ProgPinPath},
+		action.RemovePin{Path: revisionDir},
+		action.DeleteDispatcher{
+			Type:    string(state.Type),
+			Nsid:    state.Nsid,
+			Ifindex: state.Ifindex,
+		},
+	}
 }

@@ -9,12 +9,12 @@ import (
 
 // Executor interprets and executes actions.
 type Executor struct {
-	store  ProgramStore
+	store  Store
 	kernel KernelOperations
 }
 
 // NewExecutor creates a new action executor.
-func NewExecutor(store ProgramStore, kernel KernelOperations) *Executor {
+func NewExecutor(store Store, kernel KernelOperations) *Executor {
 	return &Executor{
 		store:  store,
 		kernel: kernel,
@@ -42,6 +42,15 @@ func (e *Executor) Execute(ctx context.Context, a action.Action) error {
 
 	case action.Sequence:
 		return e.ExecuteAll(ctx, a.Actions)
+
+	case action.SaveDispatcher:
+		return e.store.SaveDispatcher(ctx, a.State)
+
+	case action.DeleteDispatcher:
+		return e.store.DeleteDispatcher(ctx, a.Type, a.Nsid, a.Ifindex)
+
+	case action.RemovePin:
+		return e.kernel.RemovePin(a.Path)
 
 	default:
 		return fmt.Errorf("unknown action type: %T", a)

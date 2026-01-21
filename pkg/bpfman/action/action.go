@@ -56,3 +56,30 @@ type Sequence struct {
 }
 
 func (Sequence) isAction() {}
+
+// Dispatcher actions - operations on dispatcher state
+
+// SaveDispatcher creates or updates a dispatcher in the store.
+type SaveDispatcher struct {
+	State managed.DispatcherState
+}
+
+func (SaveDispatcher) isAction() {}
+
+// DeleteDispatcher removes a dispatcher from the store.
+type DeleteDispatcher struct {
+	Type    string
+	Nsid    uint64
+	Ifindex uint32
+}
+
+func (DeleteDispatcher) isAction() {}
+
+// Filesystem actions - operations on bpffs pins
+
+// RemovePin removes a pin from bpffs. Ignores "not exist" errors.
+type RemovePin struct {
+	Path string
+}
+
+func (RemovePin) isAction() {}
