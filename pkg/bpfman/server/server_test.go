@@ -156,6 +156,16 @@ func (f *fakeKernel) AttachTracepoint(progPinPath, group, name, linkPinPath stri
 	return link, nil
 }
 
+func (f *fakeKernel) DetachLink(linkPinPath string) error {
+	for id, link := range f.links {
+		if link.PinPath == linkPinPath {
+			delete(f.links, id)
+			return nil
+		}
+	}
+	return nil
+}
+
 // newTestServer creates a server with fake kernel and real in-memory SQLite.
 func newTestServer(t *testing.T) *Server {
 	t.Helper()

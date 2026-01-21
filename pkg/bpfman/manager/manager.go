@@ -471,3 +471,33 @@ func (m *Manager) ListLinksByProgram(ctx context.Context, programKernelID uint32
 func (m *Manager) GetLink(ctx context.Context, uuid string) (managed.Link, error) {
 	return m.store.GetLink(ctx, uuid)
 }
+
+// Detach removes a link by UUID.
+//
+// This detaches the link from the kernel (if pinned) and removes it from the
+// store. The associated program remains loaded.
+func (m *Manager) Detach(ctx context.Context, linkUUID string) error {
+	// Fetch link from store
+	link, err := m.store.GetLink(ctx, linkUUID)
+	if err != nil {
+		return fmt.Errorf("get link %s: %w", linkUUID, err)
+	}
+
+	// Detach from kernel if pinned
+	if link.PinPath != "" {
+		if err := m.kernel.DetachLink(link.PinPath); err != nil {
+			m.logger.Error("failed to detach link from kernel", "uuid", linkUUID, "pin_path", link.PinPath, "error", err)
+			// Continue to delete from store - the pin may already be gone
+		} else {
+			m.logger.Info("detached link", "uuid", linkUUID, "pin_path", link.PinPath)
+		}
+	}
+
+	// Delete from store
+	if err := m.store.DeleteLink(ctx, linkUUID); err != nil {
+		return fmt.Errorf("delete link %s from store: %w", linkUUID, err)
+	}
+
+	m.logger.Info("removed link", "uuid", linkUUID, "type", link.Type, "program_id", link.ProgramID)
+	return nil
+}

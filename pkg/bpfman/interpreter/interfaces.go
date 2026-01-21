@@ -132,6 +132,13 @@ type ProgramAttacher interface {
 	AttachTracepoint(progPinPath, group, name, linkPinPath string) (*bpfman.AttachedLink, error)
 }
 
+// LinkDetacher detaches links from hooks.
+type LinkDetacher interface {
+	// DetachLink removes a pinned link by deleting its pin from bpffs.
+	// This releases the kernel link if it was the last reference.
+	DetachLink(linkPinPath string) error
+}
+
 // KernelOperations combines all kernel operations.
 type KernelOperations interface {
 	KernelSource
@@ -139,6 +146,7 @@ type KernelOperations interface {
 	ProgramUnloader
 	PinInspector
 	ProgramAttacher
+	LinkDetacher
 }
 
 // ImageRef describes an OCI image to pull.

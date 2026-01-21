@@ -617,6 +617,18 @@ func (k *Kernel) Unpin(pinDir string) (int, error) {
 	return count, nil
 }
 
+// DetachLink removes a pinned link by deleting its pin from bpffs.
+// This releases the kernel link if it was the last reference.
+func (k *Kernel) DetachLink(linkPinPath string) error {
+	if err := os.Remove(linkPinPath); err != nil {
+		if os.IsNotExist(err) {
+			return nil // Already gone
+		}
+		return fmt.Errorf("remove link pin %s: %w", linkPinPath, err)
+	}
+	return nil
+}
+
 // AttachTracepoint attaches a pinned program to a tracepoint.
 func (k *Kernel) AttachTracepoint(progPinPath, group, name, linkPinPath string) (*bpfman.AttachedLink, error) {
 	prog, err := ebpf.LoadPinnedProgram(progPinPath, nil)
