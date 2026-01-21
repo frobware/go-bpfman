@@ -31,6 +31,10 @@ help:
 	@echo "  kind-create                 Create KIND cluster with bpffs mounted"
 	@echo "  kind-delete                 Delete KIND cluster"
 	@echo ""
+	@echo "Dispatchers:"
+	@echo "  dispatchers-build           Build XDP/TC dispatcher BPF programs"
+	@echo "  dispatchers-clean           Remove dispatcher build artifacts"
+	@echo ""
 	@echo "Combined:"
 	@echo "  kind-undeploy-all           Remove all components from KIND cluster"
 
@@ -47,7 +51,7 @@ build-all: bpfman-build
 
 docker-build-all: docker-build-bpfman docker-build-stats-reader docker-build-csi-sanity
 
-clean: bpfman-clean
+clean: bpfman-clean dispatchers-clean
 	$(RM) -r $(BIN_DIR)
 
 test:
@@ -56,7 +60,7 @@ test:
 # bpfman targets
 # Note: bpfman-proto is not a dependency here since pb files are committed.
 # Run 'make bpfman-proto' explicitly after modifying proto/bpfman.proto.
-bpfman-build:
+bpfman-build: dispatchers-build
 	go fmt ./...
 	go vet ./...
 	CGO_ENABLED=0 go build -mod=vendor -o $(BIN_DIR)/bpfman ./cmd/bpfman
@@ -156,6 +160,13 @@ kind-create:
 kind-delete:
 	kind delete cluster --name $(KIND_CLUSTER)
 
+# Dispatcher targets
+dispatchers-build:
+	$(MAKE) -C dispatchers
+
+dispatchers-clean:
+	$(MAKE) -C dispatchers clean
+
 # Combined targets
 kind-undeploy-all: stats-reader-delete bpfman-delete
 
@@ -172,7 +183,8 @@ kind-undeploy-all: stats-reader-delete bpfman-delete
 	bpfman-test-grpc \
 	build-all \
 	clean \
-	kind-undeploy-all \
+	dispatchers-build \
+	dispatchers-clean \
 	docker-build-all \
 	docker-build-bpfman \
 	docker-build-bpfman-builder \
@@ -183,6 +195,7 @@ kind-undeploy-all: stats-reader-delete bpfman-delete
 	help \
 	kind-create \
 	kind-delete \
+	kind-undeploy-all \
 	stats-reader-delete \
 	stats-reader-deploy \
 	stats-reader-logs \
