@@ -43,12 +43,12 @@ func (c *ListProgramsCmd) Run(cli *CLI) error {
 		return nil
 	}
 
-	output, err := json.MarshalIndent(managedProgs, "", "  ")
+	output, err := FormatProgramList(managedProgs, &c.OutputFlags)
 	if err != nil {
-		return fmt.Errorf("failed to marshal result: %w", err)
+		return err
 	}
 
-	fmt.Println(string(output))
+	fmt.Print(output)
 	return nil
 }
 

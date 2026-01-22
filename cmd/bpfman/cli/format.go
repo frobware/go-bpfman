@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"text/tabwriter"
 
 	"k8s.io/client-go/util/jsonpath"
 
@@ -189,6 +190,79 @@ func formatProgramInfoTable(info manager.ProgramInfo) string {
 		b.WriteString("  (none)\n")
 	}
 
+	return b.String()
+}
+
+// FormatProgramList formats a list of ManagedProgram according to the specified output flags.
+func FormatProgramList(programs []manager.ManagedProgram, flags *OutputFlags) (string, error) {
+	switch flags.Format() {
+	case OutputFormatJSON:
+		return formatProgramListJSON(programs)
+	case OutputFormatTable:
+		return formatProgramListTable(programs), nil
+	case OutputFormatJSONPath:
+		return formatProgramListJSONPath(programs, flags.JSONPathExpr())
+	default:
+		return formatProgramListTable(programs), nil
+	}
+}
+
+func formatProgramListJSON(programs []manager.ManagedProgram) (string, error) {
+	output, err := json.MarshalIndent(programs, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal result: %w", err)
+	}
+	return string(output) + "\n", nil
+}
+
+func formatProgramListJSONPath(programs []manager.ManagedProgram, expr string) (string, error) {
+	jp := jsonpath.New("output")
+	if err := jp.Parse(expr); err != nil {
+		return "", fmt.Errorf("invalid jsonpath expression %q: %w", expr, err)
+	}
+
+	jsonBytes, err := json.Marshal(programs)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal: %w", err)
+	}
+
+	var data interface{}
+	if err := json.Unmarshal(jsonBytes, &data); err != nil {
+		return "", fmt.Errorf("failed to unmarshal: %w", err)
+	}
+
+	var buf bytes.Buffer
+	if err := jp.Execute(&buf, data); err != nil {
+		return "", fmt.Errorf("jsonpath execution failed: %w", err)
+	}
+
+	return buf.String() + "\n", nil
+}
+
+func formatProgramListTable(programs []manager.ManagedProgram) string {
+	var b strings.Builder
+	w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
+
+	fmt.Fprintln(w, "KERNEL ID\tTYPE\tNAME\tSOURCE")
+
+	for _, p := range programs {
+		id := p.KernelProgram.ID
+		name := p.KernelProgram.Name
+		progType := p.KernelProgram.ProgramType
+		source := ""
+
+		// Prefer full name from metadata over kernel-truncated name
+		if p.Metadata != nil {
+			if p.Metadata.LoadSpec.ProgramName != "" {
+				name = p.Metadata.LoadSpec.ProgramName
+			}
+			source = p.Metadata.LoadSpec.ObjectPath
+		}
+
+		fmt.Fprintf(w, "%d\t%s\t%s\t%s\n", id, progType, name, source)
+	}
+
+	w.Flush()
 	return b.String()
 }
 
