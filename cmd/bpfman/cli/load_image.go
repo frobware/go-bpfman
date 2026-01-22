@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
-	"time"
 
 	"github.com/frobware/go-bpfman/pkg/bpfman"
 	"github.com/frobware/go-bpfman/pkg/bpfman/config"
@@ -186,15 +184,13 @@ func (c *LoadImageCmd) Run(cli *CLI) error {
 			return fmt.Errorf("invalid program type %q for program %q", spec.Type, spec.Name)
 		}
 
-		// Generate a unique pin directory name using timestamp
-		pinDir := filepath.Join(cli.RuntimeDirs().FS, fmt.Sprintf("%d", time.Now().UnixNano()))
-
 		// Build load spec
+		// PinPath is the bpffs root; actual paths are computed from kernel ID
 		loadSpec := managed.LoadSpec{
 			ObjectPath:  pulledImage.ObjectPath,
 			ProgramName: spec.Name,
 			ProgramType: progType,
-			PinPath:     pinDir,
+			PinPath:     cli.RuntimeDirs().FS,
 			GlobalData:  globalData,
 			ImageSource: &managed.ImageSource{
 				URL:        c.ImageURL,
