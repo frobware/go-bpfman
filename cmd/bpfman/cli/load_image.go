@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/frobware/go-bpfman/pkg/bpfman"
+	"github.com/frobware/go-bpfman/pkg/bpfman/client"
 	"github.com/frobware/go-bpfman/pkg/bpfman/config"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/image/cosign"
@@ -35,7 +36,6 @@ type LoadImageCmd struct {
 
 // Run executes the load image command.
 func (c *LoadImageCmd) Run(cli *CLI) error {
-	// Set up logger
 	logger, err := cli.Logger()
 	if err != nil {
 		return fmt.Errorf("failed to create logger: %w", err)
@@ -47,7 +47,7 @@ func (c *LoadImageCmd) Run(cli *CLI) error {
 		"pull_policy", c.PullPolicy.Value,
 	)
 
-	// Load configuration (use CLI's config, not the deprecated --config flag)
+	// Load configuration
 	cfg, err := cli.LoadConfig()
 	if err != nil {
 		logger.Warn("failed to load config file, using defaults", "path", cli.Config, "error", err)
@@ -62,18 +62,13 @@ func (c *LoadImageCmd) Run(cli *CLI) error {
 		cfg.Signing.VerifyEnabled = *c.VerifySignatures
 	}
 
-	logger.Debug("signing configuration",
-		"verify_enabled", cfg.Signing.VerifyEnabled,
-		"allow_unsigned", cfg.Signing.AllowUnsigned,
-	)
-
 	// Parse pull policy
 	pullPolicy, ok := managed.ParseImagePullPolicy(c.PullPolicy.Value)
 	if !ok {
 		return fmt.Errorf("invalid pull policy %q", c.PullPolicy.Value)
 	}
 
-	// Build signature verifier based on configuration
+	// Build signature verifier
 	var verifier interpreter.SignatureVerifier
 	if cfg.Signing.ShouldVerify() {
 		logger.Info("signature verification enabled")
@@ -86,7 +81,7 @@ func (c *LoadImageCmd) Run(cli *CLI) error {
 		verifier = noop.Verifier{}
 	}
 
-	// Create image puller options
+	// Create image puller
 	pullerOpts := []oci.Option{
 		oci.WithLogger(logger),
 		oci.WithVerifier(verifier),
@@ -98,6 +93,23 @@ func (c *LoadImageCmd) Run(cli *CLI) error {
 	puller, err := oci.NewPuller(pullerOpts...)
 	if err != nil {
 		return fmt.Errorf("failed to create image puller: %w", err)
+	}
+
+	// Get client and configure with puller
+	b, err := cli.Client()
+	if err != nil {
+		return fmt.Errorf("failed to create client: %w", err)
+	}
+	defer b.Close()
+
+	// Configure the image puller on the client
+	switch cl := b.(type) {
+	case *client.EphemeralClient:
+		cl.SetImagePuller(puller)
+	case *client.RemoteClient:
+		cl.SetImagePuller(puller)
+	case *client.LocalClient:
+		cl.SetImagePuller(puller)
 	}
 
 	// Build auth config
@@ -117,11 +129,11 @@ func (c *LoadImageCmd) Run(cli *CLI) error {
 		Auth:       authConfig,
 	}
 
-	// Pull the image
+	// Pull the image first to validate programs
 	ctx := context.Background()
 	logger.Info("pulling image", "url", c.ImageURL)
 
-	pulledImage, err := puller.Pull(ctx, ref)
+	pulledImage, err := b.PullImage(ctx, ref)
 	if err != nil {
 		return fmt.Errorf("failed to pull image: %w", err)
 	}
@@ -135,7 +147,6 @@ func (c *LoadImageCmd) Run(cli *CLI) error {
 	// Validate requested programs exist in the image
 	for _, spec := range c.Programs {
 		if len(pulledImage.Programs) > 0 {
-			// Image has program metadata - validate against it
 			expectedType, exists := pulledImage.Programs[spec.Name]
 			if !exists {
 				available := make([]string, 0, len(pulledImage.Programs))
@@ -145,7 +156,6 @@ func (c *LoadImageCmd) Run(cli *CLI) error {
 				return fmt.Errorf("program %q not found in image; available programs: %v", spec.Name, available)
 			}
 
-			// Warn if type mismatch (but don't fail - image metadata might be incomplete)
 			if expectedType != "" && expectedType != spec.Type.String() {
 				logger.Warn("program type mismatch",
 					"program", spec.Name,
@@ -156,20 +166,13 @@ func (c *LoadImageCmd) Run(cli *CLI) error {
 		}
 	}
 
-	// Set up manager
-	mgr, cleanup, err := manager.Setup(cli.RuntimeDirs(), logger)
-	if err != nil {
-		return fmt.Errorf("failed to set up manager: %w", err)
-	}
-	defer cleanup()
-
 	// Convert global data
 	var globalData map[string][]byte
 	if len(c.GlobalData) > 0 {
 		globalData = GlobalDataMap(c.GlobalData)
 	}
 
-	// Load each program
+	// Load each program via client
 	results := make([]bpfman.ManagedProgram, 0, len(c.Programs))
 
 	for _, spec := range c.Programs {
@@ -178,12 +181,10 @@ func (c *LoadImageCmd) Run(cli *CLI) error {
 			"type", spec.Type,
 		)
 
-		// Build load spec
-		// PinPath is the bpffs root; actual paths are computed from kernel ID
 		loadSpec := managed.LoadSpec{
 			ObjectPath:  pulledImage.ObjectPath,
 			ProgramName: spec.Name,
-			ProgramType: spec.Type, // Already validated at parse time
+			ProgramType: spec.Type,
 			PinPath:     cli.RuntimeDirs().FS,
 			GlobalData:  globalData,
 			ImageSource: &managed.ImageSource{
@@ -197,10 +198,8 @@ func (c *LoadImageCmd) Run(cli *CLI) error {
 			UserMetadata: MetadataMap(c.Metadata),
 		}
 
-		// Load through manager (transactional)
-		loaded, err := mgr.Load(ctx, loadSpec, opts)
+		loaded, err := b.Load(ctx, loadSpec, opts)
 		if err != nil {
-			// If we've already loaded some programs, report partial success
 			if len(results) > 0 {
 				logger.Error("partial load failure",
 					"loaded", len(results),

@@ -118,7 +118,9 @@ func (c *CLI) LoggerFromConfig() (*slog.Logger, error) {
 
 // Client returns a client appropriate for the configured transport.
 // If --remote is set, returns a RemoteClient connected via gRPC.
-// Otherwise, returns a LocalClient with direct manager access.
+// Otherwise, returns an EphemeralClient that spawns an in-process gRPC
+// server and connects to it, ensuring all operations use the same code
+// path as remote clients.
 // The returned client must be closed when no longer needed.
 func (c *CLI) Client() (client.Client, error) {
 	logger, err := c.Logger()
@@ -130,5 +132,5 @@ func (c *CLI) Client() (client.Client, error) {
 		return client.NewRemote(c.Remote, logger)
 	}
 
-	return client.NewLocal(c.RuntimeDirs(), logger)
+	return client.NewEphemeral(c.RuntimeDirs(), logger)
 }

@@ -12,6 +12,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/frobware/go-bpfman/pkg/bpfman"
+	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter"
 	"github.com/frobware/go-bpfman/pkg/bpfman/managed"
 	"github.com/frobware/go-bpfman/pkg/bpfman/manager"
 	pb "github.com/frobware/go-bpfman/pkg/bpfman/server/pb"
@@ -20,9 +21,13 @@ import (
 // RemoteClient wraps a gRPC client to provide remote BPF operations.
 // It implements the Client interface by translating between domain
 // types and protobuf messages.
+//
+// For image operations, the pull happens locally and the load is sent
+// to the remote daemon.
 type RemoteClient struct {
 	client pb.BpfmanClient
 	conn   *grpc.ClientConn
+	puller interpreter.ImagePuller
 	logger *slog.Logger
 }
 
@@ -220,6 +225,54 @@ func (c *RemoteClient) ApplyGC(ctx context.Context, plan manager.GCPlan) (manage
 // Reconcile is a local-only operation.
 func (c *RemoteClient) Reconcile(ctx context.Context) error {
 	return fmt.Errorf("Reconcile: %w", ErrNotSupported)
+}
+
+// SetImagePuller configures the image puller for OCI operations.
+func (c *RemoteClient) SetImagePuller(p interpreter.ImagePuller) {
+	c.puller = p
+}
+
+// PullImage pulls an OCI image and extracts the bytecode.
+// Always executes locally, never forwarded to daemon.
+func (c *RemoteClient) PullImage(ctx context.Context, ref interpreter.ImageRef) (interpreter.PulledImage, error) {
+	if c.puller == nil {
+		return interpreter.PulledImage{}, fmt.Errorf("PullImage: %w (no image puller configured)", ErrNotSupported)
+	}
+	return c.puller.Pull(ctx, ref)
+}
+
+// LoadImage pulls an OCI image and loads the specified programs.
+// Pull happens locally, load is sent to the remote daemon.
+func (c *RemoteClient) LoadImage(ctx context.Context, ref interpreter.ImageRef, programs []managed.LoadSpec, opts LoadImageOpts) ([]bpfman.ManagedProgram, error) {
+	// Step 1: Pull image locally
+	pulled, err := c.PullImage(ctx, ref)
+	if err != nil {
+		return nil, fmt.Errorf("pull image: %w", err)
+	}
+
+	// Step 2: Load each program via gRPC to remote daemon
+	results := make([]bpfman.ManagedProgram, 0, len(programs))
+	for _, spec := range programs {
+		// Override ObjectPath with pulled location
+		spec.ObjectPath = pulled.ObjectPath
+		spec.ImageSource = &managed.ImageSource{
+			URL:        ref.URL,
+			Digest:     pulled.Digest,
+			PullPolicy: ref.PullPolicy,
+		}
+
+		loadOpts := manager.LoadOpts{
+			UserMetadata: opts.UserMetadata,
+		}
+
+		loaded, err := c.Load(ctx, spec, loadOpts)
+		if err != nil {
+			return results, fmt.Errorf("load program %s: %w", spec.ProgramName, err)
+		}
+		results = append(results, loaded)
+	}
+
+	return results, nil
 }
 
 // translateGRPCError converts gRPC errors to more user-friendly errors.

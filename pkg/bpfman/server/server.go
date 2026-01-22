@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -262,14 +263,75 @@ func (s *Server) Unload(ctx context.Context, req *pb.UnloadRequest) (*pb.UnloadR
 
 // Attach implements the Attach RPC method.
 func (s *Server) Attach(ctx context.Context, req *pb.AttachRequest) (*pb.AttachResponse, error) {
-	// Attachment is not yet implemented in the new architecture
-	return nil, status.Error(codes.Unimplemented, "Attach not yet implemented")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if req.Attach == nil {
+		return nil, status.Error(codes.InvalidArgument, "attach info is required")
+	}
+
+	switch info := req.Attach.Info.(type) {
+	case *pb.AttachInfo_TracepointAttachInfo:
+		return s.attachTracepoint(ctx, req.Id, info.TracepointAttachInfo)
+	case *pb.AttachInfo_XdpAttachInfo:
+		return s.attachXDP(ctx, req.Id, info.XdpAttachInfo)
+	default:
+		return nil, status.Errorf(codes.Unimplemented, "attach type %T not yet implemented", req.Attach.Info)
+	}
+}
+
+// attachTracepoint handles tracepoint attachment via the manager.
+func (s *Server) attachTracepoint(ctx context.Context, programID uint32, info *pb.TracepointAttachInfo) (*pb.AttachResponse, error) {
+	// Parse "group/name" format from tracepoint field
+	parts := strings.SplitN(info.Tracepoint, "/", 2)
+	if len(parts) != 2 {
+		return nil, status.Errorf(codes.InvalidArgument, "tracepoint must be in 'group/name' format, got %q", info.Tracepoint)
+	}
+	group, name := parts[0], parts[1]
+
+	// Call manager with empty linkPinPath to auto-generate
+	summary, err := s.mgr.AttachTracepoint(ctx, programID, group, name, "")
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "attach tracepoint: %v", err)
+	}
+
+	return &pb.AttachResponse{
+		LinkId: summary.KernelLinkID,
+	}, nil
+}
+
+// attachXDP handles XDP attachment via the manager.
+func (s *Server) attachXDP(ctx context.Context, programID uint32, info *pb.XDPAttachInfo) (*pb.AttachResponse, error) {
+	// Get interface index from name
+	iface, err := net.InterfaceByName(info.Iface)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "interface %q: %v", info.Iface, err)
+	}
+
+	// Call manager with empty linkPinPath to auto-generate
+	summary, err := s.mgr.AttachXDP(ctx, programID, iface.Index, iface.Name, "")
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "attach XDP: %v", err)
+	}
+
+	return &pb.AttachResponse{
+		LinkId: summary.KernelLinkID,
+	}, nil
 }
 
 // Detach implements the Detach RPC method.
 func (s *Server) Detach(ctx context.Context, req *pb.DetachRequest) (*pb.DetachResponse, error) {
-	// Detachment is not yet implemented in the new architecture
-	return nil, status.Error(codes.Unimplemented, "Detach not yet implemented")
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if err := s.mgr.Detach(ctx, req.LinkId); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, status.Errorf(codes.NotFound, "link with ID %d not found", req.LinkId)
+		}
+		return nil, status.Errorf(codes.Internal, "detach link: %v", err)
+	}
+
+	return &pb.DetachResponse{}, nil
 }
 
 // List implements the List RPC method.

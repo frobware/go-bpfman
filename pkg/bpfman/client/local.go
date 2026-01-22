@@ -2,10 +2,12 @@ package client
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"github.com/frobware/go-bpfman/pkg/bpfman"
 	"github.com/frobware/go-bpfman/pkg/bpfman/config"
+	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter"
 	"github.com/frobware/go-bpfman/pkg/bpfman/managed"
 	"github.com/frobware/go-bpfman/pkg/bpfman/manager"
 )
@@ -14,6 +16,7 @@ import (
 // It implements the Client interface with direct access to the manager.
 type LocalClient struct {
 	mgr     *manager.Manager
+	puller  interpreter.ImagePuller
 	cleanup func()
 	logger  *slog.Logger
 }
@@ -104,4 +107,50 @@ func (c *LocalClient) ApplyGC(ctx context.Context, plan manager.GCPlan) (manager
 // Reconcile cleans up orphaned store entries.
 func (c *LocalClient) Reconcile(ctx context.Context) error {
 	return c.mgr.Reconcile(ctx)
+}
+
+// SetImagePuller configures the image puller for OCI operations.
+func (c *LocalClient) SetImagePuller(p interpreter.ImagePuller) {
+	c.puller = p
+}
+
+// PullImage pulls an OCI image and extracts the bytecode.
+func (c *LocalClient) PullImage(ctx context.Context, ref interpreter.ImageRef) (interpreter.PulledImage, error) {
+	if c.puller == nil {
+		return interpreter.PulledImage{}, fmt.Errorf("PullImage: %w (no image puller configured)", ErrNotSupported)
+	}
+	return c.puller.Pull(ctx, ref)
+}
+
+// LoadImage pulls an OCI image and loads the specified programs.
+func (c *LocalClient) LoadImage(ctx context.Context, ref interpreter.ImageRef, programs []managed.LoadSpec, opts LoadImageOpts) ([]bpfman.ManagedProgram, error) {
+	// Step 1: Pull image locally
+	pulled, err := c.PullImage(ctx, ref)
+	if err != nil {
+		return nil, fmt.Errorf("pull image: %w", err)
+	}
+
+	// Step 2: Load each program via manager
+	results := make([]bpfman.ManagedProgram, 0, len(programs))
+	for _, spec := range programs {
+		// Override ObjectPath with pulled location
+		spec.ObjectPath = pulled.ObjectPath
+		spec.ImageSource = &managed.ImageSource{
+			URL:        ref.URL,
+			Digest:     pulled.Digest,
+			PullPolicy: ref.PullPolicy,
+		}
+
+		loadOpts := manager.LoadOpts{
+			UserMetadata: opts.UserMetadata,
+		}
+
+		loaded, err := c.mgr.Load(ctx, spec, loadOpts)
+		if err != nil {
+			return results, fmt.Errorf("load program %s: %w", spec.ProgramName, err)
+		}
+		results = append(results, loaded)
+	}
+
+	return results, nil
 }
