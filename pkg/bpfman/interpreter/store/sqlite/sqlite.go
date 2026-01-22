@@ -926,10 +926,16 @@ func (s *Store) DeleteDispatcher(ctx context.Context, dispType string, nsid uint
 // IncrementRevision atomically increments the dispatcher revision.
 // Returns the new revision number. Wraps from MaxUint32 to 1.
 func (s *Store) IncrementRevision(ctx context.Context, dispType string, nsid uint64, ifindex uint32) (uint32, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
 	now := time.Now().Format(time.RFC3339)
 
 	// Use CASE to handle wrap-around at MaxUint32
-	result, err := s.db.ExecContext(ctx,
+	result, err := tx.ExecContext(ctx,
 		`UPDATE dispatchers
 		 SET revision = CASE WHEN revision = 4294967295 THEN 1 ELSE revision + 1 END,
 		     updated_at = ?
@@ -947,13 +953,17 @@ func (s *Store) IncrementRevision(ctx context.Context, dispType string, nsid uin
 		return 0, fmt.Errorf("dispatcher (%s, %d, %d): %w", dispType, nsid, ifindex, store.ErrNotFound)
 	}
 
-	// Fetch the new revision
+	// Fetch the new revision within the same transaction
 	var newRevision uint32
-	err = s.db.QueryRowContext(ctx,
+	err = tx.QueryRowContext(ctx,
 		`SELECT revision FROM dispatchers WHERE type = ? AND nsid = ? AND ifindex = ?`,
 		dispType, nsid, ifindex).Scan(&newRevision)
 	if err != nil {
 		return 0, fmt.Errorf("fetch new revision: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, err
 	}
 
 	s.logger.Debug("incremented dispatcher revision",
