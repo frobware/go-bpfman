@@ -2,9 +2,9 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
+	"github.com/frobware/go-bpfman/pkg/bpfman"
 	"github.com/frobware/go-bpfman/pkg/bpfman/config"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/image/cosign"
@@ -16,6 +16,7 @@ import (
 
 // LoadImageCmd loads BPF programs from an OCI container image.
 type LoadImageCmd struct {
+	OutputFlags
 	MetadataFlags
 	GlobalDataFlags
 
@@ -169,7 +170,7 @@ func (c *LoadImageCmd) Run(cli *CLI) error {
 	}
 
 	// Load each program
-	results := make([]managed.Loaded, 0, len(c.Programs))
+	results := make([]bpfman.ManagedProgram, 0, len(c.Programs))
 
 	for _, spec := range c.Programs {
 		logger.Info("loading program",
@@ -212,19 +213,19 @@ func (c *LoadImageCmd) Run(cli *CLI) error {
 
 		logger.Info("program loaded successfully",
 			"name", spec.Name,
-			"kernel_id", loaded.ID,
-			"pin_path", loaded.PinPath,
+			"kernel_id", loaded.Kernel.ID(),
+			"pin_path", loaded.Managed.PinPath(),
 		)
 
 		results = append(results, loaded)
 	}
 
 	// Output results
-	output, err := json.MarshalIndent(results, "", "  ")
+	output, err := FormatLoadedPrograms(results, &c.OutputFlags)
 	if err != nil {
-		return fmt.Errorf("failed to marshal results: %w", err)
+		return err
 	}
 
-	fmt.Println(string(output))
+	fmt.Print(output)
 	return nil
 }

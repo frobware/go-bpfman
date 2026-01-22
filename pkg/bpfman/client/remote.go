@@ -11,6 +11,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 
+	"github.com/frobware/go-bpfman/pkg/bpfman"
 	"github.com/frobware/go-bpfman/pkg/bpfman/managed"
 	"github.com/frobware/go-bpfman/pkg/bpfman/manager"
 	pb "github.com/frobware/go-bpfman/pkg/bpfman/server/pb"
@@ -65,7 +66,7 @@ func (c *RemoteClient) Close() error {
 }
 
 // Load loads a BPF program via gRPC.
-func (c *RemoteClient) Load(ctx context.Context, spec managed.LoadSpec, opts manager.LoadOpts) (managed.Loaded, error) {
+func (c *RemoteClient) Load(ctx context.Context, spec managed.LoadSpec, opts manager.LoadOpts) (bpfman.ManagedProgram, error) {
 	req := &pb.LoadRequest{
 		Bytecode: &pb.BytecodeLocation{
 			Location: &pb.BytecodeLocation_File{File: spec.ObjectPath},
@@ -80,14 +81,14 @@ func (c *RemoteClient) Load(ctx context.Context, spec managed.LoadSpec, opts man
 
 	resp, err := c.client.Load(ctx, req)
 	if err != nil {
-		return managed.Loaded{}, translateGRPCError(err)
+		return bpfman.ManagedProgram{}, translateGRPCError(err)
 	}
 
 	if len(resp.Programs) == 0 {
-		return managed.Loaded{}, fmt.Errorf("no programs returned from load")
+		return bpfman.ManagedProgram{}, fmt.Errorf("no programs returned from load")
 	}
 
-	return protoLoadResponseToLoaded(resp.Programs[0]), nil
+	return protoLoadResponseToManagedProgram(resp.Programs[0]), nil
 }
 
 // Unload removes a BPF program via gRPC.

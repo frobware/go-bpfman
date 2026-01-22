@@ -114,7 +114,7 @@ type KernelSource interface {
 
 // ProgramLoader loads BPF programs into the kernel.
 type ProgramLoader interface {
-	Load(ctx context.Context, spec managed.LoadSpec) (managed.Loaded, error)
+	Load(ctx context.Context, spec managed.LoadSpec) (bpfman.ManagedProgram, error)
 }
 
 // ProgramUnloader removes BPF programs from the kernel.

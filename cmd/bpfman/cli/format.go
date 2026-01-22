@@ -9,6 +9,7 @@ import (
 
 	"k8s.io/client-go/util/jsonpath"
 
+	"github.com/frobware/go-bpfman/pkg/bpfman"
 	"github.com/frobware/go-bpfman/pkg/bpfman/managed"
 	"github.com/frobware/go-bpfman/pkg/bpfman/manager"
 )
@@ -297,4 +298,108 @@ func formatAttachDetails(details managed.LinkDetails) string {
 	default:
 		return ""
 	}
+}
+
+// FormatLoadedPrograms formats a list of loaded ManagedProgram according to the specified output flags.
+func FormatLoadedPrograms(programs []bpfman.ManagedProgram, flags *OutputFlags) (string, error) {
+	switch flags.Format() {
+	case OutputFormatJSON:
+		return formatLoadedProgramsJSON(programs)
+	case OutputFormatTable:
+		return formatLoadedProgramsTable(programs), nil
+	case OutputFormatJSONPath:
+		return formatLoadedProgramsJSONPath(programs, flags.JSONPathExpr())
+	default:
+		return formatLoadedProgramsTable(programs), nil
+	}
+}
+
+func formatLoadedProgramsJSON(programs []bpfman.ManagedProgram) (string, error) {
+	output, err := json.MarshalIndent(programs, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal result: %w", err)
+	}
+	return string(output) + "\n", nil
+}
+
+func formatLoadedProgramsJSONPath(programs []bpfman.ManagedProgram, expr string) (string, error) {
+	jp := jsonpath.New("output")
+	if err := jp.Parse(expr); err != nil {
+		return "", fmt.Errorf("invalid jsonpath expression %q: %w", expr, err)
+	}
+
+	jsonBytes, err := json.Marshal(programs)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal: %w", err)
+	}
+
+	var data interface{}
+	if err := json.Unmarshal(jsonBytes, &data); err != nil {
+		return "", fmt.Errorf("failed to unmarshal: %w", err)
+	}
+
+	var buf bytes.Buffer
+	if err := jp.Execute(&buf, data); err != nil {
+		return "", fmt.Errorf("jsonpath execution failed: %w", err)
+	}
+
+	return buf.String() + "\n", nil
+}
+
+func formatLoadedProgramsTable(programs []bpfman.ManagedProgram) string {
+	var b strings.Builder
+
+	for i, p := range programs {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+
+		// Bpfman State section
+		b.WriteString(" Bpfman State\n")
+		bw := tabwriter.NewWriter(&b, 0, 0, 1, ' ', 0)
+		fmt.Fprintf(bw, " BPF Function:\t%s\n", p.Managed.Name())
+		fmt.Fprintf(bw, " Program Type:\t%s\n", p.Managed.ProgramType())
+		fmt.Fprintf(bw, " Path:\t%s\n", p.Managed.ObjectPath())
+		fmt.Fprintf(bw, " Global:\t%s\n", "TODO / FIX ME")
+		fmt.Fprintf(bw, " Metadata:\t%s\n", "TODO / FIX ME")
+		fmt.Fprintf(bw, " Map Pin Path:\t%s\n", p.Managed.PinDir())
+		fmt.Fprintf(bw, " Map Owner ID:\t%s\n", "TODO / FIX ME")
+		if mapIDs := p.Kernel.MapIDs(); len(mapIDs) > 0 {
+			fmt.Fprintf(bw, " Maps Used By:\t%v\n", mapIDs)
+		} else {
+			fmt.Fprintf(bw, " Maps Used By:\t%s\n", "None")
+		}
+		fmt.Fprintf(bw, " Links:\t%s\n", "TODO / FIX ME")
+		bw.Flush()
+
+		b.WriteString("\n")
+
+		// Kernel State section
+		b.WriteString(" Kernel State\n")
+		kw := tabwriter.NewWriter(&b, 0, 0, 1, ' ', 0)
+		fmt.Fprintf(kw, " Program ID:\t%d\n", p.Kernel.ID())
+		fmt.Fprintf(kw, " BPF Function:\t%s\n", p.Kernel.Name())
+		fmt.Fprintf(kw, " Kernel Type:\t%s\n", p.Kernel.Type())
+		if !p.Kernel.LoadedAt().IsZero() {
+			fmt.Fprintf(kw, " Loaded At:\t%s\n", p.Kernel.LoadedAt().Format("2006-01-02T15:04:05-0700"))
+		}
+		fmt.Fprintf(kw, " Tag:\t%s\n", p.Kernel.Tag())
+		fmt.Fprintf(kw, " GPL Compatible:\t%s\n", "TODO / FIX ME")
+		if mapIDs := p.Kernel.MapIDs(); len(mapIDs) > 0 {
+			fmt.Fprintf(kw, " Map IDs:\t%v\n", mapIDs)
+		}
+		if btfID := p.Kernel.BTFId(); btfID != 0 {
+			fmt.Fprintf(kw, " BTF ID:\t%d\n", btfID)
+		}
+		fmt.Fprintf(kw, " Size Translated (bytes):\t%d\n", p.Kernel.BytesXlated())
+		fmt.Fprintf(kw, " JITted:\t%t\n", p.Kernel.BytesJited() > 0)
+		fmt.Fprintf(kw, " Size JITted:\t%d\n", p.Kernel.BytesJited())
+		if memLocked := p.Kernel.MemoryLocked(); memLocked != 0 {
+			fmt.Fprintf(kw, " Kernel Allocated Memory (bytes):\t%d\n", memLocked)
+		}
+		fmt.Fprintf(kw, " Verified Instruction Count:\t%d\n", p.Kernel.VerifiedInstructions())
+		kw.Flush()
+	}
+
+	return b.String()
 }

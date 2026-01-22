@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/frobware/go-bpfman/pkg/bpfman"
 	"github.com/frobware/go-bpfman/pkg/bpfman/config"
 	"github.com/frobware/go-bpfman/pkg/bpfman/managed"
 	"github.com/frobware/go-bpfman/pkg/bpfman/manager"
@@ -41,7 +42,7 @@ func (c *LocalClient) Close() error {
 }
 
 // Load loads a BPF program.
-func (c *LocalClient) Load(ctx context.Context, spec managed.LoadSpec, opts manager.LoadOpts) (managed.Loaded, error) {
+func (c *LocalClient) Load(ctx context.Context, spec managed.LoadSpec, opts manager.LoadOpts) (bpfman.ManagedProgram, error) {
 	return c.mgr.Load(ctx, spec, opts)
 }
 

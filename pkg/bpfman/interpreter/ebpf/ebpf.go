@@ -185,11 +185,11 @@ func (k *Kernel) Links(ctx context.Context) iter.Seq2[kernel.Link, error] {
 //
 // spec.PinPath is the bpffs root (e.g., /run/bpfman/fs/).
 // On failure, all successfully pinned objects are cleaned up.
-func (k *Kernel) Load(ctx context.Context, spec managed.LoadSpec) (managed.Loaded, error) {
+func (k *Kernel) Load(ctx context.Context, spec managed.LoadSpec) (bpfman.ManagedProgram, error) {
 	// Load the collection from the object file
 	collSpec, err := ebpf.LoadCollectionSpec(spec.ObjectPath)
 	if err != nil {
-		return managed.Loaded{}, fmt.Errorf("failed to load collection spec: %w", err)
+		return bpfman.ManagedProgram{}, fmt.Errorf("failed to load collection spec: %w", err)
 	}
 
 	// Set global data if provided
@@ -202,24 +202,24 @@ func (k *Kernel) Load(ctx context.Context, spec managed.LoadSpec) (managed.Loade
 	// Load collection WITHOUT pinning - we'll pin after getting kernel ID
 	coll, err := ebpf.NewCollection(collSpec)
 	if err != nil {
-		return managed.Loaded{}, fmt.Errorf("failed to load collection: %w", err)
+		return bpfman.ManagedProgram{}, fmt.Errorf("failed to load collection: %w", err)
 	}
 	defer coll.Close()
 
 	// Find the requested program
 	prog, ok := coll.Programs[spec.ProgramName]
 	if !ok {
-		return managed.Loaded{}, fmt.Errorf("program %q not found in collection", spec.ProgramName)
+		return bpfman.ManagedProgram{}, fmt.Errorf("program %q not found in collection", spec.ProgramName)
 	}
 
 	// Get program info to obtain kernel ID
 	info, err := prog.Info()
 	if err != nil {
-		return managed.Loaded{}, fmt.Errorf("failed to get program info: %w", err)
+		return bpfman.ManagedProgram{}, fmt.Errorf("failed to get program info: %w", err)
 	}
 	progID, ok := info.ID()
 	if !ok {
-		return managed.Loaded{}, fmt.Errorf("failed to get program ID from kernel")
+		return bpfman.ManagedProgram{}, fmt.Errorf("failed to get program ID from kernel")
 	}
 	kernelID := uint32(progID)
 
@@ -234,7 +234,7 @@ func (k *Kernel) Load(ctx context.Context, spec managed.LoadSpec) (managed.Loade
 	// Pin program to <root>/prog_<kernel_id>
 	progPinPath := filepath.Join(spec.PinPath, fmt.Sprintf("prog_%d", kernelID))
 	if err := prog.Pin(progPinPath); err != nil {
-		return managed.Loaded{}, fmt.Errorf("failed to pin program: %w", err)
+		return bpfman.ManagedProgram{}, fmt.Errorf("failed to pin program: %w", err)
 	}
 	pinnedPaths = append(pinnedPaths, progPinPath)
 
@@ -242,7 +242,7 @@ func (k *Kernel) Load(ctx context.Context, spec managed.LoadSpec) (managed.Loade
 	mapsDir := filepath.Join(spec.PinPath, "maps", fmt.Sprintf("%d", kernelID))
 	if err := os.MkdirAll(mapsDir, 0755); err != nil {
 		cleanup()
-		return managed.Loaded{}, fmt.Errorf("failed to create maps directory: %w", err)
+		return bpfman.ManagedProgram{}, fmt.Errorf("failed to create maps directory: %w", err)
 	}
 
 	// Pin all maps (skip internal maps like .rodata, .bss, .data)
@@ -255,7 +255,7 @@ func (k *Kernel) Load(ctx context.Context, spec managed.LoadSpec) (managed.Loade
 			cleanup()
 			// Also remove the maps directory
 			os.Remove(mapsDir)
-			return managed.Loaded{}, fmt.Errorf("failed to pin map %q: %w", name, err)
+			return bpfman.ManagedProgram{}, fmt.Errorf("failed to pin map %q: %w", name, err)
 		}
 		pinnedPaths = append(pinnedPaths, mapPinPath)
 	}
@@ -264,20 +264,13 @@ func (k *Kernel) Load(ctx context.Context, spec managed.LoadSpec) (managed.Loade
 	if !ok {
 		cleanup()
 		os.Remove(mapsDir)
-		return managed.Loaded{}, fmt.Errorf("failed to get map IDs from kernel")
+		return bpfman.ManagedProgram{}, fmt.Errorf("failed to get map IDs from kernel")
 	}
-	mapIDs := make([]uint32, len(ebpfMapIDs))
-	for i, mid := range ebpfMapIDs {
-		mapIDs[i] = uint32(mid)
-	}
+	_ = ebpfMapIDs // MapIDs now accessed via KernelProgramInfo
 
-	return managed.Loaded{
-		ID:          kernelID,
-		Name:        spec.ProgramName,
-		ProgramType: spec.ProgramType,
-		PinPath:     progPinPath,
-		PinDir:      mapsDir,
-		MapIDs:      mapIDs,
+	return bpfman.ManagedProgram{
+		Managed: managed.NewProgramInfo(spec.ProgramName, spec.ProgramType, spec.ObjectPath, progPinPath, mapsDir),
+		Kernel:  NewProgramInfo(info),
 	}, nil
 }
 
@@ -614,11 +607,11 @@ func (k *Kernel) LoadSingle(ctx context.Context, objectPath, programName, pinDir
 
 	return &kernel.LoadResult{
 		Program: kernel.PinnedProgram{
-			ID:         loaded.ID,
-			Name:       loaded.Name,
-			Type:       loaded.ProgramType.String(),
-			PinnedPath: loaded.PinPath,
-			MapIDs:     loaded.MapIDs,
+			ID:         loaded.Kernel.ID(),
+			Name:       loaded.Managed.Name(),
+			Type:       loaded.Kernel.Type().String(),
+			PinnedPath: loaded.Managed.PinPath(),
+			MapIDs:     loaded.Kernel.MapIDs(),
 		},
 		Maps:   maps,
 		PinDir: pinDir,

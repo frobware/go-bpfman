@@ -211,21 +211,33 @@ func (s *Server) Load(ctx context.Context, req *pb.LoadRequest) (*pb.LoadRespons
 			return nil, status.Errorf(codes.Internal, "failed to load program %s: %v", info.Name, err)
 		}
 
+		// Format LoadedAt as RFC3339 if available
+		var loadedAt string
+		if !loaded.Kernel.LoadedAt().IsZero() {
+			loadedAt = loaded.Kernel.LoadedAt().Format(time.RFC3339)
+		}
+
 		resp.Programs = append(resp.Programs, &pb.LoadResponseInfo{
 			Info: &pb.ProgramInfo{
 				Name:       info.Name,
 				Bytecode:   req.Bytecode,
 				Metadata:   req.Metadata,
 				GlobalData: req.GlobalData,
-				MapPinPath: loaded.PinDir, // maps directory computed from kernel ID
+				MapPinPath: loaded.Managed.PinDir(), // maps directory computed from kernel ID
 			},
 			KernelInfo: &pb.KernelProgramInfo{
-				Id:            loaded.ID,
-				Name:          loaded.Name,
-				ProgramType:   uint32(loaded.ProgramType),
-				GplCompatible: true,
-				Jited:         true,
-				MapIds:        loaded.MapIDs,
+				Id:            loaded.Kernel.ID(),
+				Name:          loaded.Kernel.Name(),
+				ProgramType:   uint32(loaded.Kernel.Type()),
+				LoadedAt:      loadedAt,
+				GplCompatible: loaded.Kernel.GPLCompatible(),
+				Jited:         loaded.Kernel.BytesJited() > 0,
+				MapIds:        loaded.Kernel.MapIDs(),
+				BtfId:         loaded.Kernel.BTFId(),
+				BytesXlated:   loaded.Kernel.BytesXlated(),
+				BytesJited:    loaded.Kernel.BytesJited(),
+				BytesMemlock:  uint32(loaded.Kernel.MemoryLocked()),
+				VerifiedInsns: loaded.Kernel.VerifiedInstructions(),
 			},
 		})
 	}

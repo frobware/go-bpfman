@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 
+	"github.com/frobware/go-bpfman/pkg/bpfman"
 	"github.com/frobware/go-bpfman/pkg/bpfman/managed"
 	"github.com/frobware/go-bpfman/pkg/bpfman/manager"
 )
@@ -22,7 +23,7 @@ type Client interface {
 	io.Closer
 
 	// Program operations
-	Load(ctx context.Context, spec managed.LoadSpec, opts manager.LoadOpts) (managed.Loaded, error)
+	Load(ctx context.Context, spec managed.LoadSpec, opts manager.LoadOpts) (bpfman.ManagedProgram, error)
 	Unload(ctx context.Context, kernelID uint32) error
 	List(ctx context.Context) ([]manager.ManagedProgram, error)
 	Get(ctx context.Context, kernelID uint32) (manager.ProgramInfo, error)

@@ -2,9 +2,9 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
+	"github.com/frobware/go-bpfman/pkg/bpfman"
 	"github.com/frobware/go-bpfman/pkg/bpfman/managed"
 	"github.com/frobware/go-bpfman/pkg/bpfman/manager"
 )
@@ -17,6 +17,7 @@ type LoadCmd struct {
 
 // LoadFileCmd loads a BPF program from a local object file.
 type LoadFileCmd struct {
+	OutputFlags
 	MetadataFlags
 	GlobalDataFlags
 
@@ -45,7 +46,7 @@ func (c *LoadFileCmd) Run(cli *CLI) error {
 	}
 
 	ctx := context.Background()
-	results := make([]managed.Loaded, 0, len(c.Programs))
+	results := make([]bpfman.ManagedProgram, 0, len(c.Programs))
 
 	for _, prog := range c.Programs {
 		// Build load spec and options
@@ -69,11 +70,11 @@ func (c *LoadFileCmd) Run(cli *CLI) error {
 		results = append(results, loaded)
 	}
 
-	output, err := json.MarshalIndent(results, "", "  ")
+	output, err := FormatLoadedPrograms(results, &c.OutputFlags)
 	if err != nil {
-		return fmt.Errorf("failed to marshal result: %w", err)
+		return err
 	}
 
-	fmt.Println(string(output))
+	fmt.Print(output)
 	return nil
 }

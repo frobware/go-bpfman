@@ -42,6 +42,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/frobware/go-bpfman/pkg/bpfman"
 	"github.com/frobware/go-bpfman/pkg/bpfman/action"
 	"github.com/frobware/go-bpfman/pkg/bpfman/compute"
 	"github.com/frobware/go-bpfman/pkg/bpfman/config"
@@ -99,25 +100,25 @@ type LoadOpts struct {
 // On failure, previously completed steps are rolled back:
 //   - If kernel load fails: nothing to clean up
 //   - If DB persist fails: unpin program and maps from kernel
-func (m *Manager) Load(ctx context.Context, spec managed.LoadSpec, opts LoadOpts) (managed.Loaded, error) {
+func (m *Manager) Load(ctx context.Context, spec managed.LoadSpec, opts LoadOpts) (bpfman.ManagedProgram, error) {
 	now := time.Now()
 
 	// Phase 1: Load into kernel and pin to bpffs
 	// Pin paths are computed from kernel ID by the kernel layer
 	loaded, err := m.kernel.Load(ctx, spec)
 	if err != nil {
-		return managed.Loaded{}, fmt.Errorf("load program %s: %w", spec.ProgramName, err)
+		return bpfman.ManagedProgram{}, fmt.Errorf("load program %s: %w", spec.ProgramName, err)
 	}
 	m.logger.Info("loaded program",
 		"name", spec.ProgramName,
-		"kernel_id", loaded.ID,
-		"prog_pin", loaded.PinPath,
-		"maps_dir", loaded.PinDir)
+		"kernel_id", loaded.Kernel.ID(),
+		"prog_pin", loaded.Managed.PinPath(),
+		"maps_dir", loaded.Managed.PinDir())
 
 	// Phase 2: Persist metadata to DB (single transaction)
 	// Store the actual pin paths (not the root) for later use
 	storedSpec := spec
-	storedSpec.PinPath = loaded.PinDir // Store maps directory for CSI/unload
+	storedSpec.PinPath = loaded.Managed.PinDir() // Store maps directory for CSI/unload
 	metadata := managed.Program{
 		LoadSpec:     storedSpec,
 		UserMetadata: opts.UserMetadata,
@@ -126,17 +127,17 @@ func (m *Manager) Load(ctx context.Context, spec managed.LoadSpec, opts LoadOpts
 		CreatedAt:    now,
 	}
 
-	if err := m.store.Save(ctx, loaded.ID, metadata); err != nil {
-		m.logger.Error("persist failed, rolling back", "kernel_id", loaded.ID, "error", err)
+	if err := m.store.Save(ctx, loaded.Kernel.ID(), metadata); err != nil {
+		m.logger.Error("persist failed, rolling back", "kernel_id", loaded.Kernel.ID(), "error", err)
 		// Cleanup kernel state using the upstream layout
-		if rbErr := m.kernel.UnloadProgram(ctx, loaded.PinPath, loaded.PinDir); rbErr != nil {
-			m.logger.Error("rollback failed", "kernel_id", loaded.ID, "error", rbErr)
-			return managed.Loaded{}, errors.Join(
+		if rbErr := m.kernel.UnloadProgram(ctx, loaded.Managed.PinPath(), loaded.Managed.PinDir()); rbErr != nil {
+			m.logger.Error("rollback failed", "kernel_id", loaded.Kernel.ID(), "error", rbErr)
+			return bpfman.ManagedProgram{}, errors.Join(
 				fmt.Errorf("persist metadata: %w", err),
 				fmt.Errorf("rollback failed: %w", rbErr),
 			)
 		}
-		return managed.Loaded{}, fmt.Errorf("persist metadata: %w", err)
+		return bpfman.ManagedProgram{}, fmt.Errorf("persist metadata: %w", err)
 	}
 
 	return loaded, nil

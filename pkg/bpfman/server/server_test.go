@@ -23,6 +23,7 @@ import (
 	"os"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -51,35 +52,91 @@ func testLogger() *slog.Logger {
 // It simulates kernel BPF operations without actual syscalls.
 type fakeKernel struct {
 	nextID   atomic.Uint32
-	programs map[uint32]managed.Loaded
+	programs map[uint32]fakeProgram
 	links    map[uint32]*bpfman.AttachedLink
 }
 
+// fakeProgram stores program data for the fake kernel.
+type fakeProgram struct {
+	id          uint32
+	name        string
+	programType bpfman.ProgramType
+	pinPath     string
+	pinDir      string
+}
+
+// fakeManagedInfo implements bpfman.ManagedProgramInfo for testing.
+type fakeManagedInfo struct {
+	name        string
+	programType bpfman.ProgramType
+	objectPath  string
+	pinPath     string
+	pinDir      string
+}
+
+func (f *fakeManagedInfo) Name() string                    { return f.name }
+func (f *fakeManagedInfo) ProgramType() bpfman.ProgramType { return f.programType }
+func (f *fakeManagedInfo) ObjectPath() string              { return f.objectPath }
+func (f *fakeManagedInfo) PinPath() string                 { return f.pinPath }
+func (f *fakeManagedInfo) PinDir() string                  { return f.pinDir }
+
+// fakeKernelInfo implements bpfman.KernelProgramInfo for testing.
+type fakeKernelInfo struct {
+	id          uint32
+	name        string
+	programType bpfman.ProgramType
+}
+
+func (f *fakeKernelInfo) ID() uint32                   { return f.id }
+func (f *fakeKernelInfo) Name() string                 { return f.name }
+func (f *fakeKernelInfo) Type() bpfman.ProgramType     { return f.programType }
+func (f *fakeKernelInfo) Tag() string                  { return "" }
+func (f *fakeKernelInfo) MapIDs() []uint32             { return nil }
+func (f *fakeKernelInfo) BTFId() uint32                { return 0 }
+func (f *fakeKernelInfo) BytesXlated() uint32          { return 0 }
+func (f *fakeKernelInfo) BytesJited() uint32           { return 0 }
+func (f *fakeKernelInfo) VerifiedInstructions() uint32 { return 0 }
+func (f *fakeKernelInfo) LoadedAt() time.Time          { return time.Time{} }
+func (f *fakeKernelInfo) MemoryLocked() uint64         { return 0 }
+func (f *fakeKernelInfo) GPLCompatible() bool          { return true }
+
 func newFakeKernel() *fakeKernel {
 	fk := &fakeKernel{
-		programs: make(map[uint32]managed.Loaded),
+		programs: make(map[uint32]fakeProgram),
 		links:    make(map[uint32]*bpfman.AttachedLink),
 	}
 	fk.nextID.Store(100)
 	return fk
 }
 
-func (f *fakeKernel) Load(_ context.Context, spec managed.LoadSpec) (managed.Loaded, error) {
+func (f *fakeKernel) Load(_ context.Context, spec managed.LoadSpec) (bpfman.ManagedProgram, error) {
 	id := f.nextID.Add(1)
-	loaded := managed.Loaded{
-		ID:          id,
-		Name:        spec.ProgramName,
-		ProgramType: spec.ProgramType,
-		PinPath:     spec.PinPath + "/" + spec.ProgramName,
-		PinDir:      spec.PinPath,
+	fp := fakeProgram{
+		id:          id,
+		name:        spec.ProgramName,
+		programType: spec.ProgramType,
+		pinPath:     spec.PinPath + "/" + spec.ProgramName,
+		pinDir:      spec.PinPath,
 	}
-	f.programs[id] = loaded
-	return loaded, nil
+	f.programs[id] = fp
+	return bpfman.ManagedProgram{
+		Managed: &fakeManagedInfo{
+			name:        fp.name,
+			programType: fp.programType,
+			pinPath:     fp.pinPath,
+			pinDir:      fp.pinDir,
+		},
+		Kernel: &fakeKernelInfo{
+			id:          fp.id,
+			name:        fp.name,
+			programType: fp.programType,
+		},
+	}, nil
 }
 
 func (f *fakeKernel) Unload(_ context.Context, pinPath string) error {
 	for id, p := range f.programs {
-		if p.PinDir == pinPath {
+		if p.pinDir == pinPath {
 			delete(f.programs, id)
 			return nil
 		}
@@ -90,7 +147,7 @@ func (f *fakeKernel) Unload(_ context.Context, pinPath string) error {
 func (f *fakeKernel) UnloadProgram(_ context.Context, progPinPath, mapsDir string) error {
 	// Fake implementation - just removes any program whose pin path matches
 	for id, p := range f.programs {
-		if p.PinPath == progPinPath || p.PinDir == mapsDir {
+		if p.pinPath == progPinPath || p.pinDir == mapsDir {
 			delete(f.programs, id)
 			return nil
 		}
@@ -103,8 +160,8 @@ func (f *fakeKernel) Programs(_ context.Context) iter.Seq2[kernel.Program, error
 		for id, p := range f.programs {
 			kp := kernel.Program{
 				ID:          id,
-				Name:        p.Name,
-				ProgramType: p.ProgramType.String(),
+				Name:        p.name,
+				ProgramType: p.programType.String(),
 			}
 			if !yield(kp, nil) {
 				return
@@ -120,8 +177,8 @@ func (f *fakeKernel) GetProgramByID(_ context.Context, id uint32) (kernel.Progra
 	}
 	return kernel.Program{
 		ID:          id,
-		Name:        p.Name,
-		ProgramType: p.ProgramType.String(),
+		Name:        p.name,
+		ProgramType: p.programType.String(),
 	}, nil
 }
 
