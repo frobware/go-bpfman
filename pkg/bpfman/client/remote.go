@@ -116,9 +116,8 @@ func (c *RemoteClient) Get(ctx context.Context, kernelID uint32) (manager.Progra
 	return protoGetResponseToInfo(resp, kernelID), nil
 }
 
-// AttachTracepoint is not fully supported via gRPC.
-// The proto exists but the server returns Unimplemented.
-func (c *RemoteClient) AttachTracepoint(ctx context.Context, programKernelID uint32, progPinPath, group, name, linkPinPath string) (managed.LinkSummary, error) {
+// AttachTracepoint attaches a program to a tracepoint via gRPC.
+func (c *RemoteClient) AttachTracepoint(ctx context.Context, programKernelID uint32, group, name, linkPinPath string) (managed.LinkSummary, error) {
 	req := &pb.AttachRequest{
 		Id: programKernelID,
 		Attach: &pb.AttachInfo{

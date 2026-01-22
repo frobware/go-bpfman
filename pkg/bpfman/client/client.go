@@ -28,7 +28,7 @@ type Client interface {
 	Get(ctx context.Context, kernelID uint32) (manager.ProgramInfo, error)
 
 	// Attachment operations
-	AttachTracepoint(ctx context.Context, programKernelID uint32, progPinPath, group, name, linkPinPath string) (managed.LinkSummary, error)
+	AttachTracepoint(ctx context.Context, programKernelID uint32, group, name, linkPinPath string) (managed.LinkSummary, error)
 	AttachXDP(ctx context.Context, programKernelID uint32, ifindex int, ifname, linkPinPath string) (managed.LinkSummary, error)
 	Detach(ctx context.Context, kernelLinkID uint32) error
 

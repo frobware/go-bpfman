@@ -1,14 +1,53 @@
 # Example deployment using the stats-reader app with bpfman CSI
 #
+# ============================================================================
+# Local Usage (outside Kubernetes)
+# ============================================================================
+#
+# Load a program:
+#   sudo bpfman load file -m bpfman.io/ProgramName=my-stats \
+#     testdata/stats.o count_context_switches
+#
+# This returns JSON with the program ID:
+#   {
+#     "id": 6354,
+#     "pin_path": "/run/bpfman/fs/1769089591777303965/prog",
+#     "pin_dir": "/run/bpfman/fs/1769089591777303965",
+#     ...
+#   }
+#
+# The pin directory contains (with prefixes to avoid collisions):
+#   prog                         - the program (singular)
+#   map_stats_map                - maps (prefixed, sanitised)
+#   link_sched_sched_switch      - links (prefixed, sanitised)
+#
+# Attach to a tracepoint (bpfman looks up the pin path automatically):
+#   sudo bpfman attach tracepoint --program-id=<ID> <group> <name>
+#
+# For example:
+#   sudo bpfman attach tracepoint --program-id=6354 sched sched_switch
+#
+# The link is auto-pinned to: <pin_dir>/link_<group>_<name>
+# e.g., /run/bpfman/fs/1769091457843306936/link_sched_sched_switch
+#
+# ============================================================================
+# Kubernetes Usage
+# ============================================================================
+#
 # Prerequisites:
 # 1. bpfman-daemon-go must be running with --csi-support
-# 2. Load a program with metadata:
+#
+# 2. Load the stats program with metadata:
 #    kubectl -n bpfman exec -it daemonset/bpfman-daemon-go -c bpfman -- \
-#      bpfman load -m bpfman.io/ProgramName=my-stats \
-#      /opt/bpf/stats.o count_context_switches /sys/fs/bpf/go-bpfman/my-stats
-# 3. Build and load the stats-reader image:
-#    make docker-build-stats-reader
-#    kind load docker-image stats-reader:dev --name bpfman-deployment
+#      bpfman load file -m bpfman.io/ProgramName=my-stats \
+#        /opt/bpf/stats.o count_context_switches
+#
+# 3. Optionally attach to a tracepoint (if you want the program to run):
+#    kubectl -n bpfman exec -it daemonset/bpfman-daemon-go -c bpfman -- \
+#      bpfman attach tracepoint --program-id=<ID> sched sched_switch
+#
+# 4. Build and deploy the stats-reader:
+#    make stats-reader-deploy
 apiVersion: v1
 kind: Pod
 metadata:

@@ -61,8 +61,8 @@ func (c *LocalClient) Get(ctx context.Context, kernelID uint32) (manager.Program
 }
 
 // AttachTracepoint attaches a program to a tracepoint.
-func (c *LocalClient) AttachTracepoint(ctx context.Context, programKernelID uint32, progPinPath, group, name, linkPinPath string) (managed.LinkSummary, error) {
-	return c.mgr.AttachTracepoint(ctx, programKernelID, progPinPath, group, name, linkPinPath)
+func (c *LocalClient) AttachTracepoint(ctx context.Context, programKernelID uint32, group, name, linkPinPath string) (managed.LinkSummary, error) {
+	return c.mgr.AttachTracepoint(ctx, programKernelID, group, name, linkPinPath)
 }
 
 // AttachXDP attaches an XDP program to a network interface.

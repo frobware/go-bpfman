@@ -221,8 +221,8 @@ func (k *Kernel) Load(ctx context.Context, spec managed.LoadSpec) (managed.Loade
 		return managed.Loaded{}, fmt.Errorf("program %q not found in collection", spec.ProgramName)
 	}
 
-	// Pin the program
-	progPinPath := filepath.Join(spec.PinPath, spec.ProgramName)
+	// Pin the program (just "prog" - there's exactly one per directory)
+	progPinPath := filepath.Join(spec.PinPath, "prog")
 	if err := prog.Pin(progPinPath); err != nil {
 		return managed.Loaded{}, fmt.Errorf("failed to pin program: %w", err)
 	}
@@ -235,7 +235,7 @@ func (k *Kernel) Load(ctx context.Context, spec managed.LoadSpec) (managed.Loade
 		if strings.HasPrefix(name, ".") {
 			continue
 		}
-		mapPinPath := filepath.Join(spec.PinPath, name)
+		mapPinPath := filepath.Join(spec.PinPath, "map_"+sanitiseFilename(name))
 		if err := m.Pin(mapPinPath); err != nil {
 			// Ignore if already pinned
 			if !os.IsExist(err) {
@@ -986,4 +986,18 @@ func (k *Kernel) AttachXDPExtension(dispatcherPinPath, objectPath, programName s
 	}
 
 	return result, nil
+}
+
+// sanitiseFilename replaces characters that are invalid in filenames.
+func sanitiseFilename(s string) string {
+	var result []byte
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-' {
+			result = append(result, c)
+		} else {
+			result = append(result, '_')
+		}
+	}
+	return string(result)
 }

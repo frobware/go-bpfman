@@ -131,7 +131,7 @@ func (m *Manager) Load(ctx context.Context, spec managed.LoadSpec, opts LoadOpts
 	}
 
 	// Update returned program with complete info
-	loaded.PinPath = filepath.Join(spec.PinPath, spec.ProgramName)
+	loaded.PinPath = filepath.Join(spec.PinPath, "prog")
 	loaded.PinDir = spec.PinPath
 	return loaded, nil
 }
@@ -390,13 +390,23 @@ func (m *Manager) Get(ctx context.Context, kernelID uint32) (ProgramInfo, error)
 
 // AttachTracepoint attaches a pinned program to a tracepoint.
 // programKernelID is required to associate the link with the program in the store.
+// If linkPinPath is empty, a default path is generated in the program's pin directory.
 //
 // Pattern: FETCH -> KERNEL I/O -> COMPUTE -> EXECUTE
-func (m *Manager) AttachTracepoint(ctx context.Context, programKernelID uint32, progPinPath, group, name, linkPinPath string) (managed.LinkSummary, error) {
-	// FETCH: Verify program exists
-	_, err := m.store.Get(ctx, programKernelID)
+func (m *Manager) AttachTracepoint(ctx context.Context, programKernelID uint32, group, name, linkPinPath string) (managed.LinkSummary, error) {
+	// FETCH: Get program metadata to construct pin path
+	metadata, err := m.store.Get(ctx, programKernelID)
 	if err != nil {
 		return managed.LinkSummary{}, fmt.Errorf("get program %d: %w", programKernelID, err)
+	}
+
+	// COMPUTE: Construct program pin path from metadata
+	progPinPath := filepath.Join(metadata.LoadSpec.PinPath, "prog")
+
+	// COMPUTE: Auto-generate link pin path if not provided
+	if linkPinPath == "" {
+		linkName := fmt.Sprintf("link_%s_%s", sanitiseFilename(group), sanitiseFilename(name))
+		linkPinPath = filepath.Join(metadata.LoadSpec.PinPath, linkName)
 	}
 
 	// KERNEL I/O: Attach to the kernel (returns IDs needed for store action)
@@ -806,4 +816,20 @@ func computeDispatcherCleanupActions(state managed.DispatcherState) []action.Act
 			Ifindex: state.Ifindex,
 		},
 	}
+}
+
+// sanitiseFilename replaces characters that are invalid in filenames.
+// Tracepoint groups and names are typically alphanumeric with underscores,
+// but this handles edge cases defensively.
+func sanitiseFilename(s string) string {
+	var result []byte
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-' {
+			result = append(result, c)
+		} else {
+			result = append(result, '_')
+		}
+	}
+	return string(result)
 }

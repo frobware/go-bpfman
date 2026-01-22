@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"path/filepath"
 )
 
 // AttachCmd attaches a loaded program to a hook.
@@ -18,10 +17,9 @@ type AttachCmd struct {
 // TracepointCmd attaches a program to a tracepoint.
 type TracepointCmd struct {
 	ProgramID   ProgramID `name:"program-id" required:"" help:"Kernel program ID to attach (supports hex with 0x prefix)."`
-	ProgPinPath string    `arg:"" name:"prog-pin-path" help:"Path to the pinned program."`
-	Group       string    `arg:"" name:"group" help:"Tracepoint group (e.g., syscalls)."`
-	Name        string    `arg:"" name:"name" help:"Tracepoint name (e.g., sys_enter_openat)."`
-	LinkPinPath string    `name:"link-pin-path" help:"Path to pin the link (optional)."`
+	Group       string    `arg:"" name:"group" help:"Tracepoint group (e.g., sched)."`
+	Name        string    `arg:"" name:"name" help:"Tracepoint name (e.g., sched_switch)."`
+	LinkPinPath string    `name:"link-pin-path" help:"Path to pin the link (auto-generated if not provided)."`
 }
 
 // Run executes the tracepoint attach command.
@@ -32,15 +30,8 @@ func (c *TracepointCmd) Run(cli *CLI) error {
 	}
 	defer b.Close()
 
-	// Auto-generate link pin path if not provided.
-	// Links must be pinned to persist beyond the CLI command.
-	linkPinPath := c.LinkPinPath
-	if linkPinPath == "" {
-		linkPinPath = filepath.Join(filepath.Dir(c.ProgPinPath), "link")
-	}
-
 	ctx := context.Background()
-	result, err := b.AttachTracepoint(ctx, c.ProgramID.Value, c.ProgPinPath, c.Group, c.Name, linkPinPath)
+	result, err := b.AttachTracepoint(ctx, c.ProgramID.Value, c.Group, c.Name, c.LinkPinPath)
 	if err != nil {
 		return err
 	}
