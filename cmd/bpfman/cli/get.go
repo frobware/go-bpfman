@@ -44,10 +44,10 @@ func (c *GetProgramCmd) Run(cli *CLI) error {
 	return nil
 }
 
-// GetLinkCmd gets details of a link by UUID.
+// GetLinkCmd gets details of a link by kernel link ID.
 type GetLinkCmd struct {
 	OutputFlags
-	LinkUUID LinkUUID `arg:"" name:"link-uuid" help:"Link UUID."`
+	LinkID LinkID `arg:"" name:"link-id" help:"Kernel link ID."`
 }
 
 // LinkInfo combines summary and details for JSON output.
@@ -65,7 +65,7 @@ func (c *GetLinkCmd) Run(cli *CLI) error {
 	defer b.Close()
 
 	ctx := context.Background()
-	summary, details, err := b.GetLink(ctx, c.LinkUUID.Value)
+	summary, details, err := b.GetLink(ctx, c.LinkID.Value)
 	if errors.Is(err, client.ErrNotSupported) {
 		return fmt.Errorf("getting link details is only available in local mode")
 	}

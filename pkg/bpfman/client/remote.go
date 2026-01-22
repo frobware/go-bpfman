@@ -77,9 +77,6 @@ func (c *RemoteClient) Load(ctx context.Context, spec managed.LoadSpec, opts man
 			ProgramType: domainTypeToProto(spec.ProgramType),
 		}},
 	}
-	if opts.UUID != "" {
-		req.Uuid = &opts.UUID
-	}
 
 	resp, err := c.client.Load(ctx, req)
 	if err != nil {
@@ -90,7 +87,7 @@ func (c *RemoteClient) Load(ctx context.Context, spec managed.LoadSpec, opts man
 		return managed.Loaded{}, fmt.Errorf("no programs returned from load")
 	}
 
-	return protoLoadResponseToLoaded(resp.Programs[0], opts.UUID), nil
+	return protoLoadResponseToLoaded(resp.Programs[0]), nil
 }
 
 // Unload removes a BPF program via gRPC.
@@ -175,9 +172,10 @@ func (c *RemoteClient) AttachXDP(ctx context.Context, programKernelID uint32, if
 }
 
 // Detach is not fully supported via gRPC.
-// The proto uses link_id (uint32) rather than UUID (string).
-func (c *RemoteClient) Detach(ctx context.Context, linkUUID string) error {
-	return fmt.Errorf("Detach by UUID: %w (proto uses link_id not UUID)", ErrNotSupported)
+// The proto uses link_id (uint32) which matches our kernel_link_id.
+func (c *RemoteClient) Detach(ctx context.Context, kernelLinkID uint32) error {
+	_, err := c.client.Detach(ctx, &pb.DetachRequest{LinkId: kernelLinkID})
+	return translateGRPCError(err)
 }
 
 // ListLinks is not available via gRPC.
@@ -191,7 +189,7 @@ func (c *RemoteClient) ListLinksByProgram(ctx context.Context, programKernelID u
 }
 
 // GetLink is not available via gRPC.
-func (c *RemoteClient) GetLink(ctx context.Context, uuid string) (managed.LinkSummary, managed.LinkDetails, error) {
+func (c *RemoteClient) GetLink(ctx context.Context, kernelLinkID uint32) (managed.LinkSummary, managed.LinkDetails, error) {
 	return managed.LinkSummary{}, nil, fmt.Errorf("GetLink: %w", ErrNotSupported)
 }
 

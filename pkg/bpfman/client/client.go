@@ -30,12 +30,12 @@ type Client interface {
 	// Attachment operations
 	AttachTracepoint(ctx context.Context, programKernelID uint32, progPinPath, group, name, linkPinPath string) (managed.LinkSummary, error)
 	AttachXDP(ctx context.Context, programKernelID uint32, ifindex int, ifname, linkPinPath string) (managed.LinkSummary, error)
-	Detach(ctx context.Context, linkUUID string) error
+	Detach(ctx context.Context, kernelLinkID uint32) error
 
 	// Link queries
 	ListLinks(ctx context.Context) ([]managed.LinkSummary, error)
 	ListLinksByProgram(ctx context.Context, programKernelID uint32) ([]managed.LinkSummary, error)
-	GetLink(ctx context.Context, uuid string) (managed.LinkSummary, managed.LinkDetails, error)
+	GetLink(ctx context.Context, kernelLinkID uint32) (managed.LinkSummary, managed.LinkDetails, error)
 
 	// Maintenance operations (local-only)
 	PlanGC(ctx context.Context, cfg manager.GCConfig) (manager.GCPlan, error)

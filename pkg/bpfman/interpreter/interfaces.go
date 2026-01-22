@@ -22,14 +22,13 @@ type LinkWriter interface {
 	SaveXDPLink(ctx context.Context, summary managed.LinkSummary, details managed.XDPDetails) error
 	SaveTCLink(ctx context.Context, summary managed.LinkSummary, details managed.TCDetails) error
 	SaveTCXLink(ctx context.Context, summary managed.LinkSummary, details managed.TCXDetails) error
-	DeleteLink(ctx context.Context, uuid string) error
+	DeleteLink(ctx context.Context, kernelLinkID uint32) error
 }
 
 // LinkReader reads link metadata from the store.
 // GetLink performs a two-phase lookup: registry then type-specific details.
 type LinkReader interface {
-	GetLink(ctx context.Context, uuid string) (managed.LinkSummary, managed.LinkDetails, error)
-	GetLinkByKernelID(ctx context.Context, kernelLinkID uint32) (managed.LinkSummary, managed.LinkDetails, error)
+	GetLink(ctx context.Context, kernelLinkID uint32) (managed.LinkSummary, managed.LinkDetails, error)
 }
 
 // LinkLister lists links from the store.
@@ -80,23 +79,6 @@ type ProgramReader interface {
 type ProgramWriter interface {
 	Save(ctx context.Context, kernelID uint32, metadata managed.Program) error
 	Delete(ctx context.Context, kernelID uint32) error
-	// MarkUnloading transitions a program to unloading state.
-	// This is phase 1 of unload 2PC.
-	MarkUnloading(ctx context.Context, kernelID uint32) error
-}
-
-// ReservationWriter handles the reservation phase of transactional loads.
-type ReservationWriter interface {
-	// Reserve creates a loading reservation (state=loading) keyed by UUID.
-	// Returns an error if a reservation with this UUID already exists.
-	Reserve(ctx context.Context, uuid string, metadata managed.Program) error
-	// CommitReservation transitions a reservation from loading to loaded,
-	// updating the primary key from UUID to kernel ID.
-	CommitReservation(ctx context.Context, uuid string, kernelID uint32) error
-	// MarkError transitions a reservation to error state with a message.
-	MarkError(ctx context.Context, uuid string, errMsg string) error
-	// DeleteReservation removes a reservation by UUID (for cleanup).
-	DeleteReservation(ctx context.Context, uuid string) error
 }
 
 // ProgramLister lists all program metadata from the store.
@@ -104,26 +86,11 @@ type ProgramLister interface {
 	List(ctx context.Context) (map[uint32]managed.Program, error)
 }
 
-// StateEntry represents a program entry with its kernel ID (if loaded).
-type StateEntry struct {
-	KernelID uint32 // 0 for reservations not yet committed
-	Metadata managed.Program
-}
-
-// StateReader queries programs by lifecycle state.
-type StateReader interface {
-	// ListByState returns all entries with the given state.
-	// Unlike List, this includes loading and error entries.
-	ListByState(ctx context.Context, state managed.State) ([]StateEntry, error)
-}
-
 // ProgramStore combines all store operations.
 type ProgramStore interface {
 	ProgramReader
 	ProgramWriter
 	ProgramLister
-	ReservationWriter
-	StateReader
 }
 
 // KernelSource provides access to kernel BPF objects.

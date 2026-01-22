@@ -5,8 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
-
-	"github.com/google/uuid"
+	"time"
 
 	"github.com/frobware/go-bpfman/pkg/bpfman/managed"
 	"github.com/frobware/go-bpfman/pkg/bpfman/manager"
@@ -41,9 +40,9 @@ func (c *LoadFileCmd) Run(cli *CLI) error {
 	}
 	defer b.Close()
 
-	// Generate UUID and derive pin path
-	programUUID := uuid.New().String()
-	pinDir := filepath.Join(cli.RuntimeDirs().FS, programUUID)
+	// Generate a unique pin directory name using timestamp
+	// The actual kernel_id becomes known only after loading
+	pinDir := filepath.Join(cli.RuntimeDirs().FS, fmt.Sprintf("%d", time.Now().UnixNano()))
 
 	// Convert global data
 	var globalData map[string][]byte
@@ -59,7 +58,6 @@ func (c *LoadFileCmd) Run(cli *CLI) error {
 		GlobalData:  globalData,
 	}
 	opts := manager.LoadOpts{
-		UUID:         programUUID,
 		UserMetadata: MetadataMap(c.Metadata),
 	}
 

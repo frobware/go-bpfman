@@ -242,7 +242,6 @@ func TestLoadProgram_WithValidRequest_Succeeds(t *testing.T) {
 		Info: []*pb.LoadInfo{
 			{Name: "my_prog", ProgramType: pb.BpfmanProgramType_TRACEPOINT},
 		},
-		Uuid: strPtr("test-uuid-1"),
 		Metadata: map[string]string{
 			"bpfman.io/ProgramName": "my-program",
 			"app":                   "test-app",
@@ -287,7 +286,6 @@ func TestGetProgram_ReturnsAllFields(t *testing.T) {
 		Info: []*pb.LoadInfo{
 			{Name: "get_test_prog", ProgramType: pb.BpfmanProgramType_KPROBE},
 		},
-		Uuid: strPtr("get-test-uuid"),
 		Metadata: map[string]string{
 			"bpfman.io/ProgramName": "get-test-program",
 			"environment":           "testing",
@@ -333,11 +331,10 @@ func TestListPrograms_ReturnsAllFields(t *testing.T) {
 		name        string
 		programName string
 		programType pb.BpfmanProgramType
-		uuid        string
 		app         string
 	}{
-		{"prog_one", "program-one", pb.BpfmanProgramType_TRACEPOINT, "uuid-1", "frontend"},
-		{"prog_two", "program-two", pb.BpfmanProgramType_XDP, "uuid-2", "backend"},
+		{"prog_one", "program-one", pb.BpfmanProgramType_TRACEPOINT, "frontend"},
+		{"prog_two", "program-two", pb.BpfmanProgramType_XDP, "backend"},
 	}
 
 	expectedIDs := make(map[string]uint32)
@@ -349,7 +346,6 @@ func TestListPrograms_ReturnsAllFields(t *testing.T) {
 			Info: []*pb.LoadInfo{
 				{Name: p.name, ProgramType: p.programType},
 			},
-			Uuid: strPtr(p.uuid),
 			Metadata: map[string]string{
 				"bpfman.io/ProgramName": p.programName,
 				"app":                   p.app,
@@ -403,7 +399,6 @@ func TestLoadProgram_WithDuplicateName_IsRejected(t *testing.T) {
 		Info: []*pb.LoadInfo{
 			{Name: "my_prog", ProgramType: pb.BpfmanProgramType_TRACEPOINT},
 		},
-		Uuid: strPtr("uuid-1"),
 		Metadata: map[string]string{
 			"bpfman.io/ProgramName": "shared-name",
 		},
@@ -418,7 +413,6 @@ func TestLoadProgram_WithDuplicateName_IsRejected(t *testing.T) {
 		Info: []*pb.LoadInfo{
 			{Name: "my_prog", ProgramType: pb.BpfmanProgramType_TRACEPOINT},
 		},
-		Uuid: strPtr("uuid-2"),
 		Metadata: map[string]string{
 			"bpfman.io/ProgramName": "shared-name",
 		},
@@ -448,7 +442,6 @@ func TestLoadProgram_WithDifferentNames_BothSucceed(t *testing.T) {
 			Info: []*pb.LoadInfo{
 				{Name: "prog", ProgramType: pb.BpfmanProgramType_TRACEPOINT},
 			},
-			Uuid: strPtr(name),
 			Metadata: map[string]string{
 				"bpfman.io/ProgramName": name,
 			},
@@ -478,7 +471,6 @@ func TestUnloadProgram_WhenProgramExists_RemovesIt(t *testing.T) {
 		Info: []*pb.LoadInfo{
 			{Name: "my_prog", ProgramType: pb.BpfmanProgramType_TRACEPOINT},
 		},
-		Uuid: strPtr("test-uuid"),
 		Metadata: map[string]string{
 			"bpfman.io/ProgramName": "my-program",
 		},
@@ -525,7 +517,6 @@ func TestLoadProgram_AfterUnload_NameBecomesAvailable(t *testing.T) {
 		Info: []*pb.LoadInfo{
 			{Name: "my_prog", ProgramType: pb.BpfmanProgramType_TRACEPOINT},
 		},
-		Uuid: strPtr("uuid-1"),
 		Metadata: map[string]string{
 			"bpfman.io/ProgramName": "reusable-name",
 		},
@@ -543,7 +534,6 @@ func TestLoadProgram_AfterUnload_NameBecomesAvailable(t *testing.T) {
 		Info: []*pb.LoadInfo{
 			{Name: "my_prog", ProgramType: pb.BpfmanProgramType_TRACEPOINT},
 		},
-		Uuid: strPtr("uuid-2"),
 		Metadata: map[string]string{
 			"bpfman.io/ProgramName": "reusable-name",
 		},
@@ -569,7 +559,6 @@ func TestListPrograms_WithMetadataFilter_ReturnsOnlyMatching(t *testing.T) {
 			Info: []*pb.LoadInfo{
 				{Name: "prog", ProgramType: pb.BpfmanProgramType_TRACEPOINT},
 			},
-			Uuid: strPtr(app),
 			Metadata: map[string]string{
 				"bpfman.io/ProgramName": app,
 				"app":                   app,
@@ -585,8 +574,4 @@ func TestListPrograms_WithMetadataFilter_ReturnsOnlyMatching(t *testing.T) {
 	require.NoError(t, err, "List failed")
 	require.Len(t, filteredResp.Results, 1, "expected 1 filtered program")
 	assert.Equal(t, "frontend", filteredResp.Results[0].Info.Metadata["app"], "wrong program returned")
-}
-
-func strPtr(s string) *string {
-	return &s
 }

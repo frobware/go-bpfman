@@ -9,8 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"time"
-
-	"github.com/frobware/go-bpfman/pkg/bpfman/managed"
 )
 
 // GCConfig configures garbage collection behaviour.
@@ -19,19 +17,18 @@ type GCConfig struct {
 	// If zero, time.Now() is used.
 	Now time.Time
 
-	// StaleLoadingTTL is how long a loading reservation can exist
-	// before being considered stale. Default: 5 minutes.
-	StaleLoadingTTL time.Duration
+	// MinOrphanAge is the minimum age an orphan pin must be before
+	// it can be collected. This prevents collecting pins that are
+	// being created during a concurrent load operation.
+	// Default: 5 minutes.
+	MinOrphanAge time.Duration
 
-	// StaleUnloadingTTL is how long an unloading entry can exist
-	// before being considered stale. Default: 5 minutes.
-	StaleUnloadingTTL time.Duration
+	// IncludeOrphans controls whether orphan pins are collected.
+	IncludeOrphans bool
 
-	// Which classes of garbage to include.
-	IncludeLoading   bool
-	IncludeUnloading bool
-	IncludeError     bool
-	IncludeOrphans   bool
+	// IncludeDBOrphans controls whether DB entries without kernel
+	// objects are collected.
+	IncludeDBOrphans bool
 
 	// DryRun prevents any modifications when true.
 	DryRun bool
@@ -44,15 +41,12 @@ type GCConfig struct {
 // DefaultGCConfig returns a GCConfig with sensible defaults.
 func DefaultGCConfig() GCConfig {
 	return GCConfig{
-		Now:               time.Now(),
-		StaleLoadingTTL:   5 * time.Minute,
-		StaleUnloadingTTL: 5 * time.Minute,
-		IncludeLoading:    true,
-		IncludeUnloading:  true,
-		IncludeError:      true,
-		IncludeOrphans:    true,
-		DryRun:            true, // Safe by default
-		MaxDeletions:      0,
+		Now:              time.Now(),
+		MinOrphanAge:     5 * time.Minute,
+		IncludeOrphans:   true,
+		IncludeDBOrphans: true,
+		DryRun:           true, // Safe by default
+		MaxDeletions:     0,
 	}
 }
 
@@ -60,32 +54,23 @@ func DefaultGCConfig() GCConfig {
 type GCReason string
 
 const (
-	// GCStaleLoading indicates a reservation that has been in loading
-	// state longer than the TTL.
-	GCStaleLoading GCReason = "stale_loading"
-
-	// GCStaleUnloading indicates an entry that has been in unloading
-	// state longer than the TTL (interrupted unload 2PC).
-	GCStaleUnloading GCReason = "stale_unloading"
-
-	// GCStateError indicates a reservation that failed and was marked
-	// as error state.
-	GCStateError GCReason = "state_error"
-
 	// GCOrphanPin indicates a pin directory under the bpfman root that
-	// has no corresponding loaded entry in the database.
+	// has no corresponding entry in the database. This can happen if
+	// a crash occurs after kernel load but before DB persist.
 	GCOrphanPin GCReason = "orphan_pin"
+
+	// GCOrphanDB indicates a DB entry whose kernel object no longer
+	// exists. This can happen if the kernel unloads a program (e.g.,
+	// due to the last fd being closed).
+	GCOrphanDB GCReason = "orphan_db"
 )
 
 // GCItem represents a single item identified for garbage collection.
 type GCItem struct {
-	Reason    GCReason
-	UUID      string
-	PinPath   string
-	State     managed.State
-	UpdatedAt time.Time
-	Age       time.Duration
-	ErrorMsg  string
+	Reason   GCReason
+	KernelID uint32
+	PinPath  string
+	Age      time.Duration
 }
 
 // GCPlan contains the items identified for garbage collection.
@@ -116,17 +101,21 @@ type GCResult struct {
 	Attempted int
 	Deleted   int
 	Failed    int
-	Skipped   int // Due to MaxDeletions limit
+	Skipped   int // Due to MaxDeletions limit or DryRun
 	Items     []GCItemResult
 }
 
 // PlanGC discovers what would be cleaned and why, without side effects.
+//
+// With the atomic load model, GC focuses on two scenarios:
+//  1. Orphan pins: Pins on bpffs without corresponding DB entries (crash recovery)
+//  2. Orphan DB: DB entries without corresponding kernel objects (kernel cleanup)
 func (m *Manager) PlanGC(ctx context.Context, cfg GCConfig) (GCPlan, error) {
 	if cfg.Now.IsZero() {
 		cfg.Now = time.Now()
 	}
-	if cfg.StaleLoadingTTL == 0 {
-		cfg.StaleLoadingTTL = 5 * time.Minute
+	if cfg.MinOrphanAge == 0 {
+		cfg.MinOrphanAge = 5 * time.Minute
 	}
 
 	plan := GCPlan{
@@ -134,34 +123,7 @@ func (m *Manager) PlanGC(ctx context.Context, cfg GCConfig) (GCPlan, error) {
 		PlanTime: cfg.Now,
 	}
 
-	// Collect stale loading reservations
-	if cfg.IncludeLoading {
-		items, err := m.planStaleLoading(ctx, cfg)
-		if err != nil {
-			return plan, fmt.Errorf("plan stale loading: %w", err)
-		}
-		plan.Items = append(plan.Items, items...)
-	}
-
-	// Collect stale unloading entries (interrupted 2PC)
-	if cfg.IncludeUnloading {
-		items, err := m.planStaleUnloading(ctx, cfg)
-		if err != nil {
-			return plan, fmt.Errorf("plan stale unloading: %w", err)
-		}
-		plan.Items = append(plan.Items, items...)
-	}
-
-	// Collect error entries
-	if cfg.IncludeError {
-		items, err := m.planErrorEntries(ctx, cfg)
-		if err != nil {
-			return plan, fmt.Errorf("plan error entries: %w", err)
-		}
-		plan.Items = append(plan.Items, items...)
-	}
-
-	// Collect orphan pins
+	// Collect orphan pins (pins on disk without DB entries)
 	if cfg.IncludeOrphans {
 		items, err := m.planOrphanPins(ctx, cfg)
 		if err != nil {
@@ -170,79 +132,16 @@ func (m *Manager) PlanGC(ctx context.Context, cfg GCConfig) (GCPlan, error) {
 		plan.Items = append(plan.Items, items...)
 	}
 
+	// Collect orphan DB entries (DB entries without kernel objects)
+	if cfg.IncludeDBOrphans {
+		items, err := m.planOrphanDBEntries(ctx, cfg)
+		if err != nil {
+			return plan, fmt.Errorf("plan orphan DB entries: %w", err)
+		}
+		plan.Items = append(plan.Items, items...)
+	}
+
 	return plan, nil
-}
-
-func (m *Manager) planStaleLoading(ctx context.Context, cfg GCConfig) ([]GCItem, error) {
-	entries, err := m.store.ListByState(ctx, managed.StateLoading)
-	if err != nil {
-		return nil, err
-	}
-
-	cutoff := cfg.Now.Add(-cfg.StaleLoadingTTL)
-	var items []GCItem
-
-	for _, e := range entries {
-		if e.Metadata.UpdatedAt.Before(cutoff) {
-			items = append(items, GCItem{
-				Reason:    GCStaleLoading,
-				UUID:      e.Metadata.UUID,
-				PinPath:   e.Metadata.LoadSpec.PinPath,
-				State:     e.Metadata.State,
-				UpdatedAt: e.Metadata.UpdatedAt,
-				Age:       cfg.Now.Sub(e.Metadata.UpdatedAt),
-			})
-		}
-	}
-
-	return items, nil
-}
-
-func (m *Manager) planStaleUnloading(ctx context.Context, cfg GCConfig) ([]GCItem, error) {
-	entries, err := m.store.ListByState(ctx, managed.StateUnloading)
-	if err != nil {
-		return nil, err
-	}
-
-	cutoff := cfg.Now.Add(-cfg.StaleUnloadingTTL)
-	var items []GCItem
-
-	for _, e := range entries {
-		if e.Metadata.UpdatedAt.Before(cutoff) {
-			items = append(items, GCItem{
-				Reason:    GCStaleUnloading,
-				UUID:      e.Metadata.UUID,
-				PinPath:   e.Metadata.LoadSpec.PinPath,
-				State:     e.Metadata.State,
-				UpdatedAt: e.Metadata.UpdatedAt,
-				Age:       cfg.Now.Sub(e.Metadata.UpdatedAt),
-			})
-		}
-	}
-
-	return items, nil
-}
-
-func (m *Manager) planErrorEntries(ctx context.Context, cfg GCConfig) ([]GCItem, error) {
-	entries, err := m.store.ListByState(ctx, managed.StateError)
-	if err != nil {
-		return nil, err
-	}
-
-	var items []GCItem
-	for _, e := range entries {
-		items = append(items, GCItem{
-			Reason:    GCStateError,
-			UUID:      e.Metadata.UUID,
-			PinPath:   e.Metadata.LoadSpec.PinPath,
-			State:     e.Metadata.State,
-			UpdatedAt: e.Metadata.UpdatedAt,
-			Age:       cfg.Now.Sub(e.Metadata.UpdatedAt),
-			ErrorMsg:  e.Metadata.ErrorMessage,
-		})
-	}
-
-	return items, nil
 }
 
 func (m *Manager) planOrphanPins(ctx context.Context, cfg GCConfig) ([]GCItem, error) {
@@ -258,20 +157,6 @@ func (m *Manager) planOrphanPins(ctx context.Context, cfg GCConfig) ([]GCItem, e
 		knownPaths[meta.LoadSpec.PinPath] = true
 	}
 
-	// Also include loading/unloading/error entries (we don't want to double-report)
-	loading, _ := m.store.ListByState(ctx, managed.StateLoading)
-	for _, e := range loading {
-		knownPaths[e.Metadata.LoadSpec.PinPath] = true
-	}
-	unloading, _ := m.store.ListByState(ctx, managed.StateUnloading)
-	for _, e := range unloading {
-		knownPaths[e.Metadata.LoadSpec.PinPath] = true
-	}
-	errors, _ := m.store.ListByState(ctx, managed.StateError)
-	for _, e := range errors {
-		knownPaths[e.Metadata.LoadSpec.PinPath] = true
-	}
-
 	// Scan bpfman root for directories
 	bpfmanRoot := m.dirs.FS
 	entries, err := os.ReadDir(bpfmanRoot)
@@ -282,7 +167,9 @@ func (m *Manager) planOrphanPins(ctx context.Context, cfg GCConfig) ([]GCItem, e
 		return nil, fmt.Errorf("read bpfman root: %w", err)
 	}
 
+	cutoff := cfg.Now.Add(-cfg.MinOrphanAge)
 	var items []GCItem
+
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
@@ -295,17 +182,53 @@ func (m *Manager) planOrphanPins(ctx context.Context, cfg GCConfig) ([]GCItem, e
 
 		// Get directory info for age
 		info, err := entry.Info()
-		var modTime time.Time
-		if err == nil {
-			modTime = info.ModTime()
+		if err != nil {
+			continue // Skip if we can't get info
+		}
+
+		modTime := info.ModTime()
+		if modTime.After(cutoff) {
+			continue // Too recent, might be in-flight load
 		}
 
 		items = append(items, GCItem{
-			Reason:    GCOrphanPin,
-			UUID:      entry.Name(), // Directory name is typically the UUID
-			PinPath:   pinPath,
-			UpdatedAt: modTime,
-			Age:       cfg.Now.Sub(modTime),
+			Reason:  GCOrphanPin,
+			PinPath: pinPath,
+			Age:     cfg.Now.Sub(modTime),
+		})
+	}
+
+	return items, nil
+}
+
+func (m *Manager) planOrphanDBEntries(ctx context.Context, cfg GCConfig) ([]GCItem, error) {
+	// Get all programs from DB
+	stored, err := m.store.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build set of kernel program IDs
+	kernelIDs := make(map[uint32]bool)
+	for kp, err := range m.kernel.Programs(ctx) {
+		if err != nil {
+			continue
+		}
+		kernelIDs[kp.ID] = true
+	}
+
+	// Find DB entries without corresponding kernel objects
+	var items []GCItem
+	for kernelID, meta := range stored {
+		if kernelIDs[kernelID] {
+			continue // Has kernel object, not an orphan
+		}
+
+		items = append(items, GCItem{
+			Reason:   GCOrphanDB,
+			KernelID: kernelID,
+			PinPath:  meta.LoadSpec.PinPath,
+			Age:      cfg.Now.Sub(meta.CreatedAt),
 		})
 	}
 
@@ -346,10 +269,10 @@ func (m *Manager) ApplyGC(ctx context.Context, plan GCPlan) (GCResult, error) {
 
 		var err error
 		switch item.Reason {
-		case GCStaleLoading, GCStaleUnloading, GCStateError:
-			err = m.cleanupDBEntry(ctx, item)
 		case GCOrphanPin:
 			err = m.cleanupOrphanPin(ctx, item)
+		case GCOrphanDB:
+			err = m.cleanupOrphanDB(ctx, item)
 		}
 
 		if err != nil {
@@ -365,16 +288,10 @@ func (m *Manager) ApplyGC(ctx context.Context, plan GCPlan) (GCResult, error) {
 	return result, nil
 }
 
-func (m *Manager) cleanupDBEntry(ctx context.Context, item GCItem) error {
-	// Attempt to unpin first (best effort)
-	if item.PinPath != "" {
-		_ = m.kernel.Unload(ctx, item.PinPath)
-	}
-
-	// Delete the DB reservation
-	return m.store.DeleteReservation(ctx, item.UUID)
-}
-
 func (m *Manager) cleanupOrphanPin(ctx context.Context, item GCItem) error {
 	return m.kernel.Unload(ctx, item.PinPath)
+}
+
+func (m *Manager) cleanupOrphanDB(ctx context.Context, item GCItem) error {
+	return m.store.Delete(ctx, item.KernelID)
 }

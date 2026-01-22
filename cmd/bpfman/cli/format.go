@@ -130,8 +130,6 @@ func formatProgramInfoTree(info manager.ProgramInfo) string {
 	b.WriteString("└─ Managed State\n")
 	if info.Bpfman != nil && info.Bpfman.Program != nil {
 		p := info.Bpfman.Program
-		fmt.Fprintf(&b, "   ├─ uuid:       %s\n", p.UUID)
-		fmt.Fprintf(&b, "   ├─ state:      %s\n", p.State)
 		if !p.CreatedAt.IsZero() {
 			fmt.Fprintf(&b, "   ├─ created:    %s\n", p.CreatedAt.Format("2006-01-02T15:04:05Z"))
 		}
@@ -148,17 +146,12 @@ func formatProgramInfoTable(info manager.ProgramInfo) string {
 	// Header line
 	if info.Kernel != nil && info.Kernel.Program != nil {
 		p := info.Kernel.Program
-		state := "unknown"
-		if info.Bpfman != nil && info.Bpfman.Program != nil {
-			state = string(info.Bpfman.Program.State)
-		}
-		fmt.Fprintf(&b, "PROGRAM  %d  %s  %s  %s\n", p.ID, p.Name, p.ProgramType, state)
+		fmt.Fprintf(&b, "PROGRAM  %d  %s  %s\n", p.ID, p.Name, p.ProgramType)
 	}
 
 	// Details
 	if info.Bpfman != nil && info.Bpfman.Program != nil {
 		p := info.Bpfman.Program
-		fmt.Fprintf(&b, "  uuid   %s\n", p.UUID)
 		if info.Kernel != nil && info.Kernel.Program != nil {
 			fmt.Fprintf(&b, "  tag    %s\n", info.Kernel.Program.Tag)
 		}

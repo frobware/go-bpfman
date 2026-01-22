@@ -38,22 +38,6 @@ func linkIDMapper() kong.MapperFunc {
 	}
 }
 
-// linkUUIDMapper creates a Kong mapper for LinkUUID.
-func linkUUIDMapper() kong.MapperFunc {
-	return func(ctx *kong.DecodeContext, target reflect.Value) error {
-		var s string
-		if err := ctx.Scan.PopValueInto("link-uuid", &s); err != nil {
-			return err
-		}
-		u, err := ParseLinkUUID(s)
-		if err != nil {
-			return err
-		}
-		target.Set(reflect.ValueOf(u))
-		return nil
-	}
-}
-
 // keyValueMapper creates a Kong mapper for KeyValue.
 func keyValueMapper() kong.MapperFunc {
 	return func(ctx *kong.DecodeContext, target reflect.Value) error {

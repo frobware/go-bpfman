@@ -70,9 +70,9 @@ func (c *LocalClient) AttachXDP(ctx context.Context, programKernelID uint32, ifi
 	return c.mgr.AttachXDP(ctx, programKernelID, ifindex, ifname, linkPinPath)
 }
 
-// Detach removes a link by UUID.
-func (c *LocalClient) Detach(ctx context.Context, linkUUID string) error {
-	return c.mgr.Detach(ctx, linkUUID)
+// Detach removes a link by kernel link ID.
+func (c *LocalClient) Detach(ctx context.Context, kernelLinkID uint32) error {
+	return c.mgr.Detach(ctx, kernelLinkID)
 }
 
 // ListLinks returns all managed links.
@@ -85,9 +85,9 @@ func (c *LocalClient) ListLinksByProgram(ctx context.Context, programKernelID ui
 	return c.mgr.ListLinksByProgram(ctx, programKernelID)
 }
 
-// GetLink retrieves a link by UUID.
-func (c *LocalClient) GetLink(ctx context.Context, uuid string) (managed.LinkSummary, managed.LinkDetails, error) {
-	return c.mgr.GetLink(ctx, uuid)
+// GetLink retrieves a link by kernel link ID.
+func (c *LocalClient) GetLink(ctx context.Context, kernelLinkID uint32) (managed.LinkSummary, managed.LinkDetails, error) {
+	return c.mgr.GetLink(ctx, kernelLinkID)
 }
 
 // PlanGC creates a garbage collection plan.

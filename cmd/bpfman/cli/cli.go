@@ -46,7 +46,6 @@ func KongOptions() []kong.Option {
 		}),
 		kong.TypeMapper(reflect.TypeOf(ProgramID{}), programIDMapper()),
 		kong.TypeMapper(reflect.TypeOf(LinkID{}), linkIDMapper()),
-		kong.TypeMapper(reflect.TypeOf(LinkUUID{}), linkUUIDMapper()),
 		kong.TypeMapper(reflect.TypeOf(KeyValue{}), keyValueMapper()),
 		kong.TypeMapper(reflect.TypeOf(GlobalData{}), globalDataMapper()),
 		kong.TypeMapper(reflect.TypeOf(ObjectPath{}), objectPathMapper()),

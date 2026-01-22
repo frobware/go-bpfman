@@ -1,45 +1,30 @@
 // Package manager provides high-level orchestration using
 // the fetch/compute/execute pattern.
 //
-// # Transactional Load
+// # Atomic Load Model
 //
-// The Manager provides transactional semantics for loading BPF programs.
+// The Manager provides atomic semantics for loading BPF programs.
 // The goal is to ensure that either a program is fully loaded with its
 // metadata persisted, or nothing is left behind (no partial state).
 //
-// The transaction boundary spans two state stores:
-//   - bpffs pins (filesystem objects in /sys/fs/bpf)
-//   - SQLite metadata (database row)
+// The atomic model:
+//  1. Load program into kernel and pin to bpffs
+//  2. On success: persist metadata to DB in a single transaction
+//  3. On failure: cleanup kernel state, nothing in DB
+//  4. GC handles orphans from crashes
 //
-// True atomic commits across both stores are not possible without a
-// distributed transaction system. Instead, we use a DB-first reservation
-// pattern that makes failure states safe and recoverable.
-//
-// # DB-First Reservation Pattern
-//
-// bpffs does not support mkdir - directories are only created implicitly
-// when BPF objects are pinned. This means we cannot use a temp directory
-// and rename approach. Instead, we use database reservations:
-//
-// Workflow:
-//  1. Write reservation row (state=loading) with UUID
-//  2. Load collection and pin to final path directly
-//  3. Commit reservation (state=loaded) with kernel ID
-//  4. If pinning fails: delete reservation
-//  5. If commit fails: unpin + mark error (or delete reservation)
-//
-// The reservation pattern ensures:
-//   - Normal List/Get only returns state=loaded programs
-//   - Loading programs are invisible to normal operations
-//   - Reconcile can clean up stale loading/error reservations
+// This is simpler than the previous 2PC reservation pattern because:
+//   - Programs only exist in DB after successful load
+//   - No "loading" or "error" states to manage
+//   - GC only needs to handle orphan pins (crash recovery)
 //
 // # CSI Integration
 //
 // The CSI driver is a consumer of loaded programs, not part of the
 // transaction. It creates per-pod views of maps via re-pinning:
 //
-//	canonical: /sys/fs/bpf/bpfman/<uuid>/<map>     (managed by bpfman)
-//	per-pod:   /run/bpfman/csi/fs/<vol>/<map>      (per-pod bpffs mount)
+//	canonical: /sys/fs/bpf/bpfman/<kernel_id>/<map>     (managed by bpfman)
+//	per-pod:   /run/bpfman/csi/fs/<vol>/<map>          (per-pod bpffs mount)
 //
 // The per-pod path is a separate bpffs mount. Re-pinning creates a new
 // pin from the map's file descriptor - this is not a rename across
@@ -56,8 +41,6 @@ import (
 	"log/slog"
 	"path/filepath"
 	"time"
-
-	googleuuid "github.com/google/uuid"
 
 	"github.com/frobware/go-bpfman/pkg/bpfman/action"
 	"github.com/frobware/go-bpfman/pkg/bpfman/compute"
@@ -100,93 +83,60 @@ func (m *Manager) Dirs() config.RuntimeDirs {
 
 // LoadOpts contains optional metadata for a Load operation.
 type LoadOpts struct {
-	UUID         string
 	UserMetadata map[string]string
 	Owner        string
 }
 
-// Load loads a BPF program and stores its metadata transactionally.
+// Load loads a BPF program and stores its metadata atomically.
 //
-// See package documentation for details on the DB-first reservation pattern.
+// See package documentation for details on the atomic load model.
 //
 // IMPORTANT: spec.PinPath must be on bpffs (typically /sys/fs/bpf/...).
 // bpffs does not support mkdir - directories are created implicitly when
 // BPF objects are pinned.
 //
-// On any failure, previously completed steps are rolled back:
-//   - If pinning fails: delete reservation
-//   - If commit fails: unpin + mark error (or delete reservation)
+// On failure, previously completed steps are rolled back:
+//   - If kernel load fails: nothing to clean up
+//   - If DB persist fails: unpin from kernel
 func (m *Manager) Load(ctx context.Context, spec managed.LoadSpec, opts LoadOpts) (managed.Loaded, error) {
 	now := time.Now()
 
-	// Phase 1: Write reservation (state=loading)
-	metadata := managed.Program{
-		LoadSpec:     spec,
-		UUID:         opts.UUID,
-		UserMetadata: opts.UserMetadata,
-		Tags:         nil,
-		Owner:        opts.Owner,
-		CreatedAt:    now,
-		State:        managed.StateLoading,
-		UpdatedAt:    now,
-	}
-
-	if err := m.store.Reserve(ctx, opts.UUID, metadata); err != nil {
-		return managed.Loaded{}, fmt.Errorf("create reservation: %w", err)
-	}
-
-	// Track whether pinning succeeded for cleanup
-	pinned := false
-	defer func() {
-		if pinned {
-			return
-		}
-		// Pinning failed or we're returning early - delete reservation
-		_ = m.store.DeleteReservation(ctx, opts.UUID)
-	}()
-
-	// Phase 2: Load and pin to final path directly
+	// Phase 1: Load into kernel and pin to bpffs
 	loaded, err := m.kernel.Load(ctx, spec)
 	if err != nil {
 		return managed.Loaded{}, fmt.Errorf("load program %s: %w", spec.ProgramName, err)
 	}
-	pinned = true
 	m.logger.Info("loaded program", "name", spec.ProgramName, "kernel_id", loaded.ID, "pin_path", spec.PinPath)
 
-	// Phase 3: Commit reservation (state=loaded)
-	if err := m.store.CommitReservation(ctx, opts.UUID, loaded.ID); err != nil {
-		m.logger.Error("commit failed", "kernel_id", loaded.ID, "error", err)
-		// Commit failed - unpin and mark error
-		rbErr := m.kernel.Unload(ctx, spec.PinPath)
-		if rbErr == nil {
-			m.logger.Info("rollback succeeded", "kernel_id", loaded.ID)
-			// Rollback succeeded - delete reservation
-			_ = m.store.DeleteReservation(ctx, opts.UUID)
-			return managed.Loaded{}, fmt.Errorf("commit reservation: %w", err)
+	// Phase 2: Persist metadata to DB (single transaction)
+	metadata := managed.Program{
+		LoadSpec:     spec,
+		UserMetadata: opts.UserMetadata,
+		Tags:         nil,
+		Owner:        opts.Owner,
+		CreatedAt:    now,
+	}
+
+	if err := m.store.Save(ctx, loaded.ID, metadata); err != nil {
+		m.logger.Error("persist failed, rolling back", "kernel_id", loaded.ID, "error", err)
+		// Cleanup kernel state
+		if rbErr := m.kernel.Unload(ctx, spec.PinPath); rbErr != nil {
+			m.logger.Error("rollback failed", "kernel_id", loaded.ID, "error", rbErr)
+			return managed.Loaded{}, errors.Join(
+				fmt.Errorf("persist metadata: %w", err),
+				fmt.Errorf("rollback pins at %q failed: %w", spec.PinPath, rbErr),
+			)
 		}
-		// Rollback also failed - mark as error for reconciliation
-		_ = m.store.MarkError(ctx, opts.UUID, fmt.Sprintf("commit failed: %v; rollback failed: %v", err, rbErr))
-		return managed.Loaded{}, errors.Join(
-			fmt.Errorf("commit reservation: %w", err),
-			fmt.Errorf("rollback pins at %q failed: %w", spec.PinPath, rbErr),
-		)
+		return managed.Loaded{}, fmt.Errorf("persist metadata: %w", err)
 	}
 
 	// Update returned program with complete info
-	loaded.UUID = opts.UUID
 	loaded.PinPath = filepath.Join(spec.PinPath, spec.ProgramName)
 	loaded.PinDir = spec.PinPath
 	return loaded, nil
 }
 
 // Unload removes a BPF program, its links, and metadata.
-//
-// Uses 2PC to ensure consistent state:
-//   - Phase 1: Mark state=unloading in DB
-//   - Phase 2: Unpin links, unpin program, delete from DB
-//
-// If phase 2 fails, the program remains in state=unloading which GC
-// can detect and clean up (no kernel program but DB entry exists).
 //
 // Pattern: FETCH -> COMPUTE -> EXECUTE
 func (m *Manager) Unload(ctx context.Context, kernelID uint32) error {
@@ -207,7 +157,7 @@ func (m *Manager) Unload(ctx context.Context, kernelID uint32) error {
 
 	m.logger.Info("unloading program", "kernel_id", kernelID, "links", len(links))
 
-	// EXECUTE: Run all actions (2PC semantics preserved by action order)
+	// EXECUTE: Run all actions
 	if err := m.executor.ExecuteAll(ctx, actions); err != nil {
 		return fmt.Errorf("execute unload actions: %w", err)
 	}
@@ -219,25 +169,21 @@ func (m *Manager) Unload(ctx context.Context, kernelID uint32) error {
 // computeUnloadActions is a pure function that computes the actions needed
 // to unload a program and its associated links.
 //
-// Action order preserves 2PC semantics:
-// 1. MarkProgramUnloading (Phase 1)
-// 2. DetachLink for each link (Phase 2 start)
-// 3. UnloadProgram (Phase 2 continue)
-// 4. DeleteProgram (Phase 2 complete)
+// Action order:
+// 1. DetachLink for each link
+// 2. UnloadProgram
+// 3. DeleteProgram
 func computeUnloadActions(kernelID uint32, pinPath string, links []managed.LinkSummary) []action.Action {
-	actions := []action.Action{
-		// Phase 1: Mark intent
-		action.MarkProgramUnloading{KernelID: kernelID},
-	}
+	var actions []action.Action
 
-	// Phase 2: Detach links
+	// Detach links first
 	for _, link := range links {
 		if link.PinPath != "" {
 			actions = append(actions, action.DetachLink{PinPath: link.PinPath})
 		}
 	}
 
-	// Phase 2: Unload program and delete metadata
+	// Unload program and delete metadata
 	actions = append(actions,
 		action.UnloadProgram{PinPath: pinPath},
 		action.DeleteProgram{KernelID: kernelID},
@@ -391,9 +337,9 @@ func (m *Manager) Get(ctx context.Context, kernelID uint32) (ProgramInfo, error)
 	var linksWithDetails []LinkWithDetails
 	for _, sl := range storedLinks {
 		// Fetch details for this link
-		_, details, err := m.store.GetLink(ctx, sl.UUID)
+		_, details, err := m.store.GetLink(ctx, sl.KernelLinkID)
 		if err != nil {
-			m.logger.Warn("failed to get link details", "uuid", sl.UUID, "error", err)
+			m.logger.Warn("failed to get link details", "kernel_link_id", sl.KernelLinkID, "error", err)
 			// Include summary only with nil details
 			linksWithDetails = append(linksWithDetails, LinkWithDetails{
 				Summary: sl,
@@ -460,17 +406,16 @@ func (m *Manager) AttachTracepoint(ctx context.Context, programKernelID uint32, 
 	}
 
 	// COMPUTE: Build save action from kernel result
-	linkUUID := googleuuid.New().String()
-	saveAction := computeAttachTracepointAction(linkUUID, programKernelID, kernelLink.ID, kernelLink.PinPath, group, name)
+	saveAction := computeAttachTracepointAction(programKernelID, kernelLink.ID, kernelLink.PinPath, group, name)
 
 	// EXECUTE: Save link metadata
 	if err := m.executor.Execute(ctx, saveAction); err != nil {
-		m.logger.Error("failed to save link metadata", "uuid", linkUUID, "error", err)
+		m.logger.Error("failed to save link metadata", "kernel_link_id", kernelLink.ID, "error", err)
 		// Don't fail the attachment - the link is already created in the kernel
 		// This is a metadata-only failure
 	} else {
 		m.logger.Info("attached tracepoint",
-			"link_uuid", linkUUID,
+			"kernel_link_id", kernelLink.ID,
 			"program_id", programKernelID,
 			"tracepoint", group+"/"+name,
 			"pin_path", kernelLink.PinPath)
@@ -481,13 +426,12 @@ func (m *Manager) AttachTracepoint(ctx context.Context, programKernelID uint32, 
 
 // computeAttachTracepointAction is a pure function that builds the save action
 // for a tracepoint attachment.
-func computeAttachTracepointAction(linkUUID string, programKernelID, kernelLinkID uint32, pinPath, group, name string) action.SaveTracepointLink {
+func computeAttachTracepointAction(programKernelID, kernelLinkID uint32, pinPath, group, name string) action.SaveTracepointLink {
 	return action.SaveTracepointLink{
 		Summary: managed.LinkSummary{
-			UUID:            linkUUID,
+			KernelLinkID:    kernelLinkID,
 			LinkType:        managed.LinkTypeTracepoint,
 			KernelProgramID: programKernelID,
-			KernelLinkID:    kernelLinkID,
 			PinPath:         pinPath,
 			CreatedAt:       time.Now(),
 		},
@@ -569,9 +513,7 @@ func (m *Manager) AttachXDP(ctx context.Context, programKernelID uint32, ifindex
 	}
 
 	// COMPUTE: Build save actions from kernel result
-	linkUUID := googleuuid.New().String()
 	saveActions := computeAttachXDPActions(
-		linkUUID,
 		programKernelID,
 		extensionLink.ID,
 		extensionLink.PinPath,
@@ -584,12 +526,12 @@ func (m *Manager) AttachXDP(ctx context.Context, programKernelID uint32, ifindex
 
 	// EXECUTE: Save dispatcher update and link metadata
 	if err := m.executor.ExecuteAll(ctx, saveActions); err != nil {
-		m.logger.Error("failed to save link metadata", "uuid", linkUUID, "error", err)
+		m.logger.Error("failed to save link metadata", "kernel_link_id", extensionLink.ID, "error", err)
 		// Don't fail the attachment - the link is already created in the kernel
 		// This is a metadata-only failure
 	} else {
 		m.logger.Info("attached XDP via dispatcher",
-			"link_uuid", linkUUID,
+			"kernel_link_id", extensionLink.ID,
 			"program_id", programKernelID,
 			"interface", ifname,
 			"ifindex", ifindex,
@@ -607,10 +549,9 @@ func (m *Manager) AttachXDP(ctx context.Context, programKernelID uint32, ifindex
 	}
 	// Shouldn't happen, but return a constructed summary as fallback
 	return managed.LinkSummary{
-		UUID:            linkUUID,
+		KernelLinkID:    extensionLink.ID,
 		LinkType:        managed.LinkTypeXDP,
 		KernelProgramID: programKernelID,
-		KernelLinkID:    extensionLink.ID,
 		PinPath:         extensionLink.PinPath,
 		CreatedAt:       time.Now(),
 	}, nil
@@ -619,7 +560,6 @@ func (m *Manager) AttachXDP(ctx context.Context, programKernelID uint32, ifindex
 // computeAttachXDPActions is a pure function that builds the actions needed
 // to save XDP attachment metadata (dispatcher update + link save).
 func computeAttachXDPActions(
-	linkUUID string,
 	programKernelID, kernelLinkID uint32,
 	pinPath, ifname string,
 	ifindex uint32,
@@ -635,10 +575,9 @@ func computeAttachXDPActions(
 		action.SaveDispatcher{State: updatedDispState},
 		action.SaveXDPLink{
 			Summary: managed.LinkSummary{
-				UUID:            linkUUID,
+				KernelLinkID:    kernelLinkID,
 				LinkType:        managed.LinkTypeXDP,
 				KernelProgramID: programKernelID,
-				KernelLinkID:    kernelLinkID,
 				PinPath:         pinPath,
 				CreatedAt:       time.Now(),
 			},
@@ -737,12 +676,12 @@ func (m *Manager) ListLinksByProgram(ctx context.Context, programKernelID uint32
 	return m.store.ListLinksByProgram(ctx, programKernelID)
 }
 
-// GetLink retrieves a link by UUID, returning both summary and type-specific details.
-func (m *Manager) GetLink(ctx context.Context, uuid string) (managed.LinkSummary, managed.LinkDetails, error) {
-	return m.store.GetLink(ctx, uuid)
+// GetLink retrieves a link by kernel link ID, returning both summary and type-specific details.
+func (m *Manager) GetLink(ctx context.Context, kernelLinkID uint32) (managed.LinkSummary, managed.LinkDetails, error) {
+	return m.store.GetLink(ctx, kernelLinkID)
 }
 
-// Detach removes a link by UUID.
+// Detach removes a link by kernel link ID.
 //
 // This detaches the link from the kernel (if pinned) and removes it from the
 // store. The associated program remains loaded.
@@ -752,11 +691,11 @@ func (m *Manager) GetLink(ctx context.Context, uuid string) (managed.LinkSummary
 // it is cleaned up automatically (pins removed and deleted from store).
 //
 // Pattern: FETCH -> COMPUTE -> EXECUTE
-func (m *Manager) Detach(ctx context.Context, linkUUID string) error {
+func (m *Manager) Detach(ctx context.Context, kernelLinkID uint32) error {
 	// FETCH: Get link summary and details
-	summary, details, err := m.store.GetLink(ctx, linkUUID)
+	summary, details, err := m.store.GetLink(ctx, kernelLinkID)
 	if err != nil {
-		return fmt.Errorf("get link %s: %w", linkUUID, err)
+		return fmt.Errorf("get link %d: %w", kernelLinkID, err)
 	}
 
 	// FETCH: Get dispatcher state if this is a dispatcher-based link
@@ -781,7 +720,7 @@ func (m *Manager) Detach(ctx context.Context, linkUUID string) error {
 
 	// Log before executing
 	m.logger.Info("detaching link",
-		"uuid", linkUUID,
+		"kernel_link_id", kernelLinkID,
 		"type", summary.LinkType,
 		"program_id", summary.KernelProgramID,
 		"pin_path", summary.PinPath)
@@ -791,7 +730,7 @@ func (m *Manager) Detach(ctx context.Context, linkUUID string) error {
 		return fmt.Errorf("execute detach actions: %w", err)
 	}
 
-	m.logger.Info("removed link", "uuid", linkUUID, "type", summary.LinkType, "program_id", summary.KernelProgramID)
+	m.logger.Info("removed link", "kernel_link_id", kernelLinkID, "type", summary.LinkType, "program_id", summary.KernelProgramID)
 	return nil
 }
 
@@ -806,7 +745,7 @@ func computeDetachActions(summary managed.LinkSummary, dispState *managed.Dispat
 	}
 
 	// Delete link from store
-	actions = append(actions, action.DeleteLink{UUID: summary.UUID})
+	actions = append(actions, action.DeleteLink{KernelLinkID: summary.KernelLinkID})
 
 	// Handle dispatcher cleanup if applicable
 	if dispState != nil {

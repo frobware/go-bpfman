@@ -1,5 +1,34 @@
 # Switch from UUIDs to Kernel IDs
 
+## Implementation Status
+
+| Phase | Description | Status |
+|-------|-------------|--------|
+| Phase 1 | Filesystem Structure (`prog_{id}`, `links/{id}`, etc.) | Not started |
+| Phase 2 | Protocol Extensions (ListLinks, GetLink RPCs) | Not started |
+| Phase 3 | Schema Migration (kernel_id as PK, drop UUID columns) | **Complete** |
+| Phase 4 | CLI Cleanup (remove LinkUUID, detach uses link_id) | **Complete** |
+
+### What's been done
+
+- Schema uses `kernel_id` as PRIMARY KEY for programs (no UUID column)
+- Schema uses `kernel_link_id` as PRIMARY KEY for links (no UUID column)
+- Removed `managed.Program.UUID`, `State`, `ErrorMessage`, `UpdatedAt` fields
+- Removed `managed.LinkSummary.UUID` field
+- Removed `managed.Loaded.UUID` field
+- Removed reservation pattern (`Reserve`, `CommitReservation`, `MarkError`)
+- Simplified to atomic load model (kernel first, DB persist on success)
+- CLI `detach` command uses `link-id` (uint32) instead of UUID
+- CLI `get link` command uses `link-id` (uint32) instead of UUID
+- GC simplified to orphan detection only (no state-based cleanup)
+
+### What remains
+
+- Filesystem paths still use timestamps, not `prog_{kernel_id}` naming
+- Root path is configurable RuntimeDirs, not fixed `/run/bpfman/fs/`
+- Protocol doesn't have ListLinks/GetLink RPCs (remote client returns ErrNotSupported)
+- Map paths don't follow `/run/bpfman/fs/maps/{prog_id}/{map_name}` convention
+
 ## Overview
 
 This document captures the plan to align bpfman's internal model with the

@@ -100,17 +100,17 @@ load_program() {
 # Step 2: Attach until max slots
 attach_until_full() {
     log_info "Step 2: Attaching XDP until max slots..."
-    LINK_UUIDS=()
+    LINK_IDS=()
     local max_slots=10
 
     for i in $(seq 1 $((max_slots + 2))); do
         local output
         output=$(bpfman attach xdp --program-id="$PROG_ID" lo 2>&1) || true
 
-        local uuid
-        uuid=$(echo "$output" | jq -r '.uuid // empty' 2>/dev/null) || true
+        local link_id
+        link_id=$(echo "$output" | jq -r '.kernel_link_id // empty' 2>/dev/null) || true
 
-        if [ -z "$uuid" ]; then
+        if [ -z "$link_id" ]; then
             if [ "$i" -gt "$max_slots" ]; then
                 log_info "Attach $i failed as expected (max slots reached)"
                 break
@@ -121,11 +121,11 @@ attach_until_full() {
             fi
         fi
 
-        LINK_UUIDS+=("$uuid")
-        log_info "Attach $i: $uuid"
+        LINK_IDS+=("$link_id")
+        log_info "Attach $i: kernel_link_id=$link_id"
     done
 
-    assert_eq "$max_slots" "${#LINK_UUIDS[@]}" "Should have created exactly $max_slots links"
+    assert_eq "$max_slots" "${#LINK_IDS[@]}" "Should have created exactly $max_slots links"
 }
 
 # Step 3: Verify dispatcher state
@@ -171,8 +171,8 @@ detach_all_links() {
     log_info "Step 4: Detaching all links..."
     local expected_count=10
 
-    for uuid in "${LINK_UUIDS[@]}"; do
-        bpfman detach "$uuid" 2>&1
+    for link_id in "${LINK_IDS[@]}"; do
+        bpfman detach "$link_id" 2>&1
         expected_count=$((expected_count - 1))
 
         local actual_count
@@ -183,10 +183,10 @@ detach_all_links() {
                 log_fail "Dispatcher should be deleted when num_extensions reaches 0"
                 exit 1
             fi
-            log_info "Detached $uuid -> Dispatcher DELETED"
+            log_info "Detached link_id=$link_id -> Dispatcher DELETED"
         else
             assert_eq "$expected_count" "$actual_count" "Extension count mismatch after detach"
-            log_info "Detached $uuid -> num_extensions: $actual_count"
+            log_info "Detached link_id=$link_id -> num_extensions: $actual_count"
         fi
     done
 }

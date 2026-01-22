@@ -3,18 +3,12 @@
 -- providing both polymorphic access and type-specific constraints.
 
 -- Programs table for managed BPF programs
+-- A row exists only after successful load - no reservation/loading states.
 CREATE TABLE IF NOT EXISTS managed_programs (
     kernel_id INTEGER PRIMARY KEY,
-    uuid TEXT,
     metadata TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    state TEXT NOT NULL DEFAULT 'loaded',
-    updated_at TEXT NOT NULL DEFAULT '',
-    error_message TEXT NOT NULL DEFAULT ''
+    created_at TEXT NOT NULL
 ) STRICT;
-
-CREATE INDEX IF NOT EXISTS idx_managed_programs_uuid ON managed_programs(uuid);
-CREATE INDEX IF NOT EXISTS idx_managed_programs_state ON managed_programs(state);
 
 -- Index table for fast metadata key/value lookups (used by CSI)
 CREATE TABLE IF NOT EXISTS program_metadata_index (
@@ -37,12 +31,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_program_name
 --------------------------------------------------------------------------------
 
 -- link_registry contains all common fields for managed links.
--- All polymorphic operations (list, delete by UUID) operate on this table.
+-- kernel_link_id is the primary key (kernel-assigned link ID).
 CREATE TABLE IF NOT EXISTS link_registry (
-    uuid TEXT PRIMARY KEY,
+    kernel_link_id INTEGER PRIMARY KEY,
     link_type TEXT NOT NULL,
     kernel_program_id INTEGER NOT NULL,
-    kernel_link_id INTEGER,
     pin_path TEXT,
     created_at TEXT NOT NULL,
 
@@ -60,58 +53,58 @@ CREATE INDEX IF NOT EXISTS idx_link_registry_type ON link_registry(link_type);
 
 -- Tracepoint links
 CREATE TABLE IF NOT EXISTS tracepoint_link_details (
-    uuid TEXT PRIMARY KEY,
+    kernel_link_id INTEGER PRIMARY KEY,
     tracepoint_group TEXT NOT NULL,
     tracepoint_name TEXT NOT NULL,
 
-    FOREIGN KEY (uuid)
-        REFERENCES link_registry(uuid)
+    FOREIGN KEY (kernel_link_id)
+        REFERENCES link_registry(kernel_link_id)
         ON DELETE CASCADE
 ) STRICT;
 
 -- Kprobe/Kretprobe links
 CREATE TABLE IF NOT EXISTS kprobe_link_details (
-    uuid TEXT PRIMARY KEY,
+    kernel_link_id INTEGER PRIMARY KEY,
     fn_name TEXT NOT NULL,
     offset INTEGER NOT NULL DEFAULT 0,
     retprobe INTEGER NOT NULL DEFAULT 0 CHECK (retprobe IN (0, 1)),
 
-    FOREIGN KEY (uuid)
-        REFERENCES link_registry(uuid)
+    FOREIGN KEY (kernel_link_id)
+        REFERENCES link_registry(kernel_link_id)
         ON DELETE CASCADE
 ) STRICT;
 
 -- Uprobe/Uretprobe links
 CREATE TABLE IF NOT EXISTS uprobe_link_details (
-    uuid TEXT PRIMARY KEY,
+    kernel_link_id INTEGER PRIMARY KEY,
     target TEXT NOT NULL,
     fn_name TEXT,
     offset INTEGER NOT NULL DEFAULT 0,
     pid INTEGER,
     retprobe INTEGER NOT NULL DEFAULT 0 CHECK (retprobe IN (0, 1)),
 
-    FOREIGN KEY (uuid)
-        REFERENCES link_registry(uuid)
+    FOREIGN KEY (kernel_link_id)
+        REFERENCES link_registry(kernel_link_id)
         ON DELETE CASCADE
 ) STRICT;
 
 -- Fentry links
 CREATE TABLE IF NOT EXISTS fentry_link_details (
-    uuid TEXT PRIMARY KEY,
+    kernel_link_id INTEGER PRIMARY KEY,
     fn_name TEXT NOT NULL,
 
-    FOREIGN KEY (uuid)
-        REFERENCES link_registry(uuid)
+    FOREIGN KEY (kernel_link_id)
+        REFERENCES link_registry(kernel_link_id)
         ON DELETE CASCADE
 ) STRICT;
 
 -- Fexit links
 CREATE TABLE IF NOT EXISTS fexit_link_details (
-    uuid TEXT PRIMARY KEY,
+    kernel_link_id INTEGER PRIMARY KEY,
     fn_name TEXT NOT NULL,
 
-    FOREIGN KEY (uuid)
-        REFERENCES link_registry(uuid)
+    FOREIGN KEY (kernel_link_id)
+        REFERENCES link_registry(kernel_link_id)
         ON DELETE CASCADE
 ) STRICT;
 
@@ -137,7 +130,7 @@ CREATE INDEX IF NOT EXISTS idx_dispatchers_lookup
 
 -- XDP links (dispatcher-based)
 CREATE TABLE IF NOT EXISTS xdp_link_details (
-    uuid TEXT PRIMARY KEY,
+    kernel_link_id INTEGER PRIMARY KEY,
     interface TEXT NOT NULL,
     ifindex INTEGER NOT NULL,
     priority INTEGER NOT NULL CHECK (priority >= 0),
@@ -148,8 +141,8 @@ CREATE TABLE IF NOT EXISTS xdp_link_details (
     dispatcher_id INTEGER NOT NULL,
     revision INTEGER NOT NULL,
 
-    FOREIGN KEY (uuid)
-        REFERENCES link_registry(uuid)
+    FOREIGN KEY (kernel_link_id)
+        REFERENCES link_registry(kernel_link_id)
         ON DELETE CASCADE
 ) STRICT;
 
@@ -159,7 +152,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_xdp_dispatcher_position
 
 -- TC links (dispatcher-based)
 CREATE TABLE IF NOT EXISTS tc_link_details (
-    uuid TEXT PRIMARY KEY,
+    kernel_link_id INTEGER PRIMARY KEY,
     interface TEXT NOT NULL,
     ifindex INTEGER NOT NULL,
     direction TEXT NOT NULL CHECK (direction IN ('ingress', 'egress')),
@@ -171,8 +164,8 @@ CREATE TABLE IF NOT EXISTS tc_link_details (
     dispatcher_id INTEGER NOT NULL,
     revision INTEGER NOT NULL,
 
-    FOREIGN KEY (uuid)
-        REFERENCES link_registry(uuid)
+    FOREIGN KEY (kernel_link_id)
+        REFERENCES link_registry(kernel_link_id)
         ON DELETE CASCADE
 ) STRICT;
 
@@ -182,7 +175,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_tc_dispatcher_position
 
 -- TCX links (kernel multi-attach)
 CREATE TABLE IF NOT EXISTS tcx_link_details (
-    uuid TEXT PRIMARY KEY,
+    kernel_link_id INTEGER PRIMARY KEY,
     interface TEXT NOT NULL,
     ifindex INTEGER NOT NULL,
     direction TEXT NOT NULL CHECK (direction IN ('ingress', 'egress')),
@@ -190,7 +183,7 @@ CREATE TABLE IF NOT EXISTS tcx_link_details (
     netns TEXT,
     nsid INTEGER,
 
-    FOREIGN KEY (uuid)
-        REFERENCES link_registry(uuid)
+    FOREIGN KEY (kernel_link_id)
+        REFERENCES link_registry(kernel_link_id)
         ON DELETE CASCADE
 ) STRICT;

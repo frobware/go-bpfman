@@ -57,10 +57,8 @@ func protoTypeToDomain(pt pb.BpfmanProgramType) bpfman.ProgramType {
 }
 
 // protoLoadResponseToLoaded converts a LoadResponseInfo to managed.Loaded.
-func protoLoadResponseToLoaded(resp *pb.LoadResponseInfo, uuid string) managed.Loaded {
-	loaded := managed.Loaded{
-		UUID: uuid,
-	}
+func protoLoadResponseToLoaded(resp *pb.LoadResponseInfo) managed.Loaded {
+	var loaded managed.Loaded
 
 	if resp.KernelInfo != nil {
 		loaded.ID = resp.KernelInfo.Id

@@ -30,11 +30,8 @@ func (e *Executor) Execute(ctx context.Context, a action.Action) error {
 	case action.DeleteProgram:
 		return e.store.Delete(ctx, a.KernelID)
 
-	case action.MarkProgramUnloading:
-		return e.store.MarkUnloading(ctx, a.KernelID)
-
 	case action.DeleteLink:
-		return e.store.DeleteLink(ctx, a.UUID)
+		return e.store.DeleteLink(ctx, a.KernelLinkID)
 
 	case action.SaveTracepointLink:
 		return e.store.SaveTracepointLink(ctx, a.Summary, a.Details)

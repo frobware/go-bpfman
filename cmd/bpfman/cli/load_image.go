@@ -5,8 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
-
-	"github.com/google/uuid"
+	"time"
 
 	"github.com/frobware/go-bpfman/pkg/bpfman"
 	"github.com/frobware/go-bpfman/pkg/bpfman/config"
@@ -187,9 +186,8 @@ func (c *LoadImageCmd) Run(cli *CLI) error {
 			return fmt.Errorf("invalid program type %q for program %q", spec.Type, spec.Name)
 		}
 
-		// Generate UUID and derive pin path
-		programUUID := uuid.New().String()
-		pinDir := filepath.Join(cli.RuntimeDirs().FS, programUUID)
+		// Generate a unique pin directory name using timestamp
+		pinDir := filepath.Join(cli.RuntimeDirs().FS, fmt.Sprintf("%d", time.Now().UnixNano()))
 
 		// Build load spec
 		loadSpec := managed.LoadSpec{
@@ -206,7 +204,6 @@ func (c *LoadImageCmd) Run(cli *CLI) error {
 		}
 
 		opts := manager.LoadOpts{
-			UUID:         programUUID,
 			UserMetadata: MetadataMap(c.Metadata),
 		}
 

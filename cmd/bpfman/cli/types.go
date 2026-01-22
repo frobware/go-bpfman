@@ -7,8 +7,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-
-	"github.com/google/uuid"
 )
 
 // ProgramID wraps a uint32 kernel program ID with hex support.
@@ -65,25 +63,6 @@ func ParseLinkID(s string) (LinkID, error) {
 	}
 
 	return LinkID{Value: uint32(val)}, nil
-}
-
-// LinkUUID wraps a UUID string for link identification.
-type LinkUUID struct {
-	Value string
-}
-
-// ParseLinkUUID parses and validates a link UUID.
-func ParseLinkUUID(s string) (LinkUUID, error) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return LinkUUID{}, fmt.Errorf("link UUID cannot be empty")
-	}
-
-	if _, err := uuid.Parse(s); err != nil {
-		return LinkUUID{}, fmt.Errorf("invalid UUID %q: %w", s, err)
-	}
-
-	return LinkUUID{Value: s}, nil
 }
 
 // KeyValue represents a KEY=VALUE metadata pair.

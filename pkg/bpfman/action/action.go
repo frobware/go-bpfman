@@ -27,18 +27,11 @@ type DeleteProgram struct {
 
 func (DeleteProgram) isAction() {}
 
-// MarkProgramUnloading transitions a program to unloading state.
-type MarkProgramUnloading struct {
-	KernelID uint32
-}
-
-func (MarkProgramUnloading) isAction() {}
-
 // Link actions - operations on link metadata
 
-// DeleteLink removes a link from the store.
+// DeleteLink removes a link from the store by kernel link ID.
 type DeleteLink struct {
-	UUID string
+	KernelLinkID uint32
 }
 
 func (DeleteLink) isAction() {}

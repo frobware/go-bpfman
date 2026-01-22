@@ -15,7 +15,6 @@ type LoadSpec struct {
 // Loaded is the result of successfully loading a program.
 type Loaded struct {
 	ID          uint32             `json:"id"`
-	UUID        string             `json:"uuid,omitempty"`
 	Name        string             `json:"name"`
 	ProgramType bpfman.ProgramType `json:"type"`
 	PinPath     string             `json:"pin_path"`

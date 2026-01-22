@@ -181,21 +181,8 @@ func (s *Server) Load(ctx context.Context, req *pb.LoadRequest) (*pb.LoadRespons
 		return nil, status.Error(codes.InvalidArgument, "at least one program info is required")
 	}
 
-	// Determine UUID from request or metadata
-	uuid := ""
-	if req.Uuid != nil && *req.Uuid != "" {
-		uuid = *req.Uuid
-	} else if u, ok := req.Metadata["bpfman.io/uuid"]; ok {
-		uuid = u
-	}
-
-	// Determine pin directory
-	var pinDir string
-	if uuid != "" {
-		pinDir = filepath.Join(s.dirs.FS, uuid)
-	} else {
-		pinDir = filepath.Join(s.dirs.FS, fmt.Sprintf("%d", time.Now().UnixNano()))
-	}
+	// Determine pin directory using timestamp for uniqueness
+	pinDir := filepath.Join(s.dirs.FS, fmt.Sprintf("%d", time.Now().UnixNano()))
 
 	resp := &pb.LoadResponse{
 		Programs: make([]*pb.LoadResponseInfo, 0, len(req.Info)),
@@ -212,7 +199,6 @@ func (s *Server) Load(ctx context.Context, req *pb.LoadRequest) (*pb.LoadRespons
 		}
 
 		opts := manager.LoadOpts{
-			UUID:         uuid,
 			UserMetadata: req.Metadata,
 			Owner:        "bpfman",
 		}

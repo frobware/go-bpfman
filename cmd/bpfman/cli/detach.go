@@ -10,7 +10,7 @@ import (
 
 // DetachCmd detaches a link.
 type DetachCmd struct {
-	LinkUUID LinkUUID `arg:"" name:"link-uuid" help:"UUID of the link to detach."`
+	LinkID LinkID `arg:"" name:"link-id" help:"Kernel link ID to detach."`
 }
 
 // Run executes the detach command.
@@ -22,13 +22,13 @@ func (c *DetachCmd) Run(cli *CLI) error {
 	defer b.Close()
 
 	ctx := context.Background()
-	if err := b.Detach(ctx, c.LinkUUID.Value); err != nil {
+	if err := b.Detach(ctx, c.LinkID.Value); err != nil {
 		if errors.Is(err, client.ErrNotSupported) {
-			return fmt.Errorf("detach by UUID is only available in local mode")
+			return fmt.Errorf("detach is only available in local mode")
 		}
 		return err
 	}
 
-	fmt.Printf("Detached link %s\n", c.LinkUUID.Value)
+	fmt.Printf("Detached link %d\n", c.LinkID.Value)
 	return nil
 }
