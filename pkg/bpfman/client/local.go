@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"github.com/frobware/go-bpfman/pkg/bpfman/config"
@@ -21,6 +22,11 @@ type LocalClient struct {
 // The returned client must be closed when no longer needed to release
 // database resources.
 func NewLocal(dirs config.RuntimeDirs, logger *slog.Logger) (*LocalClient, error) {
+	// Ensure directories exist and bpffs is mounted
+	if err := dirs.EnsureDirectories(); err != nil {
+		return nil, fmt.Errorf("runtime directory setup failed: %w", err)
+	}
+
 	mgr, cleanup, err := manager.Setup(dirs, logger)
 	if err != nil {
 		return nil, err

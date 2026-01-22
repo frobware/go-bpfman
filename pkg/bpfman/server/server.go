@@ -55,6 +55,11 @@ func Run(ctx context.Context, cfg RunConfig) error {
 		logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	}
 
+	// Ensure directories exist and bpffs is mounted
+	if err := dirs.EnsureDirectories(); err != nil {
+		return fmt.Errorf("runtime directory setup failed: %w", err)
+	}
+
 	// Open shared SQLite store
 	dbPath := dirs.DBPath()
 	st, err := sqlite.New(dbPath, logger)

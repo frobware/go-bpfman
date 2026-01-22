@@ -1,6 +1,11 @@
 package config
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
 func TestNewRuntimeDirs(t *testing.T) {
 	tests := []struct {
@@ -101,5 +106,94 @@ func TestDefaultRuntimeDirs(t *testing.T) {
 	d := DefaultRuntimeDirs()
 	if d.Base != "/run/bpfman" {
 		t.Errorf("DefaultRuntimeDirs().Base = %q, want /run/bpfman", d.Base)
+	}
+}
+
+func TestEnsureDirectories_CreatesDirs(t *testing.T) {
+	base := t.TempDir()
+	d := NewRuntimeDirs(base)
+
+	// EnsureDirectories will fail on bpffs validation (not mounted),
+	// but should create the regular directories first.
+	err := d.EnsureDirectories()
+	if err == nil {
+		t.Fatal("expected error due to bpffs not being mounted")
+	}
+
+	// Verify regular directories were created before the bpffs check failed
+	for _, dir := range []string{d.Base, d.DB, d.CSI, d.CSI_FS, d.Sock} {
+		if _, err := os.Stat(dir); os.IsNotExist(err) {
+			t.Errorf("directory %s was not created", dir)
+		}
+	}
+}
+
+func TestEnsureDirectories_FailsOnNonBpffs(t *testing.T) {
+	base := t.TempDir()
+	d := NewRuntimeDirs(base)
+
+	// Create fs/ as a regular directory (not bpffs)
+	if err := os.MkdirAll(d.FS, 0755); err != nil {
+		t.Fatalf("failed to create fs directory: %v", err)
+	}
+
+	err := d.EnsureDirectories()
+	if err == nil {
+		t.Fatal("expected error for non-bpffs filesystem")
+	}
+
+	if !strings.Contains(err.Error(), "not a bpffs") {
+		t.Errorf("expected 'not a bpffs' error, got: %v", err)
+	}
+}
+
+func TestEnsureDirectories_FailsOnMissingFS(t *testing.T) {
+	base := t.TempDir()
+	d := NewRuntimeDirs(base)
+
+	// Don't create fs/ directory - EnsureDirectories should fail
+	err := d.EnsureDirectories()
+	if err == nil {
+		t.Fatal("expected error for missing fs directory")
+	}
+
+	if !strings.Contains(err.Error(), "does not exist") {
+		t.Errorf("expected 'does not exist' error, got: %v", err)
+	}
+}
+
+func TestValidateBpffs_WithRealBpffs(t *testing.T) {
+	// Skip if /sys/fs/bpf is not available (e.g., in containers without bpffs)
+	if _, err := os.Stat("/sys/fs/bpf"); os.IsNotExist(err) {
+		t.Skip("/sys/fs/bpf not available")
+	}
+
+	err := validateBpffs("/sys/fs/bpf")
+	if err != nil {
+		t.Errorf("validateBpffs(/sys/fs/bpf) failed: %v", err)
+	}
+}
+
+func TestValidateBpffs_WithRegularDir(t *testing.T) {
+	dir := t.TempDir()
+
+	err := validateBpffs(dir)
+	if err == nil {
+		t.Error("expected error for regular directory")
+	}
+
+	if !strings.Contains(err.Error(), "not a bpffs") {
+		t.Errorf("expected 'not a bpffs' error, got: %v", err)
+	}
+}
+
+func TestValidateBpffs_WithNonexistentPath(t *testing.T) {
+	err := validateBpffs(filepath.Join(t.TempDir(), "nonexistent"))
+	if err == nil {
+		t.Error("expected error for nonexistent path")
+	}
+
+	if !strings.Contains(err.Error(), "does not exist") {
+		t.Errorf("expected 'does not exist' error, got: %v", err)
 	}
 }

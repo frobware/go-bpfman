@@ -1,6 +1,11 @@
 package config
 
-import "path/filepath"
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"syscall"
+)
 
 // RuntimeDirs holds all runtime directory paths for bpfman.
 //
@@ -120,4 +125,58 @@ func uitoa(n uint32) string {
 		n /= 10
 	}
 	return string(buf[i:])
+}
+
+// EnsureDirectories creates required directories and validates the bpffs mount.
+// Call this at startup to fail fast on permission or configuration issues.
+//
+// Creates these directories (on regular filesystem):
+//   - {base}/
+//   - {base}/db/
+//   - {base}/csi/
+//   - {base}/csi/fs/
+//   - {base}-sock/
+//
+// Validates that {base}/fs/ is a mounted bpffs filesystem.
+func (d RuntimeDirs) EnsureDirectories() error {
+	// Create regular directories
+	dirs := []string{
+		d.Base,
+		d.DB,
+		d.CSI,
+		d.CSI_FS,
+		d.Sock,
+	}
+	for _, dir := range dirs {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("failed to create directory %s: %w", dir, err)
+		}
+	}
+
+	// Validate bpffs mount
+	if err := validateBpffs(d.FS); err != nil {
+		return fmt.Errorf("bpffs validation failed at %s: %w", d.FS, err)
+	}
+
+	return nil
+}
+
+// bpfFsMagic is the magic number for bpffs (BPF_FS_MAGIC).
+const bpfFsMagic = 0xcafe4a11
+
+// validateBpffs checks that the given path is a mounted bpffs filesystem.
+func validateBpffs(path string) error {
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs(path, &stat); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("directory does not exist; mount bpffs at this path")
+		}
+		return fmt.Errorf("statfs failed: %w", err)
+	}
+
+	if stat.Type != bpfFsMagic {
+		return fmt.Errorf("not a bpffs filesystem (type=0x%x, expected=0x%x)", stat.Type, bpfFsMagic)
+	}
+
+	return nil
 }
