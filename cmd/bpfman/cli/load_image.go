@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/frobware/go-bpfman/pkg/bpfman"
 	"github.com/frobware/go-bpfman/pkg/bpfman/config"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/image/cosign"
@@ -146,7 +145,7 @@ func (c *LoadImageCmd) Run(cli *CLI) error {
 			}
 
 			// Warn if type mismatch (but don't fail - image metadata might be incomplete)
-			if expectedType != "" && expectedType != spec.Type {
+			if expectedType != "" && expectedType != spec.Type.String() {
 				logger.Warn("program type mismatch",
 					"program", spec.Name,
 					"specified", spec.Type,
@@ -178,18 +177,12 @@ func (c *LoadImageCmd) Run(cli *CLI) error {
 			"type", spec.Type,
 		)
 
-		// Parse program type
-		progType, ok := bpfman.ParseProgramType(spec.Type)
-		if !ok {
-			return fmt.Errorf("invalid program type %q for program %q", spec.Type, spec.Name)
-		}
-
 		// Build load spec
 		// PinPath is the bpffs root; actual paths are computed from kernel ID
 		loadSpec := managed.LoadSpec{
 			ObjectPath:  pulledImage.ObjectPath,
 			ProgramName: spec.Name,
-			ProgramType: progType,
+			ProgramType: spec.Type, // Already validated at parse time
 			PinPath:     cli.RuntimeDirs().FS,
 			GlobalData:  globalData,
 			ImageSource: &managed.ImageSource{

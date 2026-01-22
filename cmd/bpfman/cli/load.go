@@ -20,14 +20,14 @@ type LoadFileCmd struct {
 	MetadataFlags
 	GlobalDataFlags
 
-	ObjectPath  string `arg:"" name:"object" help:"Path to the BPF object file (.o)."`
-	ProgramName string `arg:"" name:"program" help:"Name of the BPF program to load."`
+	Path     string        `short:"p" name:"path" help:"Path to the BPF object file (.o)." required:""`
+	Programs []ProgramSpec `name:"programs" help:"TYPE:NAME program to load (can be repeated)." required:""`
 }
 
 // Run executes the load file command.
 func (c *LoadFileCmd) Run(cli *CLI) error {
 	// Validate object file exists
-	objPath, err := ParseObjectPath(c.ObjectPath)
+	objPath, err := ParseObjectPath(c.Path)
 	if err != nil {
 		return err
 	}
@@ -44,26 +44,32 @@ func (c *LoadFileCmd) Run(cli *CLI) error {
 		globalData = GlobalDataMap(c.GlobalData)
 	}
 
-	// Build load spec and options
-	// PinPath is the bpffs root; actual paths are computed from kernel ID
-	spec := managed.LoadSpec{
-		ObjectPath:  objPath.Path,
-		ProgramName: c.ProgramName,
-		PinPath:     cli.RuntimeDirs().FS,
-		GlobalData:  globalData,
-	}
-	opts := manager.LoadOpts{
-		UserMetadata: MetadataMap(c.Metadata),
-	}
-
-	// Load through client
 	ctx := context.Background()
-	loaded, err := b.Load(ctx, spec, opts)
-	if err != nil {
-		return err
+	results := make([]managed.Loaded, 0, len(c.Programs))
+
+	for _, prog := range c.Programs {
+		// Build load spec and options
+		// PinPath is the bpffs root; actual paths are computed from kernel ID
+		spec := managed.LoadSpec{
+			ObjectPath:  objPath.Path,
+			ProgramName: prog.Name,
+			ProgramType: prog.Type, // Already validated at parse time
+			PinPath:     cli.RuntimeDirs().FS,
+			GlobalData:  globalData,
+		}
+		opts := manager.LoadOpts{
+			UserMetadata: MetadataMap(c.Metadata),
+		}
+
+		// Load through client
+		loaded, err := b.Load(ctx, spec, opts)
+		if err != nil {
+			return fmt.Errorf("failed to load program %q: %w", prog.Name, err)
+		}
+		results = append(results, loaded)
 	}
 
-	output, err := json.MarshalIndent(loaded, "", "  ")
+	output, err := json.MarshalIndent(results, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal result: %w", err)
 	}

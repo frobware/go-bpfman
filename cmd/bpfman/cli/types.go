@@ -7,6 +7,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/frobware/go-bpfman/pkg/bpfman"
 )
 
 // ProgramID wraps a uint32 kernel program ID with hex support.
@@ -174,13 +176,14 @@ func GlobalDataMap(gds []GlobalData) map[string][]byte {
 	return m
 }
 
-// ProgramSpec represents a TYPE:NAME program specification for image loading.
+// ProgramSpec represents a TYPE:NAME program specification for loading.
 type ProgramSpec struct {
-	Type string // Program type (e.g., "xdp", "tc", "tracepoint")
-	Name string // Program name within the ELF
+	Type bpfman.ProgramType // Validated program type
+	Name string             // Program name within the ELF
 }
 
 // ParseProgramSpec parses a TYPE:NAME string (e.g., "xdp:xdp_pass").
+// The type is validated against known program types at parse time.
 func ParseProgramSpec(s string) (ProgramSpec, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -192,14 +195,19 @@ func ParseProgramSpec(s string) (ProgramSpec, error) {
 		return ProgramSpec{}, fmt.Errorf("invalid program spec %q: expected TYPE:NAME format (e.g., xdp:my_prog)", s)
 	}
 
-	progType := strings.TrimSpace(s[:idx])
+	typeStr := strings.TrimSpace(s[:idx])
 	progName := strings.TrimSpace(s[idx+1:])
 
-	if progType == "" {
+	if typeStr == "" {
 		return ProgramSpec{}, fmt.Errorf("invalid program spec %q: type cannot be empty", s)
 	}
 	if progName == "" {
 		return ProgramSpec{}, fmt.Errorf("invalid program spec %q: name cannot be empty", s)
+	}
+
+	progType, ok := bpfman.ParseProgramType(typeStr)
+	if !ok {
+		return ProgramSpec{}, fmt.Errorf("invalid program spec %q: unknown type %q (valid: xdp, tc, tcx, tracepoint, kprobe, kretprobe, uprobe, uretprobe, fentry, fexit)", s, typeStr)
 	}
 
 	return ProgramSpec{
