@@ -1,5 +1,7 @@
 package bpfman
 
+import "fmt"
+
 // ProgramType represents the type of BPF program.
 type ProgramType uint32
 
@@ -12,7 +14,10 @@ func (t ProgramType) MarshalText() ([]byte, error) {
 // UnmarshalText implements encoding.TextUnmarshaler so ProgramType
 // can be parsed from its string name in JSON.
 func (t *ProgramType) UnmarshalText(text []byte) error {
-	parsed, _ := ParseProgramType(string(text))
+	parsed, ok := ParseProgramType(string(text))
+	if !ok {
+		return fmt.Errorf("invalid program type: %q", string(text))
+	}
 	*t = parsed
 	return nil
 }

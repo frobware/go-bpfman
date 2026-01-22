@@ -217,7 +217,10 @@ func (k *Kernel) Load(ctx context.Context, spec managed.LoadSpec) (managed.Loade
 	if err != nil {
 		return managed.Loaded{}, fmt.Errorf("failed to get program info: %w", err)
 	}
-	progID, _ := info.ID()
+	progID, ok := info.ID()
+	if !ok {
+		return managed.Loaded{}, fmt.Errorf("failed to get program ID from kernel")
+	}
 	kernelID := uint32(progID)
 
 	// Track pinned paths for rollback on failure
@@ -257,7 +260,12 @@ func (k *Kernel) Load(ctx context.Context, spec managed.LoadSpec) (managed.Loade
 		pinnedPaths = append(pinnedPaths, mapPinPath)
 	}
 
-	ebpfMapIDs, _ := info.MapIDs()
+	ebpfMapIDs, ok := info.MapIDs()
+	if !ok {
+		cleanup()
+		os.Remove(mapsDir)
+		return managed.Loaded{}, fmt.Errorf("failed to get map IDs from kernel")
+	}
 	mapIDs := make([]uint32, len(ebpfMapIDs))
 	for i, mid := range ebpfMapIDs {
 		mapIDs[i] = uint32(mid)
@@ -534,8 +542,11 @@ func (k *Kernel) GetPinned(pinPath string) (*kernel.PinnedProgram, error) {
 		return nil, fmt.Errorf("failed to get program info: %w", err)
 	}
 
-	id, _ := info.ID()
-	ebpfMapIDs, _ := info.MapIDs()
+	id, ok := info.ID()
+	if !ok {
+		return nil, fmt.Errorf("failed to get program ID from kernel")
+	}
+	ebpfMapIDs, _ := info.MapIDs() // MapIDs may not be available on older kernels
 	mapIDs := make([]uint32, len(ebpfMapIDs))
 	for i, mid := range ebpfMapIDs {
 		mapIDs[i] = uint32(mid)
@@ -573,7 +584,10 @@ func (k *Kernel) LoadSingle(ctx context.Context, objectPath, programName, pinDir
 
 	// Get map info from the pin directory
 	var maps []kernel.PinnedMap
-	entries, _ := os.ReadDir(pinDir)
+	entries, err := os.ReadDir(pinDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read pin directory: %w", err)
+	}
 	for _, entry := range entries {
 		if entry.IsDir() || entry.Name() == programName {
 			continue
@@ -815,7 +829,11 @@ func (k *Kernel) AttachXDPDispatcher(ifindex int, pinDir string, numProgs int, p
 		lnk.Close()
 		return nil, fmt.Errorf("get dispatcher program info: %w", err)
 	}
-	progID, _ := progInfo.ID()
+	progID, ok := progInfo.ID()
+	if !ok {
+		lnk.Close()
+		return nil, fmt.Errorf("failed to get dispatcher program ID from kernel")
+	}
 	result.DispatcherID = uint32(progID)
 
 	// Get link info
@@ -902,7 +920,11 @@ func (k *Kernel) AttachXDPDispatcherWithPaths(ifindex int, progPinPath, linkPinP
 		lnk.Close()
 		return nil, fmt.Errorf("get dispatcher program info: %w", err)
 	}
-	progID, _ := progInfo.ID()
+	progID, ok := progInfo.ID()
+	if !ok {
+		lnk.Close()
+		return nil, fmt.Errorf("failed to get dispatcher program ID from kernel")
+	}
 	result.DispatcherID = uint32(progID)
 
 	// Get link info
