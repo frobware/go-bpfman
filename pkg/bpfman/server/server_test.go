@@ -499,17 +499,18 @@ func TestUnloadProgram_WhenProgramExists_RemovesIt(t *testing.T) {
 	assert.Equal(t, codes.NotFound, st.Code(), "expected NotFound")
 }
 
-// TestUnloadProgram_WhenProgramDoesNotExist_IsIdempotent verifies that:
+// TestUnloadProgram_WhenProgramDoesNotExist_ReturnsNotFound verifies that:
 //
 //	Given an empty server with no programs,
 //	When I try to unload a non-existent program,
-//	Then the operation succeeds (idempotent behaviour).
-func TestUnloadProgram_WhenProgramDoesNotExist_IsIdempotent(t *testing.T) {
+//	Then the operation returns NotFound (fail-fast).
+func TestUnloadProgram_WhenProgramDoesNotExist_ReturnsNotFound(t *testing.T) {
 	srv := newTestServer(t)
 	ctx := context.Background()
 
 	_, err := srv.Unload(ctx, &pb.UnloadRequest{Id: 999})
-	assert.NoError(t, err, "Unload of non-existent program should succeed")
+	require.Error(t, err, "Unload of non-existent program should fail")
+	assert.Contains(t, err.Error(), "not found", "expected NotFound error")
 }
 
 // TestLoadProgram_AfterUnload_NameBecomesAvailable verifies that:
