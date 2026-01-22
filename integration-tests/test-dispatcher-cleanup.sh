@@ -20,9 +20,14 @@
 
 set -euo pipefail
 
+# Configuration - can be overridden via environment
 BPFMAN="${BPFMAN:-./bin/bpfman}"
-DB_PATH="${DB_PATH:-/run/bpfman/state.db}"
-BPFFS_XDP="/sys/fs/bpf/bpfman/xdp"
+RUNTIME_DIR="${RUNTIME_DIR:-/tmp/bpfman-integration-test-$$}"
+
+# Derived paths (matching RuntimeDirs structure)
+DB_PATH="$RUNTIME_DIR/db/store.db"
+BPFFS_ROOT="$RUNTIME_DIR/fs"
+BPFFS_XDP="$BPFFS_ROOT/xdp"
 
 # Colours for output
 RED='\033[0;31m'
@@ -36,12 +41,22 @@ log_error() { echo -e "${RED}[ERROR]${NC} $*"; }
 log_pass() { echo -e "${GREEN}[PASS]${NC} $*"; }
 log_fail() { echo -e "${RED}[FAIL]${NC} $*"; }
 
+bpfman() {
+    sudo "$BPFMAN" --runtime-dir="$RUNTIME_DIR" "$@"
+}
+
 cleanup() {
     log_info "Cleaning up..."
     # Unload any test programs
     if [ -n "${PROG_ID:-}" ]; then
-        sudo "$BPFMAN" unload "$PROG_ID" 2>/dev/null || true
+        bpfman unload "$PROG_ID" 2>/dev/null || true
     fi
+    # Unmount bpffs if mounted
+    if mountpoint -q "$BPFFS_ROOT" 2>/dev/null; then
+        sudo umount "$BPFFS_ROOT" 2>/dev/null || true
+    fi
+    # Remove runtime directory
+    sudo rm -rf "$RUNTIME_DIR" "${RUNTIME_DIR}-sock" 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -58,19 +73,20 @@ assert_eq() {
 # Ensure clean initial state
 ensure_clean_state() {
     log_info "Ensuring clean initial state..."
-    sudo sqlite3 "$DB_PATH" "DELETE FROM dispatchers;" 2>/dev/null || true
-    sudo rm -rf "$BPFFS_XDP"/dispatcher_* 2>/dev/null || true
+    log_info "Using runtime directory: $RUNTIME_DIR"
 
-    local disp_count
-    disp_count=$(sudo sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM dispatchers;" 2>/dev/null || echo "0")
-    assert_eq "0" "$disp_count" "Initial dispatcher count should be 0"
+    # Clean up any previous run
+    if mountpoint -q "$BPFFS_ROOT" 2>/dev/null; then
+        sudo umount "$BPFFS_ROOT" 2>/dev/null || true
+    fi
+    sudo rm -rf "$RUNTIME_DIR" "${RUNTIME_DIR}-sock" 2>/dev/null || true
 }
 
 # Step 1: Load XDP program
 load_program() {
     log_info "Step 1: Loading XDP program..."
     local output
-    output=$(sudo "$BPFMAN" load image --program=xdp:pass quay.io/bpfman-bytecode/xdp_pass:latest 2>&1)
+    output=$(bpfman load image --program=xdp:pass quay.io/bpfman-bytecode/xdp_pass:latest 2>&1)
     PROG_ID=$(echo "$output" | jq -r '.[0].id')
 
     if [ -z "$PROG_ID" ] || [ "$PROG_ID" = "null" ]; then
@@ -89,7 +105,7 @@ attach_until_full() {
 
     for i in $(seq 1 $((max_slots + 2))); do
         local output
-        output=$(sudo "$BPFMAN" attach xdp --program-id="$PROG_ID" lo 2>&1) || true
+        output=$(bpfman attach xdp --program-id="$PROG_ID" lo 2>&1) || true
 
         local uuid
         uuid=$(echo "$output" | jq -r '.uuid // empty' 2>/dev/null) || true
@@ -156,7 +172,7 @@ detach_all_links() {
     local expected_count=10
 
     for uuid in "${LINK_UUIDS[@]}"; do
-        sudo "$BPFMAN" detach "$uuid" 2>&1
+        bpfman detach "$uuid" 2>&1
         expected_count=$((expected_count - 1))
 
         local actual_count
@@ -178,7 +194,7 @@ detach_all_links() {
 # Step 5: Unload program
 unload_program() {
     log_info "Step 5: Unloading program..."
-    sudo "$BPFMAN" unload "$PROG_ID" 2>&1
+    bpfman unload "$PROG_ID" 2>&1
     PROG_ID=""  # Clear so cleanup doesn't try again
     log_info "Program unloaded"
 }
