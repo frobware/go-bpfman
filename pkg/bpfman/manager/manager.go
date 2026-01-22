@@ -148,15 +148,14 @@ func (m *Manager) Load(ctx context.Context, spec managed.LoadSpec, opts LoadOpts
 func (m *Manager) Unload(ctx context.Context, kernelID uint32) error {
 	// FETCH: Get metadata and links (for link cleanup)
 	_, err := m.store.Get(ctx, kernelID)
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		return err
-	}
-	if errors.Is(err, store.ErrNotFound) {
-		// No metadata - nothing to unload from our perspective
-		return nil
+	if err != nil {
+		return fmt.Errorf("program %d: %w", kernelID, err)
 	}
 
-	links, _ := m.store.ListLinksByProgram(ctx, kernelID)
+	links, err := m.store.ListLinksByProgram(ctx, kernelID)
+	if err != nil {
+		return fmt.Errorf("list links for program %d: %w", kernelID, err)
+	}
 
 	// COMPUTE: Build paths from convention (kernel ID + bpffs root)
 	progPinPath := filepath.Join(m.dirs.FS, fmt.Sprintf("prog_%d", kernelID))
@@ -433,16 +432,14 @@ func (m *Manager) AttachTracepoint(ctx context.Context, programKernelID uint32, 
 
 	// EXECUTE: Save link metadata
 	if err := m.executor.Execute(ctx, saveAction); err != nil {
-		m.logger.Error("failed to save link metadata", "kernel_link_id", kernelLink.ID, "error", err)
-		// Don't fail the attachment - the link is already created in the kernel
-		// This is a metadata-only failure
-	} else {
-		m.logger.Info("attached tracepoint",
-			"kernel_link_id", kernelLink.ID,
-			"program_id", programKernelID,
-			"tracepoint", group+"/"+name,
-			"pin_path", kernelLink.PinPath)
+		return managed.LinkSummary{}, fmt.Errorf("save link metadata: %w", err)
 	}
+
+	m.logger.Info("attached tracepoint",
+		"kernel_link_id", kernelLink.ID,
+		"program_id", programKernelID,
+		"tracepoint", group+"/"+name,
+		"pin_path", kernelLink.PinPath)
 
 	return saveAction.Summary, nil
 }
@@ -549,20 +546,18 @@ func (m *Manager) AttachXDP(ctx context.Context, programKernelID uint32, ifindex
 
 	// EXECUTE: Save dispatcher update and link metadata
 	if err := m.executor.ExecuteAll(ctx, saveActions); err != nil {
-		m.logger.Error("failed to save link metadata", "kernel_link_id", extensionLink.ID, "error", err)
-		// Don't fail the attachment - the link is already created in the kernel
-		// This is a metadata-only failure
-	} else {
-		m.logger.Info("attached XDP via dispatcher",
-			"kernel_link_id", extensionLink.ID,
-			"program_id", programKernelID,
-			"interface", ifname,
-			"ifindex", ifindex,
-			"nsid", nsid,
-			"position", position,
-			"revision", dispState.Revision,
-			"pin_path", extensionLink.PinPath)
+		return managed.LinkSummary{}, fmt.Errorf("save link metadata: %w", err)
 	}
+
+	m.logger.Info("attached XDP via dispatcher",
+		"kernel_link_id", extensionLink.ID,
+		"program_id", programKernelID,
+		"interface", ifname,
+		"ifindex", ifindex,
+		"nsid", nsid,
+		"position", position,
+		"revision", dispState.Revision,
+		"pin_path", extensionLink.PinPath)
 
 	// Extract summary from computed action for return value
 	for _, a := range saveActions {
