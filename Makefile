@@ -60,7 +60,7 @@ test:
 # bpfman targets
 # Note: bpfman-proto is not a dependency here since pb files are committed.
 # Run 'make bpfman-proto' explicitly after modifying proto/bpfman.proto.
-bpfman-build: dispatchers-build
+bpfman-build:
 	go fmt ./...
 	go vet ./...
 	CGO_ENABLED=0 go build -mod=vendor -o $(BIN_DIR)/bpfman ./cmd/bpfman

@@ -4,10 +4,17 @@ ARG BUILDER_IMAGE=registry.access.redhat.com/ubi9/go-toolset:1.25
 FROM ${BUILDER_IMAGE} AS builder
 
 WORKDIR /build
+
 COPY go.mod go.sum Makefile ./
 COPY vendor/ vendor/
 COPY cmd/ cmd/
 COPY pkg/ pkg/
+
+RUN  mkdir -p pkg/bpfman/dispatcher
+
+# TODO - build in-situ.
+COPY dispatchers/tc_dispatcher.bpf.o pkg/bpfman/dispatcher/
+COPY dispatchers/xdp_dispatcher_v2.bpf.o pkg/bpfman/dispatcher/
 
 RUN --mount=type=cache,target=/root/.cache/go-build \
     make bpfman-build
