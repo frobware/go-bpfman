@@ -67,6 +67,15 @@ type Store interface {
 	ProgramStore
 	LinkStore
 	DispatcherStore
+	Transactional
+}
+
+// Transactional provides atomic execution of store operations.
+// The callback receives a Store that participates in the transaction.
+// If the callback returns nil, the transaction commits.
+// If the callback returns an error, the transaction rolls back.
+type Transactional interface {
+	RunInTransaction(ctx context.Context, fn func(Store) error) error
 }
 
 // ProgramReader reads program metadata from the store.
