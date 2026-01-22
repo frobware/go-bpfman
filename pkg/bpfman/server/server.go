@@ -342,6 +342,200 @@ func (s *Server) PullBytecode(ctx context.Context, req *pb.PullBytecodeRequest) 
 	return nil, status.Error(codes.Unimplemented, "PullBytecode not yet implemented")
 }
 
+// ListLinks implements the ListLinks RPC method.
+func (s *Server) ListLinks(ctx context.Context, req *pb.ListLinksRequest) (*pb.ListLinksResponse, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var links []managed.LinkSummary
+	var err error
+
+	if req.ProgramId != nil {
+		links, err = s.store.ListLinksByProgram(ctx, *req.ProgramId)
+	} else {
+		links, err = s.store.ListLinks(ctx)
+	}
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to list links: %v", err)
+	}
+
+	resp := &pb.ListLinksResponse{
+		Links: make([]*pb.LinkInfo, 0, len(links)),
+	}
+	for _, link := range links {
+		resp.Links = append(resp.Links, &pb.LinkInfo{
+			Summary: linkSummaryToProto(link),
+		})
+	}
+
+	return resp, nil
+}
+
+// GetLink implements the GetLink RPC method.
+func (s *Server) GetLink(ctx context.Context, req *pb.GetLinkRequest) (*pb.GetLinkResponse, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	summary, details, err := s.store.GetLink(ctx, req.KernelLinkId)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, status.Errorf(codes.NotFound, "link with ID %d not found", req.KernelLinkId)
+	}
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to get link: %v", err)
+	}
+
+	return &pb.GetLinkResponse{
+		Link: &pb.LinkInfo{
+			Summary: linkSummaryToProto(summary),
+			Details: linkDetailsToProto(details),
+		},
+	}, nil
+}
+
+// linkSummaryToProto converts a managed.LinkSummary to protobuf.
+func linkSummaryToProto(s managed.LinkSummary) *pb.LinkSummary {
+	return &pb.LinkSummary{
+		KernelLinkId:    s.KernelLinkID,
+		LinkType:        linkTypeToProto(s.LinkType),
+		KernelProgramId: s.KernelProgramID,
+		PinPath:         s.PinPath,
+		CreatedAt:       s.CreatedAt.Format(time.RFC3339),
+	}
+}
+
+// linkTypeToProto converts a managed.LinkType to protobuf.
+func linkTypeToProto(t managed.LinkType) pb.BpfmanLinkType {
+	switch t {
+	case managed.LinkTypeTracepoint:
+		return pb.BpfmanLinkType_LINK_TYPE_TRACEPOINT
+	case managed.LinkTypeKprobe:
+		return pb.BpfmanLinkType_LINK_TYPE_KPROBE
+	case managed.LinkTypeKretprobe:
+		return pb.BpfmanLinkType_LINK_TYPE_KRETPROBE
+	case managed.LinkTypeUprobe:
+		return pb.BpfmanLinkType_LINK_TYPE_UPROBE
+	case managed.LinkTypeUretprobe:
+		return pb.BpfmanLinkType_LINK_TYPE_URETPROBE
+	case managed.LinkTypeFentry:
+		return pb.BpfmanLinkType_LINK_TYPE_FENTRY
+	case managed.LinkTypeFexit:
+		return pb.BpfmanLinkType_LINK_TYPE_FEXIT
+	case managed.LinkTypeXDP:
+		return pb.BpfmanLinkType_LINK_TYPE_XDP
+	case managed.LinkTypeTC:
+		return pb.BpfmanLinkType_LINK_TYPE_TC
+	case managed.LinkTypeTCX:
+		return pb.BpfmanLinkType_LINK_TYPE_TCX
+	default:
+		return pb.BpfmanLinkType_LINK_TYPE_UNSPECIFIED
+	}
+}
+
+// linkDetailsToProto converts managed.LinkDetails to protobuf.
+func linkDetailsToProto(d managed.LinkDetails) *pb.LinkDetails {
+	if d == nil {
+		return nil
+	}
+
+	switch details := d.(type) {
+	case managed.TracepointDetails:
+		return &pb.LinkDetails{
+			Details: &pb.LinkDetails_Tracepoint{
+				Tracepoint: &pb.TracepointLinkDetails{
+					Group: details.Group,
+					Name:  details.Name,
+				},
+			},
+		}
+	case managed.KprobeDetails:
+		return &pb.LinkDetails{
+			Details: &pb.LinkDetails_Kprobe{
+				Kprobe: &pb.KprobeLinkDetails{
+					FnName:   details.FnName,
+					Offset:   details.Offset,
+					Retprobe: details.Retprobe,
+				},
+			},
+		}
+	case managed.UprobeDetails:
+		return &pb.LinkDetails{
+			Details: &pb.LinkDetails_Uprobe{
+				Uprobe: &pb.UprobeLinkDetails{
+					Target:   details.Target,
+					FnName:   details.FnName,
+					Offset:   details.Offset,
+					Pid:      details.PID,
+					Retprobe: details.Retprobe,
+				},
+			},
+		}
+	case managed.FentryDetails:
+		return &pb.LinkDetails{
+			Details: &pb.LinkDetails_Fentry{
+				Fentry: &pb.FentryLinkDetails{
+					FnName: details.FnName,
+				},
+			},
+		}
+	case managed.FexitDetails:
+		return &pb.LinkDetails{
+			Details: &pb.LinkDetails_Fexit{
+				Fexit: &pb.FexitLinkDetails{
+					FnName: details.FnName,
+				},
+			},
+		}
+	case managed.XDPDetails:
+		return &pb.LinkDetails{
+			Details: &pb.LinkDetails_Xdp{
+				Xdp: &pb.XDPLinkDetails{
+					Interface:    details.Interface,
+					Ifindex:      details.Ifindex,
+					Priority:     details.Priority,
+					Position:     details.Position,
+					ProceedOn:    details.ProceedOn,
+					Netns:        details.Netns,
+					Nsid:         details.Nsid,
+					DispatcherId: details.DispatcherID,
+					Revision:     details.Revision,
+				},
+			},
+		}
+	case managed.TCDetails:
+		return &pb.LinkDetails{
+			Details: &pb.LinkDetails_Tc{
+				Tc: &pb.TCLinkDetails{
+					Interface:    details.Interface,
+					Ifindex:      details.Ifindex,
+					Direction:    details.Direction,
+					Priority:     details.Priority,
+					Position:     details.Position,
+					ProceedOn:    details.ProceedOn,
+					Netns:        details.Netns,
+					Nsid:         details.Nsid,
+					DispatcherId: details.DispatcherID,
+					Revision:     details.Revision,
+				},
+			},
+		}
+	case managed.TCXDetails:
+		return &pb.LinkDetails{
+			Details: &pb.LinkDetails_Tcx{
+				Tcx: &pb.TCXLinkDetails{
+					Interface: details.Interface,
+					Ifindex:   details.Ifindex,
+					Direction: details.Direction,
+					Priority:  details.Priority,
+					Netns:     details.Netns,
+					Nsid:      details.Nsid,
+				},
+			},
+		}
+	default:
+		return nil
+	}
+}
+
 // serve starts the gRPC server on the given socket path and optionally on TCP.
 func (s *Server) serve(ctx context.Context, socketPath, tcpAddr string) error {
 	// Open SQLite store if not already set (e.g., when using newWithStore)

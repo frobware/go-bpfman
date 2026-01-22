@@ -1,6 +1,8 @@
 package client
 
 import (
+	"time"
+
 	"github.com/frobware/go-bpfman/pkg/bpfman"
 	"github.com/frobware/go-bpfman/pkg/bpfman/kernel"
 	"github.com/frobware/go-bpfman/pkg/bpfman/managed"
@@ -162,4 +164,137 @@ func protoGetResponseToInfo(resp *pb.GetResponse, kernelID uint32) manager.Progr
 	}
 
 	return info
+}
+
+// protoLinkTypeToManaged converts a protobuf link type to managed.LinkType.
+func protoLinkTypeToManaged(t pb.BpfmanLinkType) managed.LinkType {
+	switch t {
+	case pb.BpfmanLinkType_LINK_TYPE_TRACEPOINT:
+		return managed.LinkTypeTracepoint
+	case pb.BpfmanLinkType_LINK_TYPE_KPROBE:
+		return managed.LinkTypeKprobe
+	case pb.BpfmanLinkType_LINK_TYPE_KRETPROBE:
+		return managed.LinkTypeKretprobe
+	case pb.BpfmanLinkType_LINK_TYPE_UPROBE:
+		return managed.LinkTypeUprobe
+	case pb.BpfmanLinkType_LINK_TYPE_URETPROBE:
+		return managed.LinkTypeUretprobe
+	case pb.BpfmanLinkType_LINK_TYPE_FENTRY:
+		return managed.LinkTypeFentry
+	case pb.BpfmanLinkType_LINK_TYPE_FEXIT:
+		return managed.LinkTypeFexit
+	case pb.BpfmanLinkType_LINK_TYPE_XDP:
+		return managed.LinkTypeXDP
+	case pb.BpfmanLinkType_LINK_TYPE_TC:
+		return managed.LinkTypeTC
+	case pb.BpfmanLinkType_LINK_TYPE_TCX:
+		return managed.LinkTypeTCX
+	default:
+		return ""
+	}
+}
+
+// protoLinkSummaryToManaged converts a protobuf LinkSummary to managed.LinkSummary.
+func protoLinkSummaryToManaged(s *pb.LinkSummary) managed.LinkSummary {
+	if s == nil {
+		return managed.LinkSummary{}
+	}
+
+	createdAt, _ := time.Parse(time.RFC3339, s.CreatedAt)
+
+	return managed.LinkSummary{
+		KernelLinkID:    s.KernelLinkId,
+		LinkType:        protoLinkTypeToManaged(s.LinkType),
+		KernelProgramID: s.KernelProgramId,
+		PinPath:         s.PinPath,
+		CreatedAt:       createdAt,
+	}
+}
+
+// protoLinkDetailsToManaged converts a protobuf LinkDetails to managed.LinkDetails.
+func protoLinkDetailsToManaged(d *pb.LinkDetails) managed.LinkDetails {
+	if d == nil {
+		return nil
+	}
+
+	switch details := d.Details.(type) {
+	case *pb.LinkDetails_Tracepoint:
+		return managed.TracepointDetails{
+			Group: details.Tracepoint.Group,
+			Name:  details.Tracepoint.Name,
+		}
+	case *pb.LinkDetails_Kprobe:
+		return managed.KprobeDetails{
+			FnName:   details.Kprobe.FnName,
+			Offset:   details.Kprobe.Offset,
+			Retprobe: details.Kprobe.Retprobe,
+		}
+	case *pb.LinkDetails_Uprobe:
+		return managed.UprobeDetails{
+			Target:   details.Uprobe.Target,
+			FnName:   details.Uprobe.FnName,
+			Offset:   details.Uprobe.Offset,
+			PID:      details.Uprobe.Pid,
+			Retprobe: details.Uprobe.Retprobe,
+		}
+	case *pb.LinkDetails_Fentry:
+		return managed.FentryDetails{
+			FnName: details.Fentry.FnName,
+		}
+	case *pb.LinkDetails_Fexit:
+		return managed.FexitDetails{
+			FnName: details.Fexit.FnName,
+		}
+	case *pb.LinkDetails_Xdp:
+		return managed.XDPDetails{
+			Interface:    details.Xdp.Interface,
+			Ifindex:      details.Xdp.Ifindex,
+			Priority:     details.Xdp.Priority,
+			Position:     details.Xdp.Position,
+			ProceedOn:    details.Xdp.ProceedOn,
+			Netns:        details.Xdp.Netns,
+			Nsid:         details.Xdp.Nsid,
+			DispatcherID: details.Xdp.DispatcherId,
+			Revision:     details.Xdp.Revision,
+		}
+	case *pb.LinkDetails_Tc:
+		return managed.TCDetails{
+			Interface:    details.Tc.Interface,
+			Ifindex:      details.Tc.Ifindex,
+			Direction:    details.Tc.Direction,
+			Priority:     details.Tc.Priority,
+			Position:     details.Tc.Position,
+			ProceedOn:    details.Tc.ProceedOn,
+			Netns:        details.Tc.Netns,
+			Nsid:         details.Tc.Nsid,
+			DispatcherID: details.Tc.DispatcherId,
+			Revision:     details.Tc.Revision,
+		}
+	case *pb.LinkDetails_Tcx:
+		return managed.TCXDetails{
+			Interface: details.Tcx.Interface,
+			Ifindex:   details.Tcx.Ifindex,
+			Direction: details.Tcx.Direction,
+			Priority:  details.Tcx.Priority,
+			Netns:     details.Tcx.Netns,
+			Nsid:      details.Tcx.Nsid,
+		}
+	default:
+		return nil
+	}
+}
+
+// protoListLinksResponseToSummaries converts a ListLinksResponse to []managed.LinkSummary.
+func protoListLinksResponseToSummaries(resp *pb.ListLinksResponse) []managed.LinkSummary {
+	if resp == nil || len(resp.Links) == 0 {
+		return nil
+	}
+
+	result := make([]managed.LinkSummary, 0, len(resp.Links))
+	for _, link := range resp.Links {
+		if link.Summary != nil {
+			result = append(result, protoLinkSummaryToManaged(link.Summary))
+		}
+	}
+	return result
 }

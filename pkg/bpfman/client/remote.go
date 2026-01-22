@@ -178,19 +178,33 @@ func (c *RemoteClient) Detach(ctx context.Context, kernelLinkID uint32) error {
 	return translateGRPCError(err)
 }
 
-// ListLinks is not available via gRPC.
+// ListLinks returns all managed links via gRPC.
 func (c *RemoteClient) ListLinks(ctx context.Context) ([]managed.LinkSummary, error) {
-	return nil, fmt.Errorf("ListLinks: %w", ErrNotSupported)
+	resp, err := c.client.ListLinks(ctx, &pb.ListLinksRequest{})
+	if err != nil {
+		return nil, translateGRPCError(err)
+	}
+	return protoListLinksResponseToSummaries(resp), nil
 }
 
-// ListLinksByProgram is not available via gRPC.
+// ListLinksByProgram returns all links for a given program via gRPC.
 func (c *RemoteClient) ListLinksByProgram(ctx context.Context, programKernelID uint32) ([]managed.LinkSummary, error) {
-	return nil, fmt.Errorf("ListLinksByProgram: %w", ErrNotSupported)
+	resp, err := c.client.ListLinks(ctx, &pb.ListLinksRequest{ProgramId: &programKernelID})
+	if err != nil {
+		return nil, translateGRPCError(err)
+	}
+	return protoListLinksResponseToSummaries(resp), nil
 }
 
-// GetLink is not available via gRPC.
+// GetLink retrieves a link by kernel link ID via gRPC.
 func (c *RemoteClient) GetLink(ctx context.Context, kernelLinkID uint32) (managed.LinkSummary, managed.LinkDetails, error) {
-	return managed.LinkSummary{}, nil, fmt.Errorf("GetLink: %w", ErrNotSupported)
+	resp, err := c.client.GetLink(ctx, &pb.GetLinkRequest{KernelLinkId: kernelLinkID})
+	if err != nil {
+		return managed.LinkSummary{}, nil, translateGRPCError(err)
+	}
+	summary := protoLinkSummaryToManaged(resp.Link.Summary)
+	details := protoLinkDetailsToManaged(resp.Link.Details)
+	return summary, details, nil
 }
 
 // PlanGC is a local-only operation.
