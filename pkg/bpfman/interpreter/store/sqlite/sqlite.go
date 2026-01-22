@@ -87,6 +87,26 @@
 // This implementation uses DEFERRED because: (1) Go's database/sql does not
 // expose SQLite-specific transaction types, and (2) the application-level
 // RWMutex already prevents concurrent writers, making IMMEDIATE unnecessary.
+//
+// # Prepared Statements
+//
+// All SQL queries use prepared statements rather than inline SQL strings.
+// When a query is executed with an inline string (e.g., db.QueryContext(ctx,
+// "SELECT ...")), SQLite must parse the SQL text, validate it, and generate
+// a query plan on every call. Prepared statements move this work to
+// initialisation time: the SQL is parsed and compiled once, and subsequent
+// executions reuse the compiled representation.
+//
+// Benefits:
+//
+//   - Reduced CPU overhead: parsing and planning happen once, not per-query
+//   - Predictable latency: no parsing jitter during normal operations
+//   - Cleaner code: SQL is defined in one place (prepareStatements) rather
+//     than scattered across methods
+//
+// The cost is modest additional complexity in managing statement lifecycles,
+// particularly for transactions where tx.StmtContext must create transaction-
+// bound handles from the master statements. See RunInTransaction for details.
 package sqlite
 
 import (
@@ -123,6 +143,50 @@ type Store struct {
 	db     *sql.DB // original connection, used for BeginTx
 	conn   dbConn  // active connection (db or tx)
 	logger *slog.Logger
+
+	// Prepared statements for program operations
+	stmtGetProgram                 *sql.Stmt
+	stmtSaveProgram                *sql.Stmt
+	stmtDeleteProgramMetadataIndex *sql.Stmt
+	stmtInsertProgramMetadataIndex *sql.Stmt
+	stmtDeleteProgram              *sql.Stmt
+	stmtListPrograms               *sql.Stmt
+	stmtFindProgramByMetadata      *sql.Stmt
+	stmtFindAllProgramsByMetadata  *sql.Stmt
+
+	// Prepared statements for link registry operations
+	stmtDeleteLink         *sql.Stmt
+	stmtGetLinkRegistry    *sql.Stmt
+	stmtListLinks          *sql.Stmt
+	stmtListLinksByProgram *sql.Stmt
+	stmtInsertLinkRegistry *sql.Stmt
+
+	// Prepared statements for link detail queries
+	stmtGetTracepointDetails *sql.Stmt
+	stmtGetKprobeDetails     *sql.Stmt
+	stmtGetUprobeDetails     *sql.Stmt
+	stmtGetFentryDetails     *sql.Stmt
+	stmtGetFexitDetails      *sql.Stmt
+	stmtGetXDPDetails        *sql.Stmt
+	stmtGetTCDetails         *sql.Stmt
+	stmtGetTCXDetails        *sql.Stmt
+
+	// Prepared statements for link detail inserts
+	stmtSaveTracepointDetails *sql.Stmt
+	stmtSaveKprobeDetails     *sql.Stmt
+	stmtSaveUprobeDetails     *sql.Stmt
+	stmtSaveFentryDetails     *sql.Stmt
+	stmtSaveFexitDetails      *sql.Stmt
+	stmtSaveXDPDetails        *sql.Stmt
+	stmtSaveTCDetails         *sql.Stmt
+	stmtSaveTCXDetails        *sql.Stmt
+
+	// Prepared statements for dispatcher operations
+	stmtGetDispatcher       *sql.Stmt
+	stmtSaveDispatcher      *sql.Stmt
+	stmtDeleteDispatcher    *sql.Stmt
+	stmtIncrementRevision   *sql.Stmt
+	stmtGetDispatcherByType *sql.Stmt
 }
 
 // New creates a new SQLite store at the given path.
@@ -147,6 +211,10 @@ func New(dbPath string, logger *slog.Logger) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
+	if err := s.prepareStatements(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to prepare statements: %w", err)
+	}
 
 	logger.Info("opened database", "path", dbPath)
 	return s, nil
@@ -169,6 +237,10 @@ func NewInMemory(logger *slog.Logger) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
+	if err := s.prepareStatements(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to prepare statements: %w", err)
+	}
 
 	logger.Info("opened in-memory database")
 	return s, nil
@@ -187,12 +259,275 @@ func (s *Store) migrate() error {
 	return nil
 }
 
+// prepareStatements prepares all SQL statements for reuse.
+func (s *Store) prepareStatements() error {
+	if err := s.prepareProgramStatements(); err != nil {
+		return err
+	}
+	if err := s.prepareLinkRegistryStatements(); err != nil {
+		return err
+	}
+	if err := s.prepareLinkDetailStatements(); err != nil {
+		return err
+	}
+	return s.prepareDispatcherStatements()
+}
+
+func (s *Store) prepareProgramStatements() error {
+	var err error
+
+	const sqlGetProgram = "SELECT metadata FROM managed_programs WHERE kernel_id = ?"
+	if s.stmtGetProgram, err = s.db.Prepare(sqlGetProgram); err != nil {
+		return fmt.Errorf("prepare GetProgram: %w", err)
+	}
+
+	const sqlSaveProgram = "INSERT OR REPLACE INTO managed_programs (kernel_id, metadata, created_at) VALUES (?, ?, ?)"
+	if s.stmtSaveProgram, err = s.db.Prepare(sqlSaveProgram); err != nil {
+		return fmt.Errorf("prepare SaveProgram: %w", err)
+	}
+
+	const sqlDeleteProgramMetadataIndex = "DELETE FROM program_metadata_index WHERE kernel_id = ?"
+	if s.stmtDeleteProgramMetadataIndex, err = s.db.Prepare(sqlDeleteProgramMetadataIndex); err != nil {
+		return fmt.Errorf("prepare DeleteProgramMetadataIndex: %w", err)
+	}
+
+	const sqlInsertProgramMetadataIndex = "INSERT INTO program_metadata_index (kernel_id, key, value) VALUES (?, ?, ?)"
+	if s.stmtInsertProgramMetadataIndex, err = s.db.Prepare(sqlInsertProgramMetadataIndex); err != nil {
+		return fmt.Errorf("prepare InsertProgramMetadataIndex: %w", err)
+	}
+
+	const sqlDeleteProgram = "DELETE FROM managed_programs WHERE kernel_id = ?"
+	if s.stmtDeleteProgram, err = s.db.Prepare(sqlDeleteProgram); err != nil {
+		return fmt.Errorf("prepare DeleteProgram: %w", err)
+	}
+
+	const sqlListPrograms = "SELECT kernel_id, metadata FROM managed_programs"
+	if s.stmtListPrograms, err = s.db.Prepare(sqlListPrograms); err != nil {
+		return fmt.Errorf("prepare ListPrograms: %w", err)
+	}
+
+	const sqlFindProgramByMetadata = `
+		SELECT m.kernel_id, m.metadata
+		FROM managed_programs m
+		JOIN program_metadata_index i ON m.kernel_id = i.kernel_id
+		WHERE i.key = ? AND i.value = ?
+		LIMIT 1`
+	if s.stmtFindProgramByMetadata, err = s.db.Prepare(sqlFindProgramByMetadata); err != nil {
+		return fmt.Errorf("prepare FindProgramByMetadata: %w", err)
+	}
+
+	const sqlFindAllProgramsByMetadata = `
+		SELECT m.kernel_id, m.metadata
+		FROM managed_programs m
+		JOIN program_metadata_index i ON m.kernel_id = i.kernel_id
+		WHERE i.key = ? AND i.value = ?`
+	if s.stmtFindAllProgramsByMetadata, err = s.db.Prepare(sqlFindAllProgramsByMetadata); err != nil {
+		return fmt.Errorf("prepare FindAllProgramsByMetadata: %w", err)
+	}
+
+	return nil
+}
+
+func (s *Store) prepareLinkRegistryStatements() error {
+	var err error
+
+	const sqlDeleteLink = "DELETE FROM link_registry WHERE kernel_link_id = ?"
+	if s.stmtDeleteLink, err = s.db.Prepare(sqlDeleteLink); err != nil {
+		return fmt.Errorf("prepare DeleteLink: %w", err)
+	}
+
+	const sqlGetLinkRegistry = `
+		SELECT kernel_link_id, link_type, kernel_program_id, pin_path, created_at
+		FROM link_registry WHERE kernel_link_id = ?`
+	if s.stmtGetLinkRegistry, err = s.db.Prepare(sqlGetLinkRegistry); err != nil {
+		return fmt.Errorf("prepare GetLinkRegistry: %w", err)
+	}
+
+	const sqlListLinks = `
+		SELECT kernel_link_id, link_type, kernel_program_id, pin_path, created_at
+		FROM link_registry`
+	if s.stmtListLinks, err = s.db.Prepare(sqlListLinks); err != nil {
+		return fmt.Errorf("prepare ListLinks: %w", err)
+	}
+
+	const sqlListLinksByProgram = `
+		SELECT kernel_link_id, link_type, kernel_program_id, pin_path, created_at
+		FROM link_registry WHERE kernel_program_id = ?`
+	if s.stmtListLinksByProgram, err = s.db.Prepare(sqlListLinksByProgram); err != nil {
+		return fmt.Errorf("prepare ListLinksByProgram: %w", err)
+	}
+
+	const sqlInsertLinkRegistry = `
+		INSERT INTO link_registry (kernel_link_id, link_type, kernel_program_id, pin_path, created_at)
+		VALUES (?, ?, ?, ?, ?)`
+	if s.stmtInsertLinkRegistry, err = s.db.Prepare(sqlInsertLinkRegistry); err != nil {
+		return fmt.Errorf("prepare InsertLinkRegistry: %w", err)
+	}
+
+	return nil
+}
+
+func (s *Store) prepareLinkDetailStatements() error {
+	var err error
+
+	// Get statements
+	const sqlGetTracepointDetails = "SELECT tracepoint_group, tracepoint_name FROM tracepoint_link_details WHERE kernel_link_id = ?"
+	if s.stmtGetTracepointDetails, err = s.db.Prepare(sqlGetTracepointDetails); err != nil {
+		return fmt.Errorf("prepare GetTracepointDetails: %w", err)
+	}
+
+	const sqlGetKprobeDetails = "SELECT fn_name, offset, retprobe FROM kprobe_link_details WHERE kernel_link_id = ?"
+	if s.stmtGetKprobeDetails, err = s.db.Prepare(sqlGetKprobeDetails); err != nil {
+		return fmt.Errorf("prepare GetKprobeDetails: %w", err)
+	}
+
+	const sqlGetUprobeDetails = "SELECT target, fn_name, offset, pid, retprobe FROM uprobe_link_details WHERE kernel_link_id = ?"
+	if s.stmtGetUprobeDetails, err = s.db.Prepare(sqlGetUprobeDetails); err != nil {
+		return fmt.Errorf("prepare GetUprobeDetails: %w", err)
+	}
+
+	const sqlGetFentryDetails = "SELECT fn_name FROM fentry_link_details WHERE kernel_link_id = ?"
+	if s.stmtGetFentryDetails, err = s.db.Prepare(sqlGetFentryDetails); err != nil {
+		return fmt.Errorf("prepare GetFentryDetails: %w", err)
+	}
+
+	const sqlGetFexitDetails = "SELECT fn_name FROM fexit_link_details WHERE kernel_link_id = ?"
+	if s.stmtGetFexitDetails, err = s.db.Prepare(sqlGetFexitDetails); err != nil {
+		return fmt.Errorf("prepare GetFexitDetails: %w", err)
+	}
+
+	const sqlGetXDPDetails = `
+		SELECT interface, ifindex, priority, position, proceed_on, netns, nsid, dispatcher_id, revision
+		FROM xdp_link_details WHERE kernel_link_id = ?`
+	if s.stmtGetXDPDetails, err = s.db.Prepare(sqlGetXDPDetails); err != nil {
+		return fmt.Errorf("prepare GetXDPDetails: %w", err)
+	}
+
+	const sqlGetTCDetails = `
+		SELECT interface, ifindex, direction, priority, position, proceed_on, netns, nsid, dispatcher_id, revision
+		FROM tc_link_details WHERE kernel_link_id = ?`
+	if s.stmtGetTCDetails, err = s.db.Prepare(sqlGetTCDetails); err != nil {
+		return fmt.Errorf("prepare GetTCDetails: %w", err)
+	}
+
+	const sqlGetTCXDetails = `
+		SELECT interface, ifindex, direction, priority, netns, nsid
+		FROM tcx_link_details WHERE kernel_link_id = ?`
+	if s.stmtGetTCXDetails, err = s.db.Prepare(sqlGetTCXDetails); err != nil {
+		return fmt.Errorf("prepare GetTCXDetails: %w", err)
+	}
+
+	// Save statements
+	const sqlSaveTracepointDetails = `
+		INSERT INTO tracepoint_link_details (kernel_link_id, tracepoint_group, tracepoint_name)
+		VALUES (?, ?, ?)`
+	if s.stmtSaveTracepointDetails, err = s.db.Prepare(sqlSaveTracepointDetails); err != nil {
+		return fmt.Errorf("prepare SaveTracepointDetails: %w", err)
+	}
+
+	const sqlSaveKprobeDetails = `
+		INSERT INTO kprobe_link_details (kernel_link_id, fn_name, offset, retprobe)
+		VALUES (?, ?, ?, ?)`
+	if s.stmtSaveKprobeDetails, err = s.db.Prepare(sqlSaveKprobeDetails); err != nil {
+		return fmt.Errorf("prepare SaveKprobeDetails: %w", err)
+	}
+
+	const sqlSaveUprobeDetails = `
+		INSERT INTO uprobe_link_details (kernel_link_id, target, fn_name, offset, pid, retprobe)
+		VALUES (?, ?, ?, ?, ?, ?)`
+	if s.stmtSaveUprobeDetails, err = s.db.Prepare(sqlSaveUprobeDetails); err != nil {
+		return fmt.Errorf("prepare SaveUprobeDetails: %w", err)
+	}
+
+	const sqlSaveFentryDetails = `
+		INSERT INTO fentry_link_details (kernel_link_id, fn_name)
+		VALUES (?, ?)`
+	if s.stmtSaveFentryDetails, err = s.db.Prepare(sqlSaveFentryDetails); err != nil {
+		return fmt.Errorf("prepare SaveFentryDetails: %w", err)
+	}
+
+	const sqlSaveFexitDetails = `
+		INSERT INTO fexit_link_details (kernel_link_id, fn_name)
+		VALUES (?, ?)`
+	if s.stmtSaveFexitDetails, err = s.db.Prepare(sqlSaveFexitDetails); err != nil {
+		return fmt.Errorf("prepare SaveFexitDetails: %w", err)
+	}
+
+	const sqlSaveXDPDetails = `
+		INSERT INTO xdp_link_details (kernel_link_id, interface, ifindex, priority, position, proceed_on, netns, nsid, dispatcher_id, revision)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	if s.stmtSaveXDPDetails, err = s.db.Prepare(sqlSaveXDPDetails); err != nil {
+		return fmt.Errorf("prepare SaveXDPDetails: %w", err)
+	}
+
+	const sqlSaveTCDetails = `
+		INSERT INTO tc_link_details (kernel_link_id, interface, ifindex, direction, priority, position, proceed_on, netns, nsid, dispatcher_id, revision)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	if s.stmtSaveTCDetails, err = s.db.Prepare(sqlSaveTCDetails); err != nil {
+		return fmt.Errorf("prepare SaveTCDetails: %w", err)
+	}
+
+	const sqlSaveTCXDetails = `
+		INSERT INTO tcx_link_details (kernel_link_id, interface, ifindex, direction, priority, netns, nsid)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`
+	if s.stmtSaveTCXDetails, err = s.db.Prepare(sqlSaveTCXDetails); err != nil {
+		return fmt.Errorf("prepare SaveTCXDetails: %w", err)
+	}
+
+	return nil
+}
+
+func (s *Store) prepareDispatcherStatements() error {
+	var err error
+
+	const sqlGetDispatcher = `
+		SELECT id, type, nsid, ifindex, revision, kernel_id, link_id, link_pin_path, prog_pin_path, num_extensions
+		FROM dispatchers WHERE type = ? AND nsid = ? AND ifindex = ?`
+	if s.stmtGetDispatcher, err = s.db.Prepare(sqlGetDispatcher); err != nil {
+		return fmt.Errorf("prepare GetDispatcher: %w", err)
+	}
+
+	const sqlSaveDispatcher = `
+		INSERT INTO dispatchers (type, nsid, ifindex, revision, kernel_id, link_id, link_pin_path, prog_pin_path, num_extensions, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(type, nsid, ifindex) DO UPDATE SET
+		  revision = excluded.revision,
+		  kernel_id = excluded.kernel_id,
+		  link_id = excluded.link_id,
+		  link_pin_path = excluded.link_pin_path,
+		  prog_pin_path = excluded.prog_pin_path,
+		  num_extensions = excluded.num_extensions,
+		  updated_at = excluded.updated_at`
+	if s.stmtSaveDispatcher, err = s.db.Prepare(sqlSaveDispatcher); err != nil {
+		return fmt.Errorf("prepare SaveDispatcher: %w", err)
+	}
+
+	const sqlDeleteDispatcher = "DELETE FROM dispatchers WHERE type = ? AND nsid = ? AND ifindex = ?"
+	if s.stmtDeleteDispatcher, err = s.db.Prepare(sqlDeleteDispatcher); err != nil {
+		return fmt.Errorf("prepare DeleteDispatcher: %w", err)
+	}
+
+	const sqlIncrementRevision = `
+		UPDATE dispatchers
+		SET revision = CASE WHEN revision = 4294967295 THEN 1 ELSE revision + 1 END,
+		    updated_at = ?
+		WHERE type = ? AND nsid = ? AND ifindex = ?`
+	if s.stmtIncrementRevision, err = s.db.Prepare(sqlIncrementRevision); err != nil {
+		return fmt.Errorf("prepare IncrementRevision: %w", err)
+	}
+
+	const sqlGetDispatcherByType = "SELECT revision FROM dispatchers WHERE type = ? AND nsid = ? AND ifindex = ?"
+	if s.stmtGetDispatcherByType, err = s.db.Prepare(sqlGetDispatcherByType); err != nil {
+		return fmt.Errorf("prepare GetDispatcherByType: %w", err)
+	}
+
+	return nil
+}
+
 // Get retrieves program metadata by kernel ID.
 // Returns store.ErrNotFound if the program does not exist.
 func (s *Store) Get(ctx context.Context, kernelID uint32) (managed.Program, error) {
-	row := s.conn.QueryRowContext(ctx,
-		"SELECT metadata FROM managed_programs WHERE kernel_id = ?",
-		kernelID)
+	row := s.stmtGetProgram.QueryRowContext(ctx, kernelID)
 
 	var metadataJSON string
 	err := row.Scan(&metadataJSON)
@@ -219,26 +554,21 @@ func (s *Store) Save(ctx context.Context, kernelID uint32, metadata managed.Prog
 		return fmt.Errorf("failed to marshal metadata: %w", err)
 	}
 
-	_, err = s.conn.ExecContext(ctx,
-		"INSERT OR REPLACE INTO managed_programs (kernel_id, metadata, created_at) VALUES (?, ?, ?)",
+	_, err = s.stmtSaveProgram.ExecContext(ctx,
 		kernelID, string(metadataJSON), time.Now().Format(time.RFC3339))
 	if err != nil {
 		return fmt.Errorf("failed to insert program: %w", err)
 	}
 
 	// Clear old metadata index entries for this program
-	_, err = s.conn.ExecContext(ctx,
-		"DELETE FROM program_metadata_index WHERE kernel_id = ?",
-		kernelID)
+	_, err = s.stmtDeleteProgramMetadataIndex.ExecContext(ctx, kernelID)
 	if err != nil {
 		return fmt.Errorf("failed to clear metadata index: %w", err)
 	}
 
 	// Insert metadata index entries for UserMetadata
 	for key, value := range metadata.UserMetadata {
-		_, err = s.conn.ExecContext(ctx,
-			"INSERT INTO program_metadata_index (kernel_id, key, value) VALUES (?, ?, ?)",
-			kernelID, key, value)
+		_, err = s.stmtInsertProgramMetadataIndex.ExecContext(ctx, kernelID, key, value)
 		if err != nil {
 			return fmt.Errorf("failed to insert metadata index: %w", err)
 		}
@@ -250,9 +580,7 @@ func (s *Store) Save(ctx context.Context, kernelID uint32, metadata managed.Prog
 
 // Delete removes program metadata.
 func (s *Store) Delete(ctx context.Context, kernelID uint32) error {
-	_, err := s.conn.ExecContext(ctx,
-		"DELETE FROM managed_programs WHERE kernel_id = ?",
-		kernelID)
+	_, err := s.stmtDeleteProgram.ExecContext(ctx, kernelID)
 	if err == nil {
 		s.logger.Debug("deleted program", "kernel_id", kernelID)
 	}
@@ -261,8 +589,7 @@ func (s *Store) Delete(ctx context.Context, kernelID uint32) error {
 
 // List returns all program metadata.
 func (s *Store) List(ctx context.Context) (map[uint32]managed.Program, error) {
-	rows, err := s.conn.QueryContext(ctx,
-		"SELECT kernel_id, metadata FROM managed_programs")
+	rows, err := s.stmtListPrograms.QueryContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -290,13 +617,7 @@ func (s *Store) List(ctx context.Context) (map[uint32]managed.Program, error) {
 // FindProgramByMetadata finds a program by a specific metadata key/value pair.
 // Returns store.ErrNotFound if no program matches.
 func (s *Store) FindProgramByMetadata(ctx context.Context, key, value string) (managed.Program, uint32, error) {
-	row := s.conn.QueryRowContext(ctx, `
-		SELECT m.kernel_id, m.metadata
-		FROM managed_programs m
-		JOIN program_metadata_index i ON m.kernel_id = i.kernel_id
-		WHERE i.key = ? AND i.value = ?
-		LIMIT 1
-	`, key, value)
+	row := s.stmtFindProgramByMetadata.QueryRowContext(ctx, key, value)
 
 	var kernelID uint32
 	var metadataJSON string
@@ -321,12 +642,7 @@ func (s *Store) FindAllProgramsByMetadata(ctx context.Context, key, value string
 	KernelID uint32
 	Metadata managed.Program
 }, error) {
-	rows, err := s.conn.QueryContext(ctx, `
-		SELECT m.kernel_id, m.metadata
-		FROM managed_programs m
-		JOIN program_metadata_index i ON m.kernel_id = i.kernel_id
-		WHERE i.key = ? AND i.value = ?
-	`, key, value)
+	rows, err := s.stmtFindAllProgramsByMetadata.QueryContext(ctx, key, value)
 	if err != nil {
 		return nil, err
 	}
@@ -365,9 +681,7 @@ func (s *Store) FindAllProgramsByMetadata(ctx context.Context, key, value string
 // DeleteLink removes link metadata by kernel link ID.
 // Due to CASCADE, this also removes the corresponding detail table entry.
 func (s *Store) DeleteLink(ctx context.Context, kernelLinkID uint32) error {
-	result, err := s.conn.ExecContext(ctx,
-		"DELETE FROM link_registry WHERE kernel_link_id = ?",
-		kernelLinkID)
+	result, err := s.stmtDeleteLink.ExecContext(ctx, kernelLinkID)
 	if err != nil {
 		return fmt.Errorf("failed to delete link: %w", err)
 	}
@@ -387,9 +701,7 @@ func (s *Store) DeleteLink(ctx context.Context, kernelLinkID uint32) error {
 // GetLink retrieves link metadata by kernel link ID using two-phase lookup.
 func (s *Store) GetLink(ctx context.Context, kernelLinkID uint32) (managed.LinkSummary, managed.LinkDetails, error) {
 	// Phase 1: Get summary from registry
-	row := s.conn.QueryRowContext(ctx,
-		`SELECT kernel_link_id, link_type, kernel_program_id, pin_path, created_at
-		 FROM link_registry WHERE kernel_link_id = ?`, kernelLinkID)
+	row := s.stmtGetLinkRegistry.QueryRowContext(ctx, kernelLinkID)
 
 	summary, err := s.scanLinkSummary(row)
 	if err != nil {
@@ -407,9 +719,7 @@ func (s *Store) GetLink(ctx context.Context, kernelLinkID uint32) (managed.LinkS
 
 // ListLinks returns all links (summary only).
 func (s *Store) ListLinks(ctx context.Context) ([]managed.LinkSummary, error) {
-	rows, err := s.conn.QueryContext(ctx,
-		`SELECT kernel_link_id, link_type, kernel_program_id, pin_path, created_at
-		 FROM link_registry`)
+	rows, err := s.stmtListLinks.QueryContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -420,9 +730,7 @@ func (s *Store) ListLinks(ctx context.Context) ([]managed.LinkSummary, error) {
 
 // ListLinksByProgram returns all links for a given program kernel ID.
 func (s *Store) ListLinksByProgram(ctx context.Context, programKernelID uint32) ([]managed.LinkSummary, error) {
-	rows, err := s.conn.QueryContext(ctx,
-		`SELECT kernel_link_id, link_type, kernel_program_id, pin_path, created_at
-		 FROM link_registry WHERE kernel_program_id = ?`, programKernelID)
+	rows, err := s.stmtListLinksByProgram.QueryContext(ctx, programKernelID)
 	if err != nil {
 		return nil, err
 	}
@@ -442,9 +750,7 @@ func (s *Store) SaveTracepointLink(ctx context.Context, summary managed.LinkSumm
 		return err
 	}
 
-	_, err := s.conn.ExecContext(ctx,
-		`INSERT INTO tracepoint_link_details (kernel_link_id, tracepoint_group, tracepoint_name)
-		 VALUES (?, ?, ?)`,
+	_, err := s.stmtSaveTracepointDetails.ExecContext(ctx,
 		summary.KernelLinkID, details.Group, details.Name)
 	if err != nil {
 		return fmt.Errorf("failed to insert tracepoint details: %w", err)
@@ -466,9 +772,7 @@ func (s *Store) SaveKprobeLink(ctx context.Context, summary managed.LinkSummary,
 		retprobe = 1
 	}
 
-	_, err := s.conn.ExecContext(ctx,
-		`INSERT INTO kprobe_link_details (kernel_link_id, fn_name, offset, retprobe)
-		 VALUES (?, ?, ?, ?)`,
+	_, err := s.stmtSaveKprobeDetails.ExecContext(ctx,
 		summary.KernelLinkID, details.FnName, details.Offset, retprobe)
 	if err != nil {
 		return fmt.Errorf("failed to insert kprobe details: %w", err)
@@ -490,9 +794,7 @@ func (s *Store) SaveUprobeLink(ctx context.Context, summary managed.LinkSummary,
 		retprobe = 1
 	}
 
-	_, err := s.conn.ExecContext(ctx,
-		`INSERT INTO uprobe_link_details (kernel_link_id, target, fn_name, offset, pid, retprobe)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
+	_, err := s.stmtSaveUprobeDetails.ExecContext(ctx,
 		summary.KernelLinkID, details.Target, details.FnName, details.Offset, details.PID, retprobe)
 	if err != nil {
 		return fmt.Errorf("failed to insert uprobe details: %w", err)
@@ -509,10 +811,7 @@ func (s *Store) SaveFentryLink(ctx context.Context, summary managed.LinkSummary,
 		return err
 	}
 
-	_, err := s.conn.ExecContext(ctx,
-		`INSERT INTO fentry_link_details (kernel_link_id, fn_name)
-		 VALUES (?, ?)`,
-		summary.KernelLinkID, details.FnName)
+	_, err := s.stmtSaveFentryDetails.ExecContext(ctx, summary.KernelLinkID, details.FnName)
 	if err != nil {
 		return fmt.Errorf("failed to insert fentry details: %w", err)
 	}
@@ -528,10 +827,7 @@ func (s *Store) SaveFexitLink(ctx context.Context, summary managed.LinkSummary, 
 		return err
 	}
 
-	_, err := s.conn.ExecContext(ctx,
-		`INSERT INTO fexit_link_details (kernel_link_id, fn_name)
-		 VALUES (?, ?)`,
-		summary.KernelLinkID, details.FnName)
+	_, err := s.stmtSaveFexitDetails.ExecContext(ctx, summary.KernelLinkID, details.FnName)
 	if err != nil {
 		return fmt.Errorf("failed to insert fexit details: %w", err)
 	}
@@ -552,9 +848,7 @@ func (s *Store) SaveXDPLink(ctx context.Context, summary managed.LinkSummary, de
 		return fmt.Errorf("failed to marshal proceed_on: %w", err)
 	}
 
-	_, err = s.conn.ExecContext(ctx,
-		`INSERT INTO xdp_link_details (kernel_link_id, interface, ifindex, priority, position, proceed_on, netns, nsid, dispatcher_id, revision)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	_, err = s.stmtSaveXDPDetails.ExecContext(ctx,
 		summary.KernelLinkID, details.Interface, details.Ifindex, details.Priority, details.Position,
 		string(proceedOnJSON), details.Netns, details.Nsid, details.DispatcherID, details.Revision)
 	if err != nil {
@@ -577,9 +871,7 @@ func (s *Store) SaveTCLink(ctx context.Context, summary managed.LinkSummary, det
 		return fmt.Errorf("failed to marshal proceed_on: %w", err)
 	}
 
-	_, err = s.conn.ExecContext(ctx,
-		`INSERT INTO tc_link_details (kernel_link_id, interface, ifindex, direction, priority, position, proceed_on, netns, nsid, dispatcher_id, revision)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	_, err = s.stmtSaveTCDetails.ExecContext(ctx,
 		summary.KernelLinkID, details.Interface, details.Ifindex, details.Direction, details.Priority, details.Position,
 		string(proceedOnJSON), details.Netns, details.Nsid, details.DispatcherID, details.Revision)
 	if err != nil {
@@ -597,9 +889,7 @@ func (s *Store) SaveTCXLink(ctx context.Context, summary managed.LinkSummary, de
 		return err
 	}
 
-	_, err := s.conn.ExecContext(ctx,
-		`INSERT INTO tcx_link_details (kernel_link_id, interface, ifindex, direction, priority, netns, nsid)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+	_, err := s.stmtSaveTCXDetails.ExecContext(ctx,
 		summary.KernelLinkID, details.Interface, details.Ifindex, details.Direction, details.Priority, details.Netns, details.Nsid)
 	if err != nil {
 		return fmt.Errorf("failed to insert tcx details: %w", err)
@@ -615,9 +905,7 @@ func (s *Store) SaveTCXLink(ctx context.Context, summary managed.LinkSummary, de
 
 // insertLinkRegistry inserts a record into the link_registry table.
 func (s *Store) insertLinkRegistry(ctx context.Context, summary managed.LinkSummary) error {
-	_, err := s.conn.ExecContext(ctx,
-		`INSERT INTO link_registry (kernel_link_id, link_type, kernel_program_id, pin_path, created_at)
-		 VALUES (?, ?, ?, ?, ?)`,
+	_, err := s.stmtInsertLinkRegistry.ExecContext(ctx,
 		summary.KernelLinkID, string(summary.LinkType), summary.KernelProgramID,
 		summary.PinPath, summary.CreatedAt.Format(time.RFC3339))
 	if err != nil {
@@ -702,8 +990,7 @@ func (s *Store) getLinkDetails(ctx context.Context, linkType managed.LinkType, k
 }
 
 func (s *Store) getTracepointDetails(ctx context.Context, kernelLinkID uint32) (managed.TracepointDetails, error) {
-	row := s.conn.QueryRowContext(ctx,
-		`SELECT tracepoint_group, tracepoint_name FROM tracepoint_link_details WHERE kernel_link_id = ?`, kernelLinkID)
+	row := s.stmtGetTracepointDetails.QueryRowContext(ctx, kernelLinkID)
 
 	var details managed.TracepointDetails
 	err := row.Scan(&details.Group, &details.Name)
@@ -717,8 +1004,7 @@ func (s *Store) getTracepointDetails(ctx context.Context, kernelLinkID uint32) (
 }
 
 func (s *Store) getKprobeDetails(ctx context.Context, kernelLinkID uint32) (managed.KprobeDetails, error) {
-	row := s.conn.QueryRowContext(ctx,
-		`SELECT fn_name, offset, retprobe FROM kprobe_link_details WHERE kernel_link_id = ?`, kernelLinkID)
+	row := s.stmtGetKprobeDetails.QueryRowContext(ctx, kernelLinkID)
 
 	var details managed.KprobeDetails
 	var retprobe int
@@ -734,8 +1020,7 @@ func (s *Store) getKprobeDetails(ctx context.Context, kernelLinkID uint32) (mana
 }
 
 func (s *Store) getUprobeDetails(ctx context.Context, kernelLinkID uint32) (managed.UprobeDetails, error) {
-	row := s.conn.QueryRowContext(ctx,
-		`SELECT target, fn_name, offset, pid, retprobe FROM uprobe_link_details WHERE kernel_link_id = ?`, kernelLinkID)
+	row := s.stmtGetUprobeDetails.QueryRowContext(ctx, kernelLinkID)
 
 	var details managed.UprobeDetails
 	var fnName sql.NullString
@@ -759,8 +1044,7 @@ func (s *Store) getUprobeDetails(ctx context.Context, kernelLinkID uint32) (mana
 }
 
 func (s *Store) getFentryDetails(ctx context.Context, kernelLinkID uint32) (managed.FentryDetails, error) {
-	row := s.conn.QueryRowContext(ctx,
-		`SELECT fn_name FROM fentry_link_details WHERE kernel_link_id = ?`, kernelLinkID)
+	row := s.stmtGetFentryDetails.QueryRowContext(ctx, kernelLinkID)
 
 	var details managed.FentryDetails
 	err := row.Scan(&details.FnName)
@@ -774,8 +1058,7 @@ func (s *Store) getFentryDetails(ctx context.Context, kernelLinkID uint32) (mana
 }
 
 func (s *Store) getFexitDetails(ctx context.Context, kernelLinkID uint32) (managed.FexitDetails, error) {
-	row := s.conn.QueryRowContext(ctx,
-		`SELECT fn_name FROM fexit_link_details WHERE kernel_link_id = ?`, kernelLinkID)
+	row := s.stmtGetFexitDetails.QueryRowContext(ctx, kernelLinkID)
 
 	var details managed.FexitDetails
 	err := row.Scan(&details.FnName)
@@ -789,9 +1072,7 @@ func (s *Store) getFexitDetails(ctx context.Context, kernelLinkID uint32) (manag
 }
 
 func (s *Store) getXDPDetails(ctx context.Context, kernelLinkID uint32) (managed.XDPDetails, error) {
-	row := s.conn.QueryRowContext(ctx,
-		`SELECT interface, ifindex, priority, position, proceed_on, netns, nsid, dispatcher_id, revision
-		 FROM xdp_link_details WHERE kernel_link_id = ?`, kernelLinkID)
+	row := s.stmtGetXDPDetails.QueryRowContext(ctx, kernelLinkID)
 
 	var details managed.XDPDetails
 	var proceedOnJSON string
@@ -815,9 +1096,7 @@ func (s *Store) getXDPDetails(ctx context.Context, kernelLinkID uint32) (managed
 }
 
 func (s *Store) getTCDetails(ctx context.Context, kernelLinkID uint32) (managed.TCDetails, error) {
-	row := s.conn.QueryRowContext(ctx,
-		`SELECT interface, ifindex, direction, priority, position, proceed_on, netns, nsid, dispatcher_id, revision
-		 FROM tc_link_details WHERE kernel_link_id = ?`, kernelLinkID)
+	row := s.stmtGetTCDetails.QueryRowContext(ctx, kernelLinkID)
 
 	var details managed.TCDetails
 	var proceedOnJSON string
@@ -841,9 +1120,7 @@ func (s *Store) getTCDetails(ctx context.Context, kernelLinkID uint32) (managed.
 }
 
 func (s *Store) getTCXDetails(ctx context.Context, kernelLinkID uint32) (managed.TCXDetails, error) {
-	row := s.conn.QueryRowContext(ctx,
-		`SELECT interface, ifindex, direction, priority, netns, nsid
-		 FROM tcx_link_details WHERE kernel_link_id = ?`, kernelLinkID)
+	row := s.stmtGetTCXDetails.QueryRowContext(ctx, kernelLinkID)
 
 	var details managed.TCXDetails
 	var netns sql.NullString
@@ -871,10 +1148,7 @@ func (s *Store) getTCXDetails(ctx context.Context, kernelLinkID uint32) (managed
 
 // GetDispatcher retrieves a dispatcher by type, nsid, and ifindex.
 func (s *Store) GetDispatcher(ctx context.Context, dispType string, nsid uint64, ifindex uint32) (managed.DispatcherState, error) {
-	row := s.conn.QueryRowContext(ctx,
-		`SELECT id, type, nsid, ifindex, revision, kernel_id, link_id, link_pin_path, prog_pin_path, num_extensions
-		 FROM dispatchers WHERE type = ? AND nsid = ? AND ifindex = ?`,
-		dispType, nsid, ifindex)
+	row := s.stmtGetDispatcher.QueryRowContext(ctx, dispType, nsid, ifindex)
 
 	var state managed.DispatcherState
 	var id int64
@@ -896,17 +1170,7 @@ func (s *Store) GetDispatcher(ctx context.Context, dispType string, nsid uint64,
 func (s *Store) SaveDispatcher(ctx context.Context, state managed.DispatcherState) error {
 	now := time.Now().Format(time.RFC3339)
 
-	_, err := s.conn.ExecContext(ctx,
-		`INSERT INTO dispatchers (type, nsid, ifindex, revision, kernel_id, link_id, link_pin_path, prog_pin_path, num_extensions, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		 ON CONFLICT(type, nsid, ifindex) DO UPDATE SET
-		   revision = excluded.revision,
-		   kernel_id = excluded.kernel_id,
-		   link_id = excluded.link_id,
-		   link_pin_path = excluded.link_pin_path,
-		   prog_pin_path = excluded.prog_pin_path,
-		   num_extensions = excluded.num_extensions,
-		   updated_at = excluded.updated_at`,
+	_, err := s.stmtSaveDispatcher.ExecContext(ctx,
 		string(state.Type), state.Nsid, state.Ifindex, state.Revision,
 		state.KernelID, state.LinkID, state.LinkPinPath, state.ProgPinPath,
 		state.NumExtensions, now, now)
@@ -921,9 +1185,7 @@ func (s *Store) SaveDispatcher(ctx context.Context, state managed.DispatcherStat
 
 // DeleteDispatcher removes a dispatcher by type, nsid, and ifindex.
 func (s *Store) DeleteDispatcher(ctx context.Context, dispType string, nsid uint64, ifindex uint32) error {
-	result, err := s.conn.ExecContext(ctx,
-		`DELETE FROM dispatchers WHERE type = ? AND nsid = ? AND ifindex = ?`,
-		dispType, nsid, ifindex)
+	result, err := s.stmtDeleteDispatcher.ExecContext(ctx, dispType, nsid, ifindex)
 	if err != nil {
 		return fmt.Errorf("delete dispatcher: %w", err)
 	}
@@ -947,12 +1209,7 @@ func (s *Store) IncrementRevision(ctx context.Context, dispType string, nsid uin
 	now := time.Now().Format(time.RFC3339)
 
 	// Use CASE to handle wrap-around at MaxUint32
-	result, err := s.conn.ExecContext(ctx,
-		`UPDATE dispatchers
-		 SET revision = CASE WHEN revision = 4294967295 THEN 1 ELSE revision + 1 END,
-		     updated_at = ?
-		 WHERE type = ? AND nsid = ? AND ifindex = ?`,
-		now, dispType, nsid, ifindex)
+	result, err := s.stmtIncrementRevision.ExecContext(ctx, now, dispType, nsid, ifindex)
 	if err != nil {
 		return 0, fmt.Errorf("increment revision: %w", err)
 	}
@@ -967,9 +1224,7 @@ func (s *Store) IncrementRevision(ctx context.Context, dispType string, nsid uin
 
 	// Fetch the new revision
 	var newRevision uint32
-	err = s.conn.QueryRowContext(ctx,
-		`SELECT revision FROM dispatchers WHERE type = ? AND nsid = ? AND ifindex = ?`,
-		dispType, nsid, ifindex).Scan(&newRevision)
+	err = s.stmtGetDispatcherByType.QueryRowContext(ctx, dispType, nsid, ifindex).Scan(&newRevision)
 	if err != nil {
 		return 0, fmt.Errorf("fetch new revision: %w", err)
 	}
@@ -982,6 +1237,21 @@ func (s *Store) IncrementRevision(ctx context.Context, dispType string, nsid uin
 // RunInTransaction executes the callback within a database transaction.
 // If the callback returns nil, the transaction commits.
 // If the callback returns an error, the transaction rolls back.
+//
+// # Prepared Statement Handling
+//
+// The Store holds "master" prepared statements that are compiled once when the
+// database is opened and remain valid for the lifetime of the connection. These
+// masters live on s.stmtXXX fields, prepared against *sql.DB.
+//
+// For transactional use, tx.StmtContext creates lightweight transaction-bound
+// handles that reference the already-compiled master statements. No SQL parsing
+// occurs here - we're just binding existing compiled queries to this transaction.
+//
+// After commit or rollback, the tx-bound handles become invalid, but that's fine:
+// txStore goes out of scope and subsequent RunInTransaction calls create fresh
+// handles from the still-valid masters. The masters are never invalidated by
+// transaction lifecycle events.
 func (s *Store) RunInTransaction(ctx context.Context, fn func(interpreter.Store) error) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -989,11 +1259,49 @@ func (s *Store) RunInTransaction(ctx context.Context, fn func(interpreter.Store)
 	}
 	defer tx.Rollback()
 
-	// Create a transactional store using the same db but with tx as conn
 	txStore := &Store{
 		db:     s.db,
 		conn:   tx,
 		logger: s.logger,
+		// Program statements
+		stmtGetProgram:                 tx.StmtContext(ctx, s.stmtGetProgram),
+		stmtSaveProgram:                tx.StmtContext(ctx, s.stmtSaveProgram),
+		stmtDeleteProgramMetadataIndex: tx.StmtContext(ctx, s.stmtDeleteProgramMetadataIndex),
+		stmtInsertProgramMetadataIndex: tx.StmtContext(ctx, s.stmtInsertProgramMetadataIndex),
+		stmtDeleteProgram:              tx.StmtContext(ctx, s.stmtDeleteProgram),
+		stmtListPrograms:               tx.StmtContext(ctx, s.stmtListPrograms),
+		stmtFindProgramByMetadata:      tx.StmtContext(ctx, s.stmtFindProgramByMetadata),
+		stmtFindAllProgramsByMetadata:  tx.StmtContext(ctx, s.stmtFindAllProgramsByMetadata),
+		// Link registry statements
+		stmtDeleteLink:         tx.StmtContext(ctx, s.stmtDeleteLink),
+		stmtGetLinkRegistry:    tx.StmtContext(ctx, s.stmtGetLinkRegistry),
+		stmtListLinks:          tx.StmtContext(ctx, s.stmtListLinks),
+		stmtListLinksByProgram: tx.StmtContext(ctx, s.stmtListLinksByProgram),
+		stmtInsertLinkRegistry: tx.StmtContext(ctx, s.stmtInsertLinkRegistry),
+		// Link detail get statements
+		stmtGetTracepointDetails: tx.StmtContext(ctx, s.stmtGetTracepointDetails),
+		stmtGetKprobeDetails:     tx.StmtContext(ctx, s.stmtGetKprobeDetails),
+		stmtGetUprobeDetails:     tx.StmtContext(ctx, s.stmtGetUprobeDetails),
+		stmtGetFentryDetails:     tx.StmtContext(ctx, s.stmtGetFentryDetails),
+		stmtGetFexitDetails:      tx.StmtContext(ctx, s.stmtGetFexitDetails),
+		stmtGetXDPDetails:        tx.StmtContext(ctx, s.stmtGetXDPDetails),
+		stmtGetTCDetails:         tx.StmtContext(ctx, s.stmtGetTCDetails),
+		stmtGetTCXDetails:        tx.StmtContext(ctx, s.stmtGetTCXDetails),
+		// Link detail save statements
+		stmtSaveTracepointDetails: tx.StmtContext(ctx, s.stmtSaveTracepointDetails),
+		stmtSaveKprobeDetails:     tx.StmtContext(ctx, s.stmtSaveKprobeDetails),
+		stmtSaveUprobeDetails:     tx.StmtContext(ctx, s.stmtSaveUprobeDetails),
+		stmtSaveFentryDetails:     tx.StmtContext(ctx, s.stmtSaveFentryDetails),
+		stmtSaveFexitDetails:      tx.StmtContext(ctx, s.stmtSaveFexitDetails),
+		stmtSaveXDPDetails:        tx.StmtContext(ctx, s.stmtSaveXDPDetails),
+		stmtSaveTCDetails:         tx.StmtContext(ctx, s.stmtSaveTCDetails),
+		stmtSaveTCXDetails:        tx.StmtContext(ctx, s.stmtSaveTCXDetails),
+		// Dispatcher statements
+		stmtGetDispatcher:       tx.StmtContext(ctx, s.stmtGetDispatcher),
+		stmtSaveDispatcher:      tx.StmtContext(ctx, s.stmtSaveDispatcher),
+		stmtDeleteDispatcher:    tx.StmtContext(ctx, s.stmtDeleteDispatcher),
+		stmtIncrementRevision:   tx.StmtContext(ctx, s.stmtIncrementRevision),
+		stmtGetDispatcherByType: tx.StmtContext(ctx, s.stmtGetDispatcherByType),
 	}
 
 	if err := fn(txStore); err != nil {
