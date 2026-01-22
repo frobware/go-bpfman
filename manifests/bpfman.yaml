@@ -24,7 +24,7 @@ spec:
         - name: bpfman
           image: bpfman:dev
           imagePullPolicy: IfNotPresent
-          args: ["serve", "--csi-support", "--csi-socket", "/var/lib/kubelet/plugins/csi.go-bpfman.io/csi.sock"]
+          args: ["serve", "--csi-support", "--runtime-dir", "/run/bpfman"]
           securityContext:
             privileged: true
           volumeMounts:
@@ -38,24 +38,22 @@ spec:
               mountPath: /run/bpfman-sock
             - name: go-bpfman-state
               mountPath: /run/bpfman
-            - name: csi-dir
+            - name: plugin-dir
               mountPath: /run/bpfman/csi
               mountPropagation: Bidirectional
             - name: pods-mount-dir
               mountPath: /var/lib/kubelet/pods
               mountPropagation: Bidirectional
-            - name: plugin-dir
-              mountPath: /var/lib/kubelet/plugins/csi.go-bpfman.io
 
         - name: node-driver-registrar
           image: registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.9.0
           args:
-            - --csi-address=/var/lib/kubelet/plugins/csi.go-bpfman.io/csi.sock
-            - --kubelet-registration-path=/var/lib/kubelet/plugins/csi.go-bpfman.io/csi.sock
             - --v=5
+            - --csi-address=/csi/csi.sock
+            - --kubelet-registration-path=/var/lib/kubelet/plugins/csi.go-bpfman.io/csi.sock
           volumeMounts:
             - name: plugin-dir
-              mountPath: /var/lib/kubelet/plugins/csi.go-bpfman.io
+              mountPath: /csi
             - name: registration-dir
               mountPath: /registration
 
@@ -75,10 +73,6 @@ spec:
         - name: go-bpfman-state
           hostPath:
             path: /run/go-bpfman
-            type: DirectoryOrCreate
-        - name: csi-dir
-          hostPath:
-            path: /run/go-bpfman/csi
             type: DirectoryOrCreate
         - name: pods-mount-dir
           hostPath:
