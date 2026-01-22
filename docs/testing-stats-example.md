@@ -6,15 +6,16 @@ from a container via the CSI driver.
 
 ## Prerequisites
 
-- A running kind cluster named `bpfman-deployment`
 - Docker for building images
+- kind installed
 
 Create the cluster if it doesn't exist:
 
 ```bash
-kind create cluster --name bpfman-deployment
-kubectl create namespace bpfman
+make kind-create
 ```
+
+This creates a kind cluster named `bpfman-go` with bpffs mounted on nodes.
 
 ## Step 1: Build and Deploy bpfman
 
@@ -25,7 +26,6 @@ make bpfman-deploy
 ```
 
 This will:
-- Build the bpfman-builder image (if needed)
 - Build the bpfman image with embedded stats.o BPF program
 - Load the image into the kind cluster
 - Deploy the CSI driver and bpfman DaemonSet
@@ -49,38 +49,47 @@ locate it:
 
 ```bash
 kubectl -n bpfman exec daemonset/bpfman-daemon-go -c bpfman -- \
-  bpfman load -m bpfman.io/ProgramName=my-stats \
-  /opt/bpf/stats.o count_context_switches /sys/fs/bpf/go-bpfman/my-stats
+  bpfman load file -m bpfman.io/ProgramName=my-stats \
+  /opt/bpf/stats.o count_context_switches
 ```
+
+This returns JSON with the program details:
+
+```json
+{
+  "id": 1234,
+  "name": "count_context_switches",
+  "type": "unspecified",
+  "pin_path": "/run/bpfman/fs/1234567890/count_context_switches",
+  "pin_dir": "/run/bpfman/fs/1234567890",
+  "map_ids": [567]
+}
+```
+
+Note the `id` and `pin_path` values for the next step.
 
 The `-m bpfman.io/ProgramName=my-stats` flag attaches metadata that the CSI
 driver uses to find the program when a pod requests it.
 
 ## Step 3: Attach to Tracepoint
 
-Attach the loaded program to the `sched_switch` tracepoint:
+Attach the loaded program to the `sched_switch` tracepoint, using the program
+ID and pin path from step 2:
 
 ```bash
 kubectl -n bpfman exec daemonset/bpfman-daemon-go -c bpfman -- \
-  bpfman attach tracepoint /sys/fs/bpf/go-bpfman/my-stats/count_context_switches \
-  sched sched_switch --link-pin-path /sys/fs/bpf/go-bpfman/my-stats/link
+  bpfman attach tracepoint --program-id=1234 \
+  /run/bpfman/fs/1234567890/count_context_switches \
+  sched sched_switch
 ```
 
-Verify the program is loaded and attached:
+Replace `1234` with your actual program ID and the pin path with your actual
+pin path from the load output.
+
+Verify the program is loaded:
 
 ```bash
-kubectl -n bpfman exec daemonset/bpfman-daemon-go -c bpfman -- \
-  ls -la /sys/fs/bpf/go-bpfman/my-stats/
-```
-
-Expected output:
-```
-total 0
-drwxr-xr-x 2 root root 0 Jan 20 13:26 .
-drwxr-xr-x 3 root root 0 Jan 20 13:26 ..
--rw------- 1 root root 0 Jan 20 13:26 count_context_switches
--rw------- 1 root root 0 Jan 20 13:26 link
--rw------- 1 root root 0 Jan 20 13:26 stats_map
+kubectl -n bpfman exec daemonset/bpfman-daemon-go -c bpfman -- bpfman list
 ```
 
 ## Step 4: Deploy the Stats Reader
@@ -111,6 +120,12 @@ The CSI driver:
 ## Step 5: View Statistics
 
 Watch the stats-reader output:
+
+```bash
+make stats-reader-logs
+```
+
+Or directly:
 
 ```bash
 kubectl logs -f stats-reader
@@ -146,11 +161,11 @@ Remove the stats-reader pod:
 make stats-reader-delete
 ```
 
-Unload the BPF program:
+Unload the BPF program (using the program ID from step 2):
 
 ```bash
 kubectl -n bpfman exec daemonset/bpfman-daemon-go -c bpfman -- \
-  bpfman unload /sys/fs/bpf/go-bpfman/my-stats
+  bpfman unload 1234
 ```
 
 Remove bpfman:
@@ -166,8 +181,7 @@ make bpfman-delete
 Check if the BPF program is loaded with the correct metadata:
 
 ```bash
-kubectl -n bpfman exec daemonset/bpfman-daemon-go -c bpfman -- \
-  bpfman list --maps /sys/fs/bpf/go-bpfman
+kubectl -n bpfman exec daemonset/bpfman-daemon-go -c bpfman -- bpfman list
 ```
 
 ### CSI volume mount fails
@@ -175,10 +189,16 @@ kubectl -n bpfman exec daemonset/bpfman-daemon-go -c bpfman -- \
 Check bpfman logs for CSI-related errors:
 
 ```bash
+make bpfman-logs
+```
+
+Or:
+
+```bash
 kubectl -n bpfman logs daemonset/bpfman-daemon-go -c bpfman | grep -i csi
 ```
 
 ### Map is empty
 
-Ensure the tracepoint is attached. The `link` file should exist in the
-program's pin directory. If missing, run the attach command again.
+Ensure the tracepoint is attached. Use `bpfman list` to verify the program
+shows an attached link.

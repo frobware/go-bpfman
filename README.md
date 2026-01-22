@@ -14,15 +14,15 @@ bpfman runs as a DaemonSet on each node, providing:
 ### How it works
 
 ```
-1. Load BPF program via gRPC
-   bpfman load --object stats.o --program count_sched_switch
-        │
-        ▼
+1. Load BPF program via CLI
+   bpfman load file -m bpfman.io/application=stats stats.o count_sched_switch
+        |
+        v
 2. Program pinned to bpffs
-   /sys/fs/bpf/bpfman/<uuid>/count_sched_switch
-   /sys/fs/bpf/bpfman/<uuid>/stats_map
-        │
-        ▼
+   /run/bpfman/fs/<id>/count_sched_switch
+   /run/bpfman/fs/<id>/stats_map
+        |
+        v
 3. Pod requests CSI volume with metadata selector
    volumes:
      - name: bpf-maps
@@ -30,8 +30,8 @@ bpfman runs as a DaemonSet on each node, providing:
          driver: csi.go-bpfman.io
          volumeAttributes:
            bpfman.io/application: stats
-        │
-        ▼
+        |
+        v
 4. CSI driver re-pins matching maps to pod's volume
    Container sees: /bpf/stats_map
 ```
@@ -59,10 +59,10 @@ bpfman/
 
 ## Building and deploying
 
-Requires a kind cluster named `bpfman-deployment`:
+Create a kind cluster with bpffs mounted:
 
 ```bash
-kind create cluster --name bpfman-deployment
+make kind-create
 ```
 
 Build and deploy:
@@ -81,13 +81,10 @@ Run `make` to see all available targets.
 
 ```bash
 # Exec into bpfman pod
-kubectl exec -it -n bpfman deploy/bpfman-daemon-go -c bpfman -- sh
+kubectl exec -it -n bpfman daemonset/bpfman-daemon-go -c bpfman -- sh
 
 # Load program with metadata for CSI matching
-bpfman load \
-  --object /opt/bpf/stats.o \
-  --program count_sched_switch \
-  --metadata bpfman.io/application=stats
+bpfman load file -m bpfman.io/application=stats /opt/bpf/stats.o count_sched_switch
 ```
 
 ### Consuming BPF maps in a pod
@@ -142,8 +139,8 @@ bpfman exposes a gRPC API on `/run/bpfman-sock/bpfman.sock`:
 | Path | Description |
 |------|-------------|
 | `/run/bpfman-sock/bpfman.sock` | gRPC socket |
-| `/run/bpfman/state.db` | SQLite state |
-| `/sys/fs/bpf/bpfman/` | BPF pins |
+| `/run/bpfman/db/store.db` | SQLite state |
+| `/run/bpfman/fs/` | BPF pins |
 | `/var/lib/kubelet/plugins/csi.go-bpfman.io/csi.sock` | CSI socket |
 
 ## Design
