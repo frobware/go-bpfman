@@ -188,10 +188,15 @@ func (s *Server) Load(ctx context.Context, req *pb.LoadRequest) (*pb.LoadRespons
 	// Load each requested program using the manager (transactional)
 	// Pin paths are computed from kernel ID, following upstream convention
 	for _, info := range req.Info {
+		progType, err := protoToBpfmanType(info.ProgramType)
+		if err != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "invalid program type for %s: %v", info.Name, err)
+		}
+
 		spec := managed.LoadSpec{
 			ObjectPath:  objectPath,
 			ProgramName: info.Name,
-			ProgramType: protoToBpfmanType(info.ProgramType),
+			ProgramType: progType,
 			PinPath:     s.dirs.FS, // bpffs root - actual paths computed from kernel ID
 			GlobalData:  req.GlobalData,
 		}
@@ -640,25 +645,26 @@ func (s *Server) loggingInterceptor() grpc.UnaryServerInterceptor {
 }
 
 // protoToBpfmanType converts proto program type to bpfman type.
-func protoToBpfmanType(pt pb.BpfmanProgramType) bpfman.ProgramType {
+// Returns an error for unknown or unspecified types (parse, don't validate).
+func protoToBpfmanType(pt pb.BpfmanProgramType) (bpfman.ProgramType, error) {
 	switch pt {
 	case pb.BpfmanProgramType_XDP:
-		return bpfman.ProgramTypeXDP
+		return bpfman.ProgramTypeXDP, nil
 	case pb.BpfmanProgramType_TC:
-		return bpfman.ProgramTypeTC
+		return bpfman.ProgramTypeTC, nil
 	case pb.BpfmanProgramType_TRACEPOINT:
-		return bpfman.ProgramTypeTracepoint
+		return bpfman.ProgramTypeTracepoint, nil
 	case pb.BpfmanProgramType_KPROBE:
-		return bpfman.ProgramTypeKprobe
+		return bpfman.ProgramTypeKprobe, nil
 	case pb.BpfmanProgramType_UPROBE:
-		return bpfman.ProgramTypeUprobe
+		return bpfman.ProgramTypeUprobe, nil
 	case pb.BpfmanProgramType_FENTRY:
-		return bpfman.ProgramTypeFentry
+		return bpfman.ProgramTypeFentry, nil
 	case pb.BpfmanProgramType_FEXIT:
-		return bpfman.ProgramTypeFexit
+		return bpfman.ProgramTypeFexit, nil
 	case pb.BpfmanProgramType_TCX:
-		return bpfman.ProgramTypeTCX
+		return bpfman.ProgramTypeTCX, nil
 	default:
-		return bpfman.ProgramTypeUnspecified
+		return bpfman.ProgramTypeUnspecified, fmt.Errorf("unknown program type: %d", pt)
 	}
 }
