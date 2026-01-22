@@ -30,6 +30,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/frobware/go-bpfman/pkg/bpfman"
+	"github.com/frobware/go-bpfman/pkg/bpfman/config"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/store/sqlite"
 	"github.com/frobware/go-bpfman/pkg/bpfman/kernel"
@@ -221,7 +222,8 @@ func newTestServer(t *testing.T) *Server {
 	store, err := sqlite.NewInMemory(testLogger())
 	require.NoError(t, err, "failed to create store")
 	t.Cleanup(func() { store.Close() })
-	return NewForTest(store, newFakeKernel(), testLogger())
+	dirs := config.NewRuntimeDirs(t.TempDir())
+	return NewForTest(dirs, store, newFakeKernel(), testLogger())
 }
 
 // TestLoadProgram_WithValidRequest_Succeeds verifies that:

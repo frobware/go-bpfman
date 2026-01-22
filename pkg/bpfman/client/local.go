@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/frobware/go-bpfman/pkg/bpfman/config"
 	"github.com/frobware/go-bpfman/pkg/bpfman/managed"
 	"github.com/frobware/go-bpfman/pkg/bpfman/manager"
 )
@@ -16,11 +17,11 @@ type LocalClient struct {
 	logger  *slog.Logger
 }
 
-// NewLocal creates a new LocalClient using the specified database path.
+// NewLocal creates a new LocalClient using the specified runtime directories.
 // The returned client must be closed when no longer needed to release
 // database resources.
-func NewLocal(dbPath string, logger *slog.Logger) (*LocalClient, error) {
-	mgr, cleanup, err := manager.Setup(dbPath, logger)
+func NewLocal(dirs config.RuntimeDirs, logger *slog.Logger) (*LocalClient, error) {
+	mgr, cleanup, err := manager.Setup(dirs, logger)
 	if err != nil {
 		return nil, err
 	}

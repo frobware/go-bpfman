@@ -171,30 +171,6 @@ func ParseObjectPath(s string) (ObjectPath, error) {
 	return ObjectPath{Path: s}, nil
 }
 
-// DBPath wraps a path to the SQLite database with tilde expansion.
-type DBPath struct {
-	Path string
-}
-
-// ParseDBPath parses a database path with tilde expansion.
-func ParseDBPath(s string) (DBPath, error) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return DBPath{}, fmt.Errorf("database path cannot be empty")
-	}
-
-	// Expand ~ to home directory
-	if strings.HasPrefix(s, "~/") {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return DBPath{}, fmt.Errorf("cannot expand ~: %w", err)
-		}
-		s = home + s[1:]
-	}
-
-	return DBPath{Path: s}, nil
-}
-
 // MetadataMap converts a slice of KeyValue to a map.
 func MetadataMap(kvs []KeyValue) map[string]string {
 	if len(kvs) == 0 {

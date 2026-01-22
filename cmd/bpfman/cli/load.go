@@ -10,7 +10,6 @@ import (
 
 	"github.com/frobware/go-bpfman/pkg/bpfman/managed"
 	"github.com/frobware/go-bpfman/pkg/bpfman/manager"
-	"github.com/frobware/go-bpfman/pkg/bpfman/server"
 )
 
 // LoadCmd loads a BPF program from an object file or OCI image.
@@ -44,7 +43,7 @@ func (c *LoadFileCmd) Run(cli *CLI) error {
 
 	// Generate UUID and derive pin path
 	programUUID := uuid.New().String()
-	pinDir := filepath.Join(server.DefaultBpfmanRoot, programUUID)
+	pinDir := filepath.Join(cli.RuntimeDirs().FS, programUUID)
 
 	// Convert global data
 	var globalData map[string][]byte

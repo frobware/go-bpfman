@@ -16,7 +16,6 @@ import (
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/image/oci"
 	"github.com/frobware/go-bpfman/pkg/bpfman/managed"
 	"github.com/frobware/go-bpfman/pkg/bpfman/manager"
-	"github.com/frobware/go-bpfman/pkg/bpfman/server"
 )
 
 // LoadImageCmd loads BPF programs from an OCI container image.
@@ -161,7 +160,7 @@ func (c *LoadImageCmd) Run(cli *CLI) error {
 	}
 
 	// Set up manager
-	mgr, cleanup, err := manager.Setup(cli.DB.Path, logger)
+	mgr, cleanup, err := manager.Setup(cli.RuntimeDirs(), logger)
 	if err != nil {
 		return fmt.Errorf("failed to set up manager: %w", err)
 	}
@@ -190,7 +189,7 @@ func (c *LoadImageCmd) Run(cli *CLI) error {
 
 		// Generate UUID and derive pin path
 		programUUID := uuid.New().String()
-		pinDir := filepath.Join(server.DefaultBpfmanRoot, programUUID)
+		pinDir := filepath.Join(cli.RuntimeDirs().FS, programUUID)
 
 		// Build load spec
 		loadSpec := managed.LoadSpec{

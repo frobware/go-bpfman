@@ -14,10 +14,10 @@ import (
 
 // CLI is the root command structure for bpfman.
 type CLI struct {
-	DB     DBPath `name:"db" help:"SQLite database path." default:"${default_db_path}"`
-	Config string `name:"config" help:"Config file path." default:"${default_config_path}"`
-	Log    string `name:"log" help:"Log spec (e.g., 'info,manager=debug')." env:"BPFMAN_LOG"`
-	Remote string `name:"remote" short:"r" help:"Remote endpoint (unix:///path or host:port). Connects via gRPC instead of local manager."`
+	RuntimeDir string `name:"runtime-dir" help:"Runtime directory base path." default:"${default_runtime_dir}"`
+	Config     string `name:"config" help:"Config file path." default:"${default_config_path}"`
+	Log        string `name:"log" help:"Log spec (e.g., 'info,manager=debug')." env:"BPFMAN_LOG"`
+	Remote     string `name:"remote" short:"r" help:"Remote endpoint (unix:///path or host:port). Connects via gRPC instead of local manager."`
 
 	Serve  ServeCmd  `cmd:"" help:"Start the gRPC daemon."`
 	Load   LoadCmd   `cmd:"" help:"Load a BPF program from an object file."`
@@ -28,6 +28,11 @@ type CLI struct {
 	Get    GetCmd    `cmd:"" help:"Get details of a program or link."`
 	GC     GCCmd     `cmd:"" help:"Garbage collect stale resources."`
 	Image  ImageCmd  `cmd:"" help:"Image operations (verify signatures)."`
+}
+
+// RuntimeDirs returns the runtime directories configuration.
+func (c *CLI) RuntimeDirs() config.RuntimeDirs {
+	return config.NewRuntimeDirs(c.RuntimeDir)
 }
 
 // KongOptions returns the Kong configuration options for the CLI.
@@ -45,13 +50,10 @@ func KongOptions() []kong.Option {
 		kong.TypeMapper(reflect.TypeOf(KeyValue{}), keyValueMapper()),
 		kong.TypeMapper(reflect.TypeOf(GlobalData{}), globalDataMapper()),
 		kong.TypeMapper(reflect.TypeOf(ObjectPath{}), objectPathMapper()),
-		kong.TypeMapper(reflect.TypeOf(DBPath{}), dbPathMapper()),
 		kong.TypeMapper(reflect.TypeOf(ProgramSpec{}), programSpecMapper()),
 		kong.TypeMapper(reflect.TypeOf(ImagePullPolicy{}), imagePullPolicyMapper()),
 		kong.Vars{
-			"default_db_path":     "/run/bpfman/state.db",
-			"default_socket_path": "/run/bpfman-sock/bpfman.sock",
-			"default_csi_socket":  "/run/bpfman/csi/csi.sock",
+			"default_runtime_dir": "/run/bpfman",
 			"default_config_path": "/etc/bpfman/bpfman.toml",
 		},
 	}
@@ -130,5 +132,5 @@ func (c *CLI) Client() (client.Client, error) {
 		return client.NewRemote(c.Remote, logger)
 	}
 
-	return client.NewLocal(c.DB.Path, logger)
+	return client.NewLocal(c.RuntimeDirs(), logger)
 }

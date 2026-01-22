@@ -61,6 +61,7 @@ import (
 
 	"github.com/frobware/go-bpfman/pkg/bpfman/action"
 	"github.com/frobware/go-bpfman/pkg/bpfman/compute"
+	"github.com/frobware/go-bpfman/pkg/bpfman/config"
 	"github.com/frobware/go-bpfman/pkg/bpfman/dispatcher"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/store"
@@ -71,6 +72,7 @@ import (
 
 // Manager orchestrates BPF program management using fetch/compute/execute.
 type Manager struct {
+	dirs     config.RuntimeDirs
 	store    interpreter.Store
 	kernel   interpreter.KernelOperations
 	executor *interpreter.Executor
@@ -78,16 +80,22 @@ type Manager struct {
 }
 
 // New creates a new Manager.
-func New(store interpreter.Store, kernel interpreter.KernelOperations, logger *slog.Logger) *Manager {
+func New(dirs config.RuntimeDirs, store interpreter.Store, kernel interpreter.KernelOperations, logger *slog.Logger) *Manager {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &Manager{
+		dirs:     dirs,
 		store:    store,
 		kernel:   kernel,
 		executor: interpreter.NewExecutor(store, kernel),
 		logger:   logger.With("component", "manager"),
 	}
+}
+
+// Dirs returns the runtime directories configuration.
+func (m *Manager) Dirs() config.RuntimeDirs {
+	return m.dirs
 }
 
 // LoadOpts contains optional metadata for a Load operation.

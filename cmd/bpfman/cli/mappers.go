@@ -102,21 +102,6 @@ func objectPathMapper() kong.MapperFunc {
 	}
 }
 
-// dbPathMapper creates a Kong mapper for DBPath.
-func dbPathMapper() kong.MapperFunc {
-	return func(ctx *kong.DecodeContext, target reflect.Value) error {
-		var s string
-		if err := ctx.Scan.PopValueInto("path", &s); err != nil {
-			return err
-		}
-		dp, err := ParseDBPath(s)
-		if err != nil {
-			return err
-		}
-		target.Set(reflect.ValueOf(dp))
-		return nil
-	}
-}
 
 // programSpecMapper creates a Kong mapper for ProgramSpec.
 func programSpecMapper() kong.MapperFunc {

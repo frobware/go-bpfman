@@ -29,14 +29,6 @@ import (
 )
 
 const (
-	// DefaultSocketPath is the default Unix socket path for the gRPC server.
-	DefaultSocketPath = "/run/bpfman-sock/bpfman.sock"
-	// DefaultDBPath is the default path for the SQLite database.
-	DefaultDBPath = "/run/bpfman/state.db"
-	// DefaultBpfmanRoot is the default root directory for bpfman pins.
-	DefaultBpfmanRoot = "/sys/fs/bpf/bpfman"
-	// DefaultCSISocketPath is the default Unix socket path for the CSI driver.
-	DefaultCSISocketPath = "/run/bpfman/csi/csi.sock"
 	// DefaultCSIDriverName is the default CSI driver name.
 	DefaultCSIDriverName = "csi.go-bpfman.io"
 	// DefaultCSIVersion is the default CSI driver version.
@@ -45,28 +37,18 @@ const (
 
 // RunConfig configures the server daemon.
 type RunConfig struct {
-	SocketPath    string
-	TCPAddress    string // Optional TCP address (e.g., ":50051") for remote access
-	DBPath        string
-	CSISupport    bool
-	CSISocketPath string
-	Logger        *slog.Logger
-	Config        config.Config
+	Dirs       config.RuntimeDirs
+	TCPAddress string // Optional TCP address (e.g., ":50051") for remote access
+	CSISupport bool
+	Logger     *slog.Logger
+	Config     config.Config
 }
 
 // Run starts the bpfman daemon with the given configuration.
 // This is the main entry point for the serve command.
 // The context is used for cancellation - when cancelled, the server shuts down gracefully.
 func Run(ctx context.Context, cfg RunConfig) error {
-	if cfg.SocketPath == "" {
-		cfg.SocketPath = DefaultSocketPath
-	}
-	if cfg.DBPath == "" {
-		cfg.DBPath = DefaultDBPath
-	}
-	if cfg.CSISocketPath == "" {
-		cfg.CSISocketPath = DefaultCSISocketPath
-	}
+	dirs := cfg.Dirs
 
 	logger := cfg.Logger
 	if logger == nil {
@@ -74,9 +56,10 @@ func Run(ctx context.Context, cfg RunConfig) error {
 	}
 
 	// Open shared SQLite store
-	st, err := sqlite.New(cfg.DBPath, logger)
+	dbPath := dirs.DBPath()
+	st, err := sqlite.New(dbPath, logger)
 	if err != nil {
-		return fmt.Errorf("failed to open store at %s: %w", cfg.DBPath, err)
+		return fmt.Errorf("failed to open store at %s: %w", dbPath, err)
 	}
 	defer st.Close()
 
@@ -93,11 +76,12 @@ func Run(ctx context.Context, cfg RunConfig) error {
 			return fmt.Errorf("failed to get hostname for node ID: %w", err)
 		}
 
+		csiSocketPath := dirs.CSISocketPath()
 		csiDriver = driver.New(
 			DefaultCSIDriverName,
 			DefaultCSIVersion,
 			nodeID,
-			"unix://"+cfg.CSISocketPath,
+			"unix://"+csiSocketPath,
 			logger,
 			driver.WithStore(st),
 			driver.WithKernel(kernel),
@@ -105,7 +89,7 @@ func Run(ctx context.Context, cfg RunConfig) error {
 
 		go func() {
 			logger.Info("starting CSI driver",
-				"socket", cfg.CSISocketPath,
+				"socket", csiSocketPath,
 				"driver", DefaultCSIDriverName,
 			)
 			if err := csiDriver.Run(); err != nil {
@@ -124,8 +108,8 @@ func Run(ctx context.Context, cfg RunConfig) error {
 	}()
 
 	// Start bpfman gRPC server
-	srv := newWithStore(st, logger)
-	return srv.serve(ctx, cfg.SocketPath, cfg.TCPAddress)
+	srv := newWithStore(dirs, st, logger)
+	return srv.serve(ctx, dirs.SocketPath(), cfg.TCPAddress)
 }
 
 // Server implements the bpfman gRPC service.
@@ -133,38 +117,38 @@ type Server struct {
 	pb.UnimplementedBpfmanServer
 
 	mu     sync.RWMutex
+	dirs   config.RuntimeDirs
 	kernel interpreter.KernelOperations
 	store  interpreter.Store
 	mgr    *manager.Manager
-	root   string
 	logger *slog.Logger
 }
 
 // newWithStore creates a new bpfman gRPC server with a pre-configured store.
-func newWithStore(store *sqlite.Store, logger *slog.Logger) *Server {
+func newWithStore(dirs config.RuntimeDirs, store *sqlite.Store, logger *slog.Logger) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &Server{
+		dirs:   dirs,
 		kernel: ebpf.New(),
 		store:  store,
-		root:   DefaultBpfmanRoot,
 		logger: logger.With("component", "server"),
 	}
 }
 
 // NewForTest creates a server with injected dependencies for testing.
-func NewForTest(store interpreter.Store, kernel interpreter.KernelOperations, logger *slog.Logger) *Server {
+func NewForTest(dirs config.RuntimeDirs, store interpreter.Store, kernel interpreter.KernelOperations, logger *slog.Logger) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	s := &Server{
+		dirs:   dirs,
 		kernel: kernel,
 		store:  store,
-		root:   "/sys/fs/bpf/test",
 		logger: logger.With("component", "server"),
 	}
-	s.mgr = manager.New(store, kernel, logger)
+	s.mgr = manager.New(dirs, store, kernel, logger)
 	return s
 }
 
@@ -203,9 +187,9 @@ func (s *Server) Load(ctx context.Context, req *pb.LoadRequest) (*pb.LoadRespons
 	// Determine pin directory
 	var pinDir string
 	if uuid != "" {
-		pinDir = filepath.Join(s.root, uuid)
+		pinDir = filepath.Join(s.dirs.FS, uuid)
 	} else {
-		pinDir = filepath.Join(s.root, fmt.Sprintf("%d", time.Now().UnixNano()))
+		pinDir = filepath.Join(s.dirs.FS, fmt.Sprintf("%d", time.Now().UnixNano()))
 	}
 
 	resp := &pb.LoadResponse{
@@ -372,7 +356,7 @@ func (s *Server) serve(ctx context.Context, socketPath, tcpAddr string) error {
 	// Open SQLite store if not already set (e.g., when using newWithStore)
 	closeStore := false
 	if s.store == nil {
-		st, err := sqlite.New(DefaultDBPath, s.logger)
+		st, err := sqlite.New(s.dirs.DBPath(), s.logger)
 		if err != nil {
 			return fmt.Errorf("failed to open store: %w", err)
 		}
@@ -386,7 +370,7 @@ func (s *Server) serve(ctx context.Context, socketPath, tcpAddr string) error {
 	}
 
 	// Create manager for transactional load/unload operations
-	s.mgr = manager.New(s.store, s.kernel, s.logger)
+	s.mgr = manager.New(s.dirs, s.store, s.kernel, s.logger)
 
 	// Ensure socket directory exists
 	socketDir := filepath.Dir(socketPath)
