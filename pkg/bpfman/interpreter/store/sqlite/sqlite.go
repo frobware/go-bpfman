@@ -190,7 +190,7 @@ type Store struct {
 }
 
 // New creates a new SQLite store at the given path.
-func New(dbPath string, logger *slog.Logger) (*Store, error) {
+func New(dbPath string, logger *slog.Logger) (interpreter.Store, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -221,7 +221,7 @@ func New(dbPath string, logger *slog.Logger) (*Store, error) {
 }
 
 // NewInMemory creates an in-memory SQLite store for testing.
-func NewInMemory(logger *slog.Logger) (*Store, error) {
+func NewInMemory(logger *slog.Logger) (interpreter.Store, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}

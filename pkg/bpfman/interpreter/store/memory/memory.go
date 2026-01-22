@@ -70,3 +70,16 @@ func (s *Store) List(_ context.Context) (map[uint32]managed.Program, error) {
 func (s *Store) Close() error {
 	return nil
 }
+
+// FindProgramByMetadata finds a program by a metadata key/value pair.
+func (s *Store) FindProgramByMetadata(_ context.Context, key, value string) (managed.Program, uint32, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for id, prog := range s.programs {
+		if v, ok := prog.UserMetadata[key]; ok && v == value {
+			return prog, id, nil
+		}
+	}
+	return managed.Program{}, 0, fmt.Errorf("no program with metadata %s=%s: %w", key, value, store.ErrNotFound)
+}

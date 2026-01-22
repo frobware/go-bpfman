@@ -131,7 +131,7 @@ type Server struct {
 }
 
 // newWithStore creates a new bpfman gRPC server with a pre-configured store.
-func newWithStore(dirs config.RuntimeDirs, store *sqlite.Store, logger *slog.Logger) *Server {
+func newWithStore(dirs config.RuntimeDirs, store interpreter.Store, logger *slog.Logger) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}

@@ -97,11 +97,19 @@ type ProgramLister interface {
 	List(ctx context.Context) (map[uint32]managed.Program, error)
 }
 
+// ProgramFinder finds programs by criteria.
+type ProgramFinder interface {
+	// FindProgramByMetadata finds a program by a metadata key/value pair.
+	// Returns store.ErrNotFound if no matching program exists.
+	FindProgramByMetadata(ctx context.Context, key, value string) (managed.Program, uint32, error)
+}
+
 // ProgramStore combines all store operations.
 type ProgramStore interface {
 	ProgramReader
 	ProgramWriter
 	ProgramLister
+	ProgramFinder
 }
 
 // KernelSource provides access to kernel BPF objects.
