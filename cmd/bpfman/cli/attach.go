@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"net"
 	"path/filepath"
-
-	"github.com/frobware/go-bpfman/pkg/bpfman/manager"
 )
 
 // AttachCmd attaches a loaded program to a hook.
@@ -28,18 +26,11 @@ type TracepointCmd struct {
 
 // Run executes the tracepoint attach command.
 func (c *TracepointCmd) Run(cli *CLI) error {
-	// Set up logger
-	logger, err := cli.Logger()
+	b, err := cli.Client()
 	if err != nil {
-		return fmt.Errorf("failed to create logger: %w", err)
+		return fmt.Errorf("failed to create client: %w", err)
 	}
-
-	// Set up manager
-	mgr, cleanup, err := manager.Setup(cli.DB.Path, logger)
-	if err != nil {
-		return fmt.Errorf("failed to set up manager: %w", err)
-	}
-	defer cleanup()
+	defer b.Close()
 
 	// Auto-generate link pin path if not provided.
 	// Links must be pinned to persist beyond the CLI command.
@@ -49,7 +40,7 @@ func (c *TracepointCmd) Run(cli *CLI) error {
 	}
 
 	ctx := context.Background()
-	result, err := mgr.AttachTracepoint(ctx, c.ProgramID.Value, c.ProgPinPath, c.Group, c.Name, linkPinPath)
+	result, err := b.AttachTracepoint(ctx, c.ProgramID.Value, c.ProgPinPath, c.Group, c.Name, linkPinPath)
 	if err != nil {
 		return err
 	}
@@ -88,16 +79,11 @@ type XDPCmd struct {
 
 // Run executes the XDP attach command.
 func (c *XDPCmd) Run(cli *CLI) error {
-	logger, err := cli.Logger()
+	b, err := cli.Client()
 	if err != nil {
-		return fmt.Errorf("failed to create logger: %w", err)
+		return fmt.Errorf("failed to create client: %w", err)
 	}
-
-	mgr, cleanup, err := manager.Setup(cli.DB.Path, logger)
-	if err != nil {
-		return fmt.Errorf("failed to set up manager: %w", err)
-	}
-	defer cleanup()
+	defer b.Close()
 
 	// Resolve interface name to ifindex
 	iface, err := net.InterfaceByName(c.Interface)
@@ -111,7 +97,7 @@ func (c *XDPCmd) Run(cli *CLI) error {
 	// using the new dispatcher path convention. Only override if explicitly provided.
 	linkPinPath := c.LinkPinPath
 
-	result, err := mgr.AttachXDP(ctx, c.ProgramID.Value, iface.Index, c.Interface, linkPinPath)
+	result, err := b.AttachXDP(ctx, c.ProgramID.Value, iface.Index, c.Interface, linkPinPath)
 	if err != nil {
 		return err
 	}

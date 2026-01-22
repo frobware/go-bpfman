@@ -2,9 +2,11 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/frobware/go-bpfman/pkg/bpfman/client"
 	"github.com/frobware/go-bpfman/pkg/bpfman/manager"
 )
 
@@ -38,23 +40,19 @@ func (c *GCCmd) Run(cli *CLI) error {
 		cfg.IncludeOrphans = c.Orphans
 	}
 
-	// Set up logger
-	logger, err := cli.Logger()
+	b, err := cli.Client()
 	if err != nil {
-		return fmt.Errorf("failed to create logger: %w", err)
+		return fmt.Errorf("failed to create client: %w", err)
 	}
-
-	// Set up manager
-	mgr, cleanup, err := manager.Setup(cli.DB.Path, logger)
-	if err != nil {
-		return fmt.Errorf("failed to set up manager: %w", err)
-	}
-	defer cleanup()
+	defer b.Close()
 
 	ctx := context.Background()
 
 	// Plan GC
-	plan, err := mgr.PlanGC(ctx, cfg)
+	plan, err := b.PlanGC(ctx, cfg)
+	if errors.Is(err, client.ErrNotSupported) {
+		return fmt.Errorf("garbage collection is only available in local mode")
+	}
 	if err != nil {
 		return fmt.Errorf("failed to plan GC: %w", err)
 	}
@@ -121,7 +119,7 @@ func (c *GCCmd) Run(cli *CLI) error {
 		return nil
 	}
 
-	result, err := mgr.ApplyGC(ctx, plan)
+	result, err := b.ApplyGC(ctx, plan)
 	if err != nil {
 		return fmt.Errorf("failed to apply GC: %w", err)
 	}

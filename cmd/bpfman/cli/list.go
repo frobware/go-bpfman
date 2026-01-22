@@ -3,8 +3,10 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
+	"github.com/frobware/go-bpfman/pkg/bpfman/client"
 	"github.com/frobware/go-bpfman/pkg/bpfman/manager"
 )
 
@@ -21,21 +23,14 @@ type ListProgramsCmd struct {
 
 // Run executes the list programs command.
 func (c *ListProgramsCmd) Run(cli *CLI) error {
-	// Set up logger
-	logger, err := cli.Logger()
+	b, err := cli.Client()
 	if err != nil {
-		return fmt.Errorf("failed to create logger: %w", err)
+		return fmt.Errorf("failed to create client: %w", err)
 	}
-
-	// Set up manager
-	mgr, cleanup, err := manager.Setup(cli.DB.Path, logger)
-	if err != nil {
-		return fmt.Errorf("failed to set up manager: %w", err)
-	}
-	defer cleanup()
+	defer b.Close()
 
 	ctx := context.Background()
-	programs, err := mgr.List(ctx)
+	programs, err := b.List(ctx)
 	if err != nil {
 		return err
 	}
@@ -65,24 +60,20 @@ type ListLinksCmd struct {
 
 // Run executes the list links command.
 func (c *ListLinksCmd) Run(cli *CLI) error {
-	// Set up logger
-	logger, err := cli.Logger()
+	b, err := cli.Client()
 	if err != nil {
-		return fmt.Errorf("failed to create logger: %w", err)
+		return fmt.Errorf("failed to create client: %w", err)
 	}
-
-	// Set up manager
-	mgr, cleanup, err := manager.Setup(cli.DB.Path, logger)
-	if err != nil {
-		return fmt.Errorf("failed to set up manager: %w", err)
-	}
-	defer cleanup()
+	defer b.Close()
 
 	ctx := context.Background()
 
 	var links []interface{}
 	if c.ProgramID != nil {
-		result, err := mgr.ListLinksByProgram(ctx, c.ProgramID.Value)
+		result, err := b.ListLinksByProgram(ctx, c.ProgramID.Value)
+		if errors.Is(err, client.ErrNotSupported) {
+			return fmt.Errorf("listing links by program is only available in local mode")
+		}
 		if err != nil {
 			return err
 		}
@@ -90,7 +81,10 @@ func (c *ListLinksCmd) Run(cli *CLI) error {
 			links = append(links, l)
 		}
 	} else {
-		result, err := mgr.ListLinks(ctx)
+		result, err := b.ListLinks(ctx)
+		if errors.Is(err, client.ErrNotSupported) {
+			return fmt.Errorf("listing links is only available in local mode")
+		}
 		if err != nil {
 			return err
 		}

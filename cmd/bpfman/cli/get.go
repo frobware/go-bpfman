@@ -3,9 +3,10 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
-	"github.com/frobware/go-bpfman/pkg/bpfman/manager"
+	"github.com/frobware/go-bpfman/pkg/bpfman/client"
 )
 
 // GetCmd gets details of a program or link.
@@ -22,21 +23,14 @@ type GetProgramCmd struct {
 
 // Run executes the get program command.
 func (c *GetProgramCmd) Run(cli *CLI) error {
-	// Set up logger
-	logger, err := cli.Logger()
+	b, err := cli.Client()
 	if err != nil {
-		return fmt.Errorf("failed to create logger: %w", err)
+		return fmt.Errorf("failed to create client: %w", err)
 	}
-
-	// Set up manager
-	mgr, cleanup, err := manager.Setup(cli.DB.Path, logger)
-	if err != nil {
-		return fmt.Errorf("failed to set up manager: %w", err)
-	}
-	defer cleanup()
+	defer b.Close()
 
 	ctx := context.Background()
-	info, err := mgr.Get(ctx, c.ProgramID.Value)
+	info, err := b.Get(ctx, c.ProgramID.Value)
 	if err != nil {
 		return err
 	}
@@ -64,21 +58,17 @@ type LinkInfo struct {
 
 // Run executes the get link command.
 func (c *GetLinkCmd) Run(cli *CLI) error {
-	// Set up logger
-	logger, err := cli.Logger()
+	b, err := cli.Client()
 	if err != nil {
-		return fmt.Errorf("failed to create logger: %w", err)
+		return fmt.Errorf("failed to create client: %w", err)
 	}
-
-	// Set up manager
-	mgr, cleanup, err := manager.Setup(cli.DB.Path, logger)
-	if err != nil {
-		return fmt.Errorf("failed to set up manager: %w", err)
-	}
-	defer cleanup()
+	defer b.Close()
 
 	ctx := context.Background()
-	summary, details, err := mgr.GetLink(ctx, c.LinkUUID.Value)
+	summary, details, err := b.GetLink(ctx, c.LinkUUID.Value)
+	if errors.Is(err, client.ErrNotSupported) {
+		return fmt.Errorf("getting link details is only available in local mode")
+	}
 	if err != nil {
 		return err
 	}

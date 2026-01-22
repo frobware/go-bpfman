@@ -2,9 +2,10 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
-	"github.com/frobware/go-bpfman/pkg/bpfman/manager"
+	"github.com/frobware/go-bpfman/pkg/bpfman/client"
 )
 
 // DetachCmd detaches a link.
@@ -14,19 +15,17 @@ type DetachCmd struct {
 
 // Run executes the detach command.
 func (c *DetachCmd) Run(cli *CLI) error {
-	logger, err := cli.Logger()
+	b, err := cli.Client()
 	if err != nil {
-		return fmt.Errorf("failed to create logger: %w", err)
+		return fmt.Errorf("failed to create client: %w", err)
 	}
-
-	mgr, cleanup, err := manager.Setup(cli.DB.Path, logger)
-	if err != nil {
-		return fmt.Errorf("failed to set up manager: %w", err)
-	}
-	defer cleanup()
+	defer b.Close()
 
 	ctx := context.Background()
-	if err := mgr.Detach(ctx, c.LinkUUID.Value); err != nil {
+	if err := b.Detach(ctx, c.LinkUUID.Value); err != nil {
+		if errors.Is(err, client.ErrNotSupported) {
+			return fmt.Errorf("detach by UUID is only available in local mode")
+		}
 		return err
 	}
 

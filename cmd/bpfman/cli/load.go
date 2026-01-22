@@ -36,18 +36,11 @@ func (c *LoadFileCmd) Run(cli *CLI) error {
 		return err
 	}
 
-	// Set up logger
-	logger, err := cli.Logger()
+	b, err := cli.Client()
 	if err != nil {
-		return fmt.Errorf("failed to create logger: %w", err)
+		return fmt.Errorf("failed to create client: %w", err)
 	}
-
-	// Set up manager
-	mgr, cleanup, err := manager.Setup(cli.DB.Path, logger)
-	if err != nil {
-		return fmt.Errorf("failed to set up manager: %w", err)
-	}
-	defer cleanup()
+	defer b.Close()
 
 	// Generate UUID and derive pin path
 	programUUID := uuid.New().String()
@@ -71,9 +64,9 @@ func (c *LoadFileCmd) Run(cli *CLI) error {
 		UserMetadata: MetadataMap(c.Metadata),
 	}
 
-	// Load through manager (transactional)
+	// Load through client
 	ctx := context.Background()
-	loaded, err := mgr.Load(ctx, spec, opts)
+	loaded, err := b.Load(ctx, spec, opts)
 	if err != nil {
 		return err
 	}
