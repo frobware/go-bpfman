@@ -66,7 +66,7 @@ func NewEphemeral(dirs config.RuntimeDirs, logger *slog.Logger) (*EphemeralClien
 	mgr := manager.New(dirs, st, kernel, logger)
 
 	// Create gRPC server with injected dependencies and logging
-	srv := server.NewForTest(dirs, st, kernel, logger)
+	srv := server.New(dirs, st, kernel, logger)
 	grpcServer := grpc.NewServer(
 		grpc.UnaryInterceptor(loggingInterceptor(logger)),
 	)

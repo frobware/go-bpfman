@@ -143,8 +143,8 @@ func newWithStore(dirs config.RuntimeDirs, store *sqlite.Store, logger *slog.Log
 	}
 }
 
-// NewForTest creates a server with injected dependencies for testing.
-func NewForTest(dirs config.RuntimeDirs, store interpreter.Store, kernel interpreter.KernelOperations, logger *slog.Logger) *Server {
+// New creates a server with the provided dependencies.
+func New(dirs config.RuntimeDirs, store interpreter.Store, kernel interpreter.KernelOperations, logger *slog.Logger) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}

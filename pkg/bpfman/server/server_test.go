@@ -314,7 +314,7 @@ func newTestServer(t *testing.T) *Server {
 	require.NoError(t, err, "failed to create store")
 	t.Cleanup(func() { store.Close() })
 	dirs := config.NewRuntimeDirs(t.TempDir())
-	return NewForTest(dirs, store, newFakeKernel(), testLogger())
+	return New(dirs, store, newFakeKernel(), testLogger())
 }
 
 // TestLoadProgram_WithValidRequest_Succeeds verifies that:
