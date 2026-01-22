@@ -39,10 +39,6 @@ type GCConfig struct {
 	// MaxDeletions limits how many items can be deleted in one run.
 	// Zero means no limit.
 	MaxDeletions int
-
-	// BpfmanRoot is the root directory for bpfman-owned pins.
-	// Default: /sys/fs/bpf/bpfman
-	BpfmanRoot string
 }
 
 // DefaultGCConfig returns a GCConfig with sensible defaults.
@@ -57,7 +53,6 @@ func DefaultGCConfig() GCConfig {
 		IncludeOrphans:    true,
 		DryRun:            true, // Safe by default
 		MaxDeletions:      0,
-		BpfmanRoot:        "/sys/fs/bpf/bpfman",
 	}
 }
 
@@ -132,9 +127,6 @@ func (m *Manager) PlanGC(ctx context.Context, cfg GCConfig) (GCPlan, error) {
 	}
 	if cfg.StaleLoadingTTL == 0 {
 		cfg.StaleLoadingTTL = 5 * time.Minute
-	}
-	if cfg.BpfmanRoot == "" {
-		cfg.BpfmanRoot = "/sys/fs/bpf/bpfman"
 	}
 
 	plan := GCPlan{
@@ -281,7 +273,8 @@ func (m *Manager) planOrphanPins(ctx context.Context, cfg GCConfig) ([]GCItem, e
 	}
 
 	// Scan bpfman root for directories
-	entries, err := os.ReadDir(cfg.BpfmanRoot)
+	bpfmanRoot := m.dirs.FS
+	entries, err := os.ReadDir(bpfmanRoot)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil // No bpfman root, no orphans
@@ -295,7 +288,7 @@ func (m *Manager) planOrphanPins(ctx context.Context, cfg GCConfig) ([]GCItem, e
 			continue
 		}
 
-		pinPath := filepath.Join(cfg.BpfmanRoot, entry.Name())
+		pinPath := filepath.Join(bpfmanRoot, entry.Name())
 		if knownPaths[pinPath] {
 			continue // Known, not an orphan
 		}
