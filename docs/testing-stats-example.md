@@ -49,24 +49,13 @@ locate it:
 
 ```bash
 kubectl -n bpfman exec daemonset/bpfman-daemon-go -c bpfman -- \
-  bpfman load file -m bpfman.io/ProgramName=my-stats \
-  /opt/bpf/stats.o count_context_switches
+  bpfman load file --path=/opt/bpf/stats.o \
+  --programs=tracepoint:count_context_switches \
+  -m bpfman.io/ProgramName=my-stats
 ```
 
-This returns JSON with the program details:
-
-```json
-{
-  "id": 1234,
-  "name": "count_context_switches",
-  "type": "unspecified",
-  "pin_path": "/run/bpfman/fs/1234567890/count_context_switches",
-  "pin_dir": "/run/bpfman/fs/1234567890",
-  "map_ids": [567]
-}
-```
-
-Note the `id` and `pin_path` values for the next step.
+This returns a table showing the program details including the kernel ID.
+Note the kernel ID (e.g., 6786) for the next step.
 
 The `-m bpfman.io/ProgramName=my-stats` flag attaches metadata that the CSI
 driver uses to find the program when a pod requests it.
@@ -74,17 +63,14 @@ driver uses to find the program when a pod requests it.
 ## Step 3: Attach to Tracepoint
 
 Attach the loaded program to the `sched_switch` tracepoint, using the program
-ID and pin path from step 2:
+ID from step 2:
 
 ```bash
 kubectl -n bpfman exec daemonset/bpfman-daemon-go -c bpfman -- \
-  bpfman attach tracepoint --program-id=1234 \
-  /run/bpfman/fs/1234567890/count_context_switches \
-  sched sched_switch
+  bpfman attach tracepoint --program-id=6786 sched sched_switch
 ```
 
-Replace `1234` with your actual program ID and the pin path with your actual
-pin path from the load output.
+Replace `6786` with your actual program ID from the load output.
 
 Verify the program is loaded:
 
