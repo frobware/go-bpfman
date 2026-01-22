@@ -19,7 +19,7 @@
 # The pin directory contains (with prefixes to avoid collisions):
 #   prog                         - the program (singular)
 #   map_stats_map                - maps (prefixed, sanitised)
-#   link_sched_sched_switch      - links (prefixed, sanitised)
+#   sched_sched_switch           - links (in links/<prog_id>/ directory)
 #
 # Attach to a tracepoint (bpfman looks up the pin path automatically):
 #   sudo bpfman attach tracepoint --program-id=<ID> <group> <name>

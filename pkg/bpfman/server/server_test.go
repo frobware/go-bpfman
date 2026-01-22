@@ -87,6 +87,17 @@ func (f *fakeKernel) Unload(_ context.Context, pinPath string) error {
 	return nil
 }
 
+func (f *fakeKernel) UnloadProgram(_ context.Context, progPinPath, mapsDir string) error {
+	// Fake implementation - just removes any program whose pin path matches
+	for id, p := range f.programs {
+		if p.PinPath == progPinPath || p.PinDir == mapsDir {
+			delete(f.programs, id)
+			return nil
+		}
+	}
+	return nil
+}
+
 func (f *fakeKernel) Programs(_ context.Context) iter.Seq2[kernel.Program, error] {
 	return func(yield func(kernel.Program, error) bool) {
 		for id, p := range f.programs {

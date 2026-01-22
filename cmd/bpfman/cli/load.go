@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
-	"time"
 
 	"github.com/frobware/go-bpfman/pkg/bpfman/managed"
 	"github.com/frobware/go-bpfman/pkg/bpfman/manager"
@@ -40,10 +38,6 @@ func (c *LoadFileCmd) Run(cli *CLI) error {
 	}
 	defer b.Close()
 
-	// Generate a unique pin directory name using timestamp
-	// The actual kernel_id becomes known only after loading
-	pinDir := filepath.Join(cli.RuntimeDirs().FS, fmt.Sprintf("%d", time.Now().UnixNano()))
-
 	// Convert global data
 	var globalData map[string][]byte
 	if len(c.GlobalData) > 0 {
@@ -51,10 +45,11 @@ func (c *LoadFileCmd) Run(cli *CLI) error {
 	}
 
 	// Build load spec and options
+	// PinPath is the bpffs root; actual paths are computed from kernel ID
 	spec := managed.LoadSpec{
 		ObjectPath:  objPath.Path,
 		ProgramName: c.ProgramName,
-		PinPath:     pinDir,
+		PinPath:     cli.RuntimeDirs().FS,
 		GlobalData:  globalData,
 	}
 	opts := manager.LoadOpts{

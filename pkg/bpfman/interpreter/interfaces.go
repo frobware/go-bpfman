@@ -111,6 +111,8 @@ type ProgramLoader interface {
 // ProgramUnloader removes BPF programs from the kernel.
 type ProgramUnloader interface {
 	Unload(ctx context.Context, pinPath string) error
+	// UnloadProgram removes a program and its maps using the upstream pin layout.
+	UnloadProgram(ctx context.Context, progPinPath, mapsDir string) error
 }
 
 // PinInspector provides raw inspection of bpffs pins.

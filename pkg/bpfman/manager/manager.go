@@ -91,26 +91,35 @@ type LoadOpts struct {
 //
 // See package documentation for details on the atomic load model.
 //
-// IMPORTANT: spec.PinPath must be on bpffs (typically /sys/fs/bpf/...).
-// bpffs does not support mkdir - directories are created implicitly when
-// BPF objects are pinned.
+// spec.PinPath is the bpffs root (e.g., /run/bpfman/fs/). Actual pin paths
+// are computed from the kernel ID following the upstream convention:
+//   - Program: <root>/prog_<kernel_id>
+//   - Maps: <root>/maps/<kernel_id>/<map_name>
 //
 // On failure, previously completed steps are rolled back:
 //   - If kernel load fails: nothing to clean up
-//   - If DB persist fails: unpin from kernel
+//   - If DB persist fails: unpin program and maps from kernel
 func (m *Manager) Load(ctx context.Context, spec managed.LoadSpec, opts LoadOpts) (managed.Loaded, error) {
 	now := time.Now()
 
 	// Phase 1: Load into kernel and pin to bpffs
+	// Pin paths are computed from kernel ID by the kernel layer
 	loaded, err := m.kernel.Load(ctx, spec)
 	if err != nil {
 		return managed.Loaded{}, fmt.Errorf("load program %s: %w", spec.ProgramName, err)
 	}
-	m.logger.Info("loaded program", "name", spec.ProgramName, "kernel_id", loaded.ID, "pin_path", spec.PinPath)
+	m.logger.Info("loaded program",
+		"name", spec.ProgramName,
+		"kernel_id", loaded.ID,
+		"prog_pin", loaded.PinPath,
+		"maps_dir", loaded.PinDir)
 
 	// Phase 2: Persist metadata to DB (single transaction)
+	// Store the actual pin paths (not the root) for later use
+	storedSpec := spec
+	storedSpec.PinPath = loaded.PinDir // Store maps directory for CSI/unload
 	metadata := managed.Program{
-		LoadSpec:     spec,
+		LoadSpec:     storedSpec,
 		UserMetadata: opts.UserMetadata,
 		Tags:         nil,
 		Owner:        opts.Owner,
@@ -119,20 +128,17 @@ func (m *Manager) Load(ctx context.Context, spec managed.LoadSpec, opts LoadOpts
 
 	if err := m.store.Save(ctx, loaded.ID, metadata); err != nil {
 		m.logger.Error("persist failed, rolling back", "kernel_id", loaded.ID, "error", err)
-		// Cleanup kernel state
-		if rbErr := m.kernel.Unload(ctx, spec.PinPath); rbErr != nil {
+		// Cleanup kernel state using the upstream layout
+		if rbErr := m.kernel.UnloadProgram(ctx, loaded.PinPath, loaded.PinDir); rbErr != nil {
 			m.logger.Error("rollback failed", "kernel_id", loaded.ID, "error", rbErr)
 			return managed.Loaded{}, errors.Join(
 				fmt.Errorf("persist metadata: %w", err),
-				fmt.Errorf("rollback pins at %q failed: %w", spec.PinPath, rbErr),
+				fmt.Errorf("rollback failed: %w", rbErr),
 			)
 		}
 		return managed.Loaded{}, fmt.Errorf("persist metadata: %w", err)
 	}
 
-	// Update returned program with complete info
-	loaded.PinPath = filepath.Join(spec.PinPath, "prog")
-	loaded.PinDir = spec.PinPath
 	return loaded, nil
 }
 
@@ -140,8 +146,8 @@ func (m *Manager) Load(ctx context.Context, spec managed.LoadSpec, opts LoadOpts
 //
 // Pattern: FETCH -> COMPUTE -> EXECUTE
 func (m *Manager) Unload(ctx context.Context, kernelID uint32) error {
-	// FETCH: Get metadata and links
-	metadata, err := m.store.Get(ctx, kernelID)
+	// FETCH: Get metadata and links (for link cleanup)
+	_, err := m.store.Get(ctx, kernelID)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return err
 	}
@@ -152,8 +158,12 @@ func (m *Manager) Unload(ctx context.Context, kernelID uint32) error {
 
 	links, _ := m.store.ListLinksByProgram(ctx, kernelID)
 
+	// COMPUTE: Build paths from convention (kernel ID + bpffs root)
+	progPinPath := filepath.Join(m.dirs.FS, fmt.Sprintf("prog_%d", kernelID))
+	mapsDir := filepath.Join(m.dirs.FS, "maps", fmt.Sprintf("%d", kernelID))
+
 	// COMPUTE: Build unload actions
-	actions := computeUnloadActions(kernelID, metadata.LoadSpec.PinPath, links)
+	actions := computeUnloadActions(kernelID, progPinPath, mapsDir, links)
 
 	m.logger.Info("unloading program", "kernel_id", kernelID, "links", len(links))
 
@@ -171,9 +181,10 @@ func (m *Manager) Unload(ctx context.Context, kernelID uint32) error {
 //
 // Action order:
 // 1. DetachLink for each link
-// 2. UnloadProgram
-// 3. DeleteProgram
-func computeUnloadActions(kernelID uint32, pinPath string, links []managed.LinkSummary) []action.Action {
+// 2. UnloadProgram (program pin)
+// 3. UnloadProgram (maps directory)
+// 4. DeleteProgram
+func computeUnloadActions(kernelID uint32, progPinPath, mapsDir string, links []managed.LinkSummary) []action.Action {
 	var actions []action.Action
 
 	// Detach links first
@@ -183,9 +194,10 @@ func computeUnloadActions(kernelID uint32, pinPath string, links []managed.LinkS
 		}
 	}
 
-	// Unload program and delete metadata
+	// Unload program pin and maps directory, then delete metadata
 	actions = append(actions,
-		action.UnloadProgram{PinPath: pinPath},
+		action.UnloadProgram{PinPath: progPinPath},
+		action.UnloadProgram{PinPath: mapsDir},
 		action.DeleteProgram{KernelID: kernelID},
 	)
 
@@ -390,23 +402,24 @@ func (m *Manager) Get(ctx context.Context, kernelID uint32) (ProgramInfo, error)
 
 // AttachTracepoint attaches a pinned program to a tracepoint.
 // programKernelID is required to associate the link with the program in the store.
-// If linkPinPath is empty, a default path is generated in the program's pin directory.
+// If linkPinPath is empty, a default path is generated in the links directory.
 //
 // Pattern: FETCH -> KERNEL I/O -> COMPUTE -> EXECUTE
 func (m *Manager) AttachTracepoint(ctx context.Context, programKernelID uint32, group, name, linkPinPath string) (managed.LinkSummary, error) {
-	// FETCH: Get program metadata to construct pin path
-	metadata, err := m.store.Get(ctx, programKernelID)
+	// FETCH: Verify program exists in store
+	_, err := m.store.Get(ctx, programKernelID)
 	if err != nil {
 		return managed.LinkSummary{}, fmt.Errorf("get program %d: %w", programKernelID, err)
 	}
 
-	// COMPUTE: Construct program pin path from metadata
-	progPinPath := filepath.Join(metadata.LoadSpec.PinPath, "prog")
+	// COMPUTE: Construct paths from convention (kernel ID + bpffs root)
+	progPinPath := filepath.Join(m.dirs.FS, fmt.Sprintf("prog_%d", programKernelID))
 
 	// COMPUTE: Auto-generate link pin path if not provided
 	if linkPinPath == "" {
-		linkName := fmt.Sprintf("link_%s_%s", sanitiseFilename(group), sanitiseFilename(name))
-		linkPinPath = filepath.Join(metadata.LoadSpec.PinPath, linkName)
+		linkName := fmt.Sprintf("%s_%s", sanitiseFilename(group), sanitiseFilename(name))
+		linksDir := filepath.Join(m.dirs.FS, "links", fmt.Sprintf("%d", programKernelID))
+		linkPinPath = filepath.Join(linksDir, linkName)
 	}
 
 	// KERNEL I/O: Attach to the kernel (returns IDs needed for store action)

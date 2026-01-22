@@ -181,20 +181,18 @@ func (s *Server) Load(ctx context.Context, req *pb.LoadRequest) (*pb.LoadRespons
 		return nil, status.Error(codes.InvalidArgument, "at least one program info is required")
 	}
 
-	// Determine pin directory using timestamp for uniqueness
-	pinDir := filepath.Join(s.dirs.FS, fmt.Sprintf("%d", time.Now().UnixNano()))
-
 	resp := &pb.LoadResponse{
 		Programs: make([]*pb.LoadResponseInfo, 0, len(req.Info)),
 	}
 
 	// Load each requested program using the manager (transactional)
+	// Pin paths are computed from kernel ID, following upstream convention
 	for _, info := range req.Info {
 		spec := managed.LoadSpec{
 			ObjectPath:  objectPath,
 			ProgramName: info.Name,
 			ProgramType: protoToBpfmanType(info.ProgramType),
-			PinPath:     pinDir,
+			PinPath:     s.dirs.FS, // bpffs root - actual paths computed from kernel ID
 			GlobalData:  req.GlobalData,
 		}
 
@@ -214,7 +212,7 @@ func (s *Server) Load(ctx context.Context, req *pb.LoadRequest) (*pb.LoadRespons
 				Bytecode:   req.Bytecode,
 				Metadata:   req.Metadata,
 				GlobalData: req.GlobalData,
-				MapPinPath: pinDir,
+				MapPinPath: loaded.PinDir, // maps directory computed from kernel ID
 			},
 			KernelInfo: &pb.KernelProgramInfo{
 				Id:            loaded.ID,

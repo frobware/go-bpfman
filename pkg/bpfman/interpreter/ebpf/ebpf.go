@@ -177,15 +177,15 @@ func (k *Kernel) Links(ctx context.Context) iter.Seq2[kernel.Link, error] {
 
 // Load loads a BPF program into the kernel.
 //
-// Creates the pin directory if it doesn't exist. On bpffs, directory
-// creation typically works with appropriate privileges (CAP_SYS_ADMIN
-// or mount with allow_other).
+// Load loads a BPF program and pins it using kernel ID-based paths.
+//
+// Pin paths follow the upstream bpfman convention:
+//   - Program: <root>/prog_<kernel_id>
+//   - Maps: <root>/maps/<kernel_id>/<map_name>
+//
+// spec.PinPath is the bpffs root (e.g., /run/bpfman/fs/).
+// On failure, all successfully pinned objects are cleaned up.
 func (k *Kernel) Load(ctx context.Context, spec managed.LoadSpec) (managed.Loaded, error) {
-	// Create pin directory if it doesn't exist
-	if err := os.MkdirAll(spec.PinPath, 0755); err != nil {
-		return managed.Loaded{}, fmt.Errorf("create pin directory %q: %w", spec.PinPath, err)
-	}
-
 	// Load the collection from the object file
 	collSpec, err := ebpf.LoadCollectionSpec(spec.ObjectPath)
 	if err != nil {
@@ -199,20 +199,11 @@ func (k *Kernel) Load(ctx context.Context, spec managed.LoadSpec) (managed.Loade
 		}
 	}
 
-	// Load with pinning
-	opts := &ebpf.CollectionOptions{
-		Maps: ebpf.MapOptions{
-			PinPath: spec.PinPath,
-		},
-		Programs: ebpf.ProgramOptions{},
-	}
-
-	coll, err := ebpf.NewCollectionWithOptions(collSpec, *opts)
+	// Load collection WITHOUT pinning - we'll pin after getting kernel ID
+	coll, err := ebpf.NewCollection(collSpec)
 	if err != nil {
 		return managed.Loaded{}, fmt.Errorf("failed to load collection: %w", err)
 	}
-	// Always close the collection - pinning creates kernel references
-	// that persist independently of the file descriptors we hold here.
 	defer coll.Close()
 
 	// Find the requested program
@@ -221,35 +212,51 @@ func (k *Kernel) Load(ctx context.Context, spec managed.LoadSpec) (managed.Loade
 		return managed.Loaded{}, fmt.Errorf("program %q not found in collection", spec.ProgramName)
 	}
 
-	// Pin the program (just "prog" - there's exactly one per directory)
-	progPinPath := filepath.Join(spec.PinPath, "prog")
-	if err := prog.Pin(progPinPath); err != nil {
-		return managed.Loaded{}, fmt.Errorf("failed to pin program: %w", err)
-	}
-
-	// Explicitly pin all maps (skip internal maps like .rodata, .bss, .data)
-	for name, m := range coll.Maps {
-		// Skip internal maps - these are compiler-generated sections that
-		// become maps, and they don't need to be pinned separately.
-		// Also, bpffs paths starting with '.' can be problematic.
-		if strings.HasPrefix(name, ".") {
-			continue
-		}
-		mapPinPath := filepath.Join(spec.PinPath, "map_"+sanitiseFilename(name))
-		if err := m.Pin(mapPinPath); err != nil {
-			// Ignore if already pinned
-			if !os.IsExist(err) {
-				return managed.Loaded{}, fmt.Errorf("failed to pin map %q: %w", name, err)
-			}
-		}
-	}
-
+	// Get program info to obtain kernel ID
 	info, err := prog.Info()
 	if err != nil {
 		return managed.Loaded{}, fmt.Errorf("failed to get program info: %w", err)
 	}
-
 	progID, _ := info.ID()
+	kernelID := uint32(progID)
+
+	// Track pinned paths for rollback on failure
+	var pinnedPaths []string
+	cleanup := func() {
+		for i := len(pinnedPaths) - 1; i >= 0; i-- {
+			os.Remove(pinnedPaths[i])
+		}
+	}
+
+	// Pin program to <root>/prog_<kernel_id>
+	progPinPath := filepath.Join(spec.PinPath, fmt.Sprintf("prog_%d", kernelID))
+	if err := prog.Pin(progPinPath); err != nil {
+		return managed.Loaded{}, fmt.Errorf("failed to pin program: %w", err)
+	}
+	pinnedPaths = append(pinnedPaths, progPinPath)
+
+	// Create maps directory: <root>/maps/<kernel_id>/
+	mapsDir := filepath.Join(spec.PinPath, "maps", fmt.Sprintf("%d", kernelID))
+	if err := os.MkdirAll(mapsDir, 0755); err != nil {
+		cleanup()
+		return managed.Loaded{}, fmt.Errorf("failed to create maps directory: %w", err)
+	}
+
+	// Pin all maps (skip internal maps like .rodata, .bss, .data)
+	for name, m := range coll.Maps {
+		if strings.HasPrefix(name, ".") {
+			continue
+		}
+		mapPinPath := filepath.Join(mapsDir, sanitiseFilename(name))
+		if err := m.Pin(mapPinPath); err != nil {
+			cleanup()
+			// Also remove the maps directory
+			os.Remove(mapsDir)
+			return managed.Loaded{}, fmt.Errorf("failed to pin map %q: %w", name, err)
+		}
+		pinnedPaths = append(pinnedPaths, mapPinPath)
+	}
+
 	ebpfMapIDs, _ := info.MapIDs()
 	mapIDs := make([]uint32, len(ebpfMapIDs))
 	for i, mid := range ebpfMapIDs {
@@ -257,21 +264,38 @@ func (k *Kernel) Load(ctx context.Context, spec managed.LoadSpec) (managed.Loade
 	}
 
 	return managed.Loaded{
-		ID:          uint32(progID),
+		ID:          kernelID,
 		Name:        spec.ProgramName,
 		ProgramType: spec.ProgramType,
 		PinPath:     progPinPath,
+		PinDir:      mapsDir,
 		MapIDs:      mapIDs,
 	}, nil
 }
 
 // Unload removes a BPF program from the kernel by unpinning.
+// Handles both old-style (directory containing everything) and new-style
+// (separate program pin and maps directory) layouts.
 func (k *Kernel) Unload(ctx context.Context, pinPath string) error {
-	entries, err := os.ReadDir(pinPath)
+	info, err := os.Stat(pinPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
+		return fmt.Errorf("stat pin path: %w", err)
+	}
+
+	// If it's a file (program pin), just remove it
+	if !info.IsDir() {
+		if err := os.Remove(pinPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("failed to unpin %s: %w", pinPath, err)
+		}
+		return nil
+	}
+
+	// It's a directory - remove contents then directory
+	entries, err := os.ReadDir(pinPath)
+	if err != nil {
 		return fmt.Errorf("failed to read pin directory: %w", err)
 	}
 
@@ -284,6 +308,25 @@ func (k *Kernel) Unload(ctx context.Context, pinPath string) error {
 
 	if err := os.Remove(pinPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to remove pin directory: %w", err)
+	}
+
+	return nil
+}
+
+// UnloadProgram removes a program and its maps using the upstream pin layout.
+// progPinPath is the program pin (e.g., /run/bpfman/fs/prog_123)
+// mapsDir is the maps directory (e.g., /run/bpfman/fs/maps/123)
+func (k *Kernel) UnloadProgram(ctx context.Context, progPinPath, mapsDir string) error {
+	// Remove program pin
+	if err := os.Remove(progPinPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to unpin program %s: %w", progPinPath, err)
+	}
+
+	// Remove maps directory and contents
+	if mapsDir != "" {
+		if err := k.Unload(ctx, mapsDir); err != nil {
+			return fmt.Errorf("failed to unload maps: %w", err)
+		}
 	}
 
 	return nil

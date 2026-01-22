@@ -141,7 +141,7 @@ func (d *Driver) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolu
 			continue
 		}
 
-		srcPath := filepath.Join(mapPinPath, "map_"+sanitiseFilename(mapName))
+		srcPath := filepath.Join(mapPinPath, sanitiseFilename(mapName))
 		dstPath := filepath.Join(podBpffs, mapName)
 
 		d.logger.Debug("re-pinning map",
