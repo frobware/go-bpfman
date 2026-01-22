@@ -390,34 +390,68 @@ own bpffs at startup via `initialize_bpfman()`.
 that mounts made by the container (like per-pod bpffs for CSI) are visible to
 the host and other containers.
 
-### Why `/sys/fs/bpf` is Mounted
+### Map Sharing Mechanisms
 
-The operator mounts `/sys/fs/bpf` **not for bpfman itself**, but for user
-programs that use libbpf's `LIBBPF_PIN_BY_NAME` map feature.
+bpfman supports two independent mechanisms for sharing maps between programs:
 
-When a BPF program declares a map with:
+#### 1. `--map-owner-id` (bpfman-managed)
+
+The CLI provides explicit map sharing via the `--map-owner-id` argument:
+
+```bash
+# Load first program
+bpfman load image quay.io/example/prog:latest --programs xdp:counter
+# Returns kernel_id, e.g., 63178
+
+# Load second program, sharing maps with first
+bpfman load image quay.io/example/other:latest \
+    --programs xdp:reader \
+    --map-owner-id 63178
+```
+
+This mechanism:
+- Is explicit and controlled via CLI/API
+- Uses the owner program's kernel ID
+- Shares maps via bpfman's managed path: `/run/bpfman/fs/maps/{owner_id}/`
+- Works entirely within bpfman's managed bpffs
+
+#### 2. `LIBBPF_PIN_BY_NAME` (libbpf/aya convention)
+
+BPF programs can declare maps with automatic sharing by name:
 
 ```c
+// Program A
 struct {
-  __uint(type, BPF_MAP_TYPE_ARRAY);
+  __uint(type, BPF_MAP_TYPE_HASH);
   __uint(pinning, LIBBPF_PIN_BY_NAME);
-} shared_map SEC(".maps");
+} shared_counters SEC(".maps");
+
+// Program B (separate bytecode, same map name)
+struct {
+  __uint(type, BPF_MAP_TYPE_HASH);
+  __uint(pinning, LIBBPF_PIN_BY_NAME);
+} shared_counters SEC(".maps");  // Same name = shared map
 ```
 
-The aya library (which bpfman uses) pins the map to `/sys/fs/bpf/{map_name}` by
-default, matching libbpf behaviour. From `aya/src/bpf.rs`:
+This mechanism:
+- Is implicit, defined in BPF program source code
+- Uses map name for sharing (programs with same map name share it)
+- Pins to `/sys/fs/bpf/{map_name}` by default (libbpf convention)
+- Is handled by aya during program loading
 
-```rust
-PinningType::ByName => {
-    // pin maps in /sys/fs/bpf by default to align with libbpf
-    let path = map_pin_path
-        .as_deref()
-        .unwrap_or_else(|| Path::new("/sys/fs/bpf"));
-    MapData::create_pinned_by_name(path, obj, &name, btf_fd)?
-}
-```
+When aya loads a program with `PIN_BY_NAME` maps, it calls
+`create_pinned_by_name()` which first tries to open an existing pin at
+`/sys/fs/bpf/{map_name}`. If found, it reuses that map; otherwise it creates
+and pins a new one. bpfman does not override this behaviour (it doesn't call
+`.map_pin_path()` on the aya loader).
 
-The daemonset comments confirm this:
+### Why `/sys/fs/bpf` is Mounted
+
+The operator mounts `/sys/fs/bpf` to support programs using `LIBBPF_PIN_BY_NAME`.
+Without this mount, aya would fail when trying to pin maps to the default path.
+
+The daemonset comments (misleadingly) describe this as a "hack for kind", but
+it's actually required for any program using `LIBBPF_PIN_BY_NAME` maps:
 
 > "Hack for kind to allow LIBBPF_PIN_BY_NAME to work when it results in the
 > maps being pinned to /sys/fs/bpf."
@@ -426,20 +460,22 @@ The daemonset comments confirm this:
 
 **Summary**:
 - bpfman's own data → `/run/bpfman/fs/`
-- User programs with `LIBBPF_PIN_BY_NAME` → `/sys/fs/bpf` (via aya)
+- `--map-owner-id` sharing → `/run/bpfman/fs/maps/{owner_id}/`
+- `LIBBPF_PIN_BY_NAME` sharing → `/sys/fs/bpf/{map_name}` (via aya)
 
 ## Open Questions
 
 1. ~~**bpffs mount management**~~: Resolved. The daemon mounts its own bpffs at
    `/run/bpfman/fs/` programmatically at startup. The `/sys/fs/bpf` mount in
-   the operator daemonset is only for aya's `LIBBPF_PIN_BY_NAME` compatibility,
-   not for bpfman's own use.
+   the operator daemonset is for aya's `LIBBPF_PIN_BY_NAME` compatibility.
 
 2. **CSI integration**: Verify our CSI driver aligns with upstream patterns.
 
 3. **Dispatcher state**: Our dispatcher implementation needs review against
    upstream path conventions.
 
-4. **PIN_BY_NAME support**: Determine whether we need to support
-   `LIBBPF_PIN_BY_NAME` maps. If so, we may need to mount `/sys/fs/bpf` in our
-   deployment. If not, we can skip this complexity.
+4. ~~**PIN_BY_NAME support**~~: Resolved. bpfman supports two map sharing
+   mechanisms: `--map-owner-id` (explicit, bpfman-managed) and
+   `LIBBPF_PIN_BY_NAME` (implicit, libbpf convention). The latter requires
+   `/sys/fs/bpf` to be mounted. If we want to support programs that use
+   `LIBBPF_PIN_BY_NAME`, we must mount `/sys/fs/bpf` in our deployment.
