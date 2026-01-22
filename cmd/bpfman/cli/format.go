@@ -365,9 +365,9 @@ func formatLoadedProgramsTable(programs []bpfman.ManagedProgram) string {
 		fmt.Fprintf(bw, " Map Pin Path:\t%s\n", p.Managed.PinDir())
 		fmt.Fprintf(bw, " Map Owner ID:\t%s\n", "TODO / FIX ME")
 		if mapIDs := p.Kernel.MapIDs(); len(mapIDs) > 0 {
-			fmt.Fprintf(bw, " Maps Used By:\t%v\n", mapIDs)
+			fmt.Fprintf(bw, " Owned Maps:\t%v\n", mapIDs)
 		} else {
-			fmt.Fprintf(bw, " Maps Used By:\t%s\n", "None")
+			fmt.Fprintf(bw, " Owned Maps:\t%s\n", "None")
 		}
 		fmt.Fprintf(bw, " Links:\t%s\n", "TODO / FIX ME")
 		bw.Flush()
