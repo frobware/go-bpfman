@@ -288,18 +288,21 @@ functionally equivalent:
 Upstream bpfman handles `/run/bpfman/` setup **programmatically** at daemon
 startup, not via systemd or init containers.
 
-### Two Separate bpffs Mounts
+### bpffs Mount
 
-The upstream design uses two distinct bpffs mounts:
+Upstream bpfman uses a single bpffs mount at `/run/bpfman/fs/` for all its
+managed objects. It does **not** use `/sys/fs/bpf` for any of its own data.
 
-| Mount | Purpose | Who Creates |
-|-------|---------|-------------|
-| `/sys/fs/bpf` | System-wide bpffs | Host/init container |
-| `/run/bpfman/fs/` | bpfman-managed bpffs | bpfman daemon |
+The bpfman source code contains zero references to `/sys/fs/bpf`. All path
+constants are under `/run/bpfman/`:
 
-The system bpffs at `/sys/fs/bpf` is the standard location and may be used by
-other tools. The bpfman-managed bpffs at `/run/bpfman/fs/` is exclusively
-controlled by bpfman.
+```rust
+pub(crate) const RTDIR: &str = "/run/bpfman";
+pub(crate) const RTDIR_FS: &str = "/run/bpfman/fs";
+pub(crate) const RTDIR_FS_MAPS: &str = "/run/bpfman/fs/maps";
+pub(crate) const RTDIR_FS_LINKS: &str = "/run/bpfman/fs/links";
+// etc.
+```
 
 ### Daemon Startup Sequence
 
@@ -350,49 +353,93 @@ The mount check reads `/proc/mounts` looking for a bpffs mount containing
 
 In the bpfman-operator daemonset:
 
-**Init container** mounts the system bpffs (if not already mounted):
+**Init container** mounts `/sys/fs/bpf` for aya/libbpf compatibility (see note
+below):
 
 ```yaml
 initContainers:
 - name: mount-bpffs
-  image: busybox
+  image: quay.io/fedora/fedora-minimal:39
   command:
   - /bin/sh
-  - -c
+  - -xc
   - |
-    if ! findmnt -t bpf /sys/fs/bpf; then
-      mount -t bpf bpf /sys/fs/bpf
+    if ! /usr/bin/findmnt --noheadings --types bpf /sys/fs/bpf >/dev/null 2>&1; then
+      /bin/mount bpffs /sys/fs/bpf -t bpf
     fi
   securityContext:
     privileged: true
   volumeMounts:
   - mountPath: /sys/fs/bpf
-    name: bpffs
+    name: default-bpf-fs
     mountPropagation: Bidirectional
 ```
 
-**Main container** (bpfman daemon) then creates `/run/bpfman/fs/` and mounts
-its own bpffs at startup via `initialize_bpfman()`.
+**Main container** (bpfman daemon) creates `/run/bpfman/fs/` and mounts its
+own bpffs at startup via `initialize_bpfman()`.
 
 **Key volumes** in the daemonset:
 
 | Volume | Host Path | Container Path | Purpose |
 |--------|-----------|----------------|---------|
-| `bpffs` | `/sys/fs/bpf` | `/sys/fs/bpf` | System bpffs |
-| `run-bpfman` | `/run/bpfman` | `/run/bpfman` | Runtime directory |
-| `csi-plugin` | `/var/lib/kubelet/plugins/csi-bpfman` | ... | CSI registration |
+| `default-bpf-fs` | `/sys/fs/bpf` | `/sys/fs/bpf` | For aya `PIN_BY_NAME` |
+| `runtime` | `/run/bpfman` | `/run/bpfman` | bpfman runtime directory |
+| `socket-dir` | `/var/lib/kubelet/plugins/csi-bpfman` | ... | CSI registration |
 
 **Mount propagation**: Bidirectional for `/sys/fs/bpf` and `/run/bpfman` so
 that mounts made by the container (like per-pod bpffs for CSI) are visible to
 the host and other containers.
 
+### Why `/sys/fs/bpf` is Mounted
+
+The operator mounts `/sys/fs/bpf` **not for bpfman itself**, but for user
+programs that use libbpf's `LIBBPF_PIN_BY_NAME` map feature.
+
+When a BPF program declares a map with:
+
+```c
+struct {
+  __uint(type, BPF_MAP_TYPE_ARRAY);
+  __uint(pinning, LIBBPF_PIN_BY_NAME);
+} shared_map SEC(".maps");
+```
+
+The aya library (which bpfman uses) pins the map to `/sys/fs/bpf/{map_name}` by
+default, matching libbpf behaviour. From `aya/src/bpf.rs`:
+
+```rust
+PinningType::ByName => {
+    // pin maps in /sys/fs/bpf by default to align with libbpf
+    let path = map_pin_path
+        .as_deref()
+        .unwrap_or_else(|| Path::new("/sys/fs/bpf"));
+    MapData::create_pinned_by_name(path, obj, &name, btf_fd)?
+}
+```
+
+The daemonset comments confirm this:
+
+> "Hack for kind to allow LIBBPF_PIN_BY_NAME to work when it results in the
+> maps being pinned to /sys/fs/bpf."
+
+> "Needed for the aya PIN_BY_NAME feature to function correctly"
+
+**Summary**:
+- bpfman's own data → `/run/bpfman/fs/`
+- User programs with `LIBBPF_PIN_BY_NAME` → `/sys/fs/bpf` (via aya)
+
 ## Open Questions
 
-1. ~~**bpffs mount management**~~: Resolved. The daemon mounts bpffs at
-   `/run/bpfman/fs/` programmatically at startup. In Kubernetes, an init
-   container ensures `/sys/fs/bpf` is mounted first.
+1. ~~**bpffs mount management**~~: Resolved. The daemon mounts its own bpffs at
+   `/run/bpfman/fs/` programmatically at startup. The `/sys/fs/bpf` mount in
+   the operator daemonset is only for aya's `LIBBPF_PIN_BY_NAME` compatibility,
+   not for bpfman's own use.
 
 2. **CSI integration**: Verify our CSI driver aligns with upstream patterns.
 
 3. **Dispatcher state**: Our dispatcher implementation needs review against
    upstream path conventions.
+
+4. **PIN_BY_NAME support**: Determine whether we need to support
+   `LIBBPF_PIN_BY_NAME` maps. If so, we may need to mount `/sys/fs/bpf` in our
+   deployment. If not, we can skip this complexity.
