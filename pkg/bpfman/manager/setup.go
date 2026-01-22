@@ -10,7 +10,14 @@ import (
 
 // Setup creates a Manager with default implementations and returns
 // a cleanup function to close the store.
+//
+// It ensures runtime directories exist and bpffs is mounted before
+// opening the database.
 func Setup(dirs config.RuntimeDirs, logger *slog.Logger) (*Manager, func(), error) {
+	if err := dirs.EnsureDirectories(); err != nil {
+		return nil, nil, err
+	}
+
 	store, err := sqlite.New(dirs.DBPath(), logger)
 	if err != nil {
 		return nil, nil, err
