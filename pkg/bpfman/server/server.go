@@ -46,6 +46,7 @@ const (
 // RunConfig configures the server daemon.
 type RunConfig struct {
 	SocketPath    string
+	TCPAddress    string // Optional TCP address (e.g., ":50051") for remote access
 	DBPath        string
 	CSISupport    bool
 	CSISocketPath string
@@ -124,7 +125,7 @@ func Run(ctx context.Context, cfg RunConfig) error {
 
 	// Start bpfman gRPC server
 	srv := newWithStore(st, logger)
-	return srv.serve(ctx, cfg.SocketPath)
+	return srv.serve(ctx, cfg.SocketPath, cfg.TCPAddress)
 }
 
 // Server implements the bpfman gRPC service.
@@ -366,8 +367,8 @@ func (s *Server) PullBytecode(ctx context.Context, req *pb.PullBytecodeRequest) 
 	return nil, status.Error(codes.Unimplemented, "PullBytecode not yet implemented")
 }
 
-// serve starts the gRPC server on the given socket path.
-func (s *Server) serve(ctx context.Context, socketPath string) error {
+// serve starts the gRPC server on the given socket path and optionally on TCP.
+func (s *Server) serve(ctx context.Context, socketPath, tcpAddr string) error {
 	// Open SQLite store if not already set (e.g., when using newWithStore)
 	closeStore := false
 	if s.store == nil {
@@ -399,20 +400,49 @@ func (s *Server) serve(ctx context.Context, socketPath string) error {
 	}
 
 	// Create Unix socket listener
-	listener, err := net.Listen("unix", socketPath)
+	unixListener, err := net.Listen("unix", socketPath)
 	if err != nil {
 		return fmt.Errorf("failed to listen on %s: %w", socketPath, err)
 	}
-	defer listener.Close()
+	defer unixListener.Close()
 
 	// Set socket permissions
 	if err := os.Chmod(socketPath, 0660); err != nil {
 		return fmt.Errorf("failed to set socket permissions: %w", err)
 	}
 
-	// Create gRPC server
-	grpcServer := grpc.NewServer()
+	// Create gRPC server with logging interceptor
+	grpcServer := grpc.NewServer(
+		grpc.UnaryInterceptor(s.loggingInterceptor()),
+	)
 	pb.RegisterBpfmanServer(grpcServer, s)
+
+	// Track errors from serving goroutines
+	errChan := make(chan error, 2)
+
+	// Start Unix socket server
+	go func() {
+		s.logger.Info("bpfman gRPC server listening", "socket", socketPath)
+		if err := grpcServer.Serve(unixListener); err != nil {
+			errChan <- fmt.Errorf("unix socket server: %w", err)
+		}
+	}()
+
+	// Optionally start TCP listener for remote access
+	if tcpAddr != "" {
+		tcpListener, err := net.Listen("tcp", tcpAddr)
+		if err != nil {
+			grpcServer.GracefulStop()
+			return fmt.Errorf("failed to listen on TCP %s: %w", tcpAddr, err)
+		}
+
+		go func() {
+			s.logger.Info("bpfman gRPC server listening", "tcp", tcpAddr)
+			if err := grpcServer.Serve(tcpListener); err != nil {
+				errChan <- fmt.Errorf("tcp server: %w", err)
+			}
+		}()
+	}
 
 	// Handle context cancellation for graceful shutdown
 	go func() {
@@ -421,8 +451,25 @@ func (s *Server) serve(ctx context.Context, socketPath string) error {
 		grpcServer.GracefulStop()
 	}()
 
-	s.logger.Info("bpfman gRPC server listening", "socket", socketPath)
-	return grpcServer.Serve(listener)
+	// Wait for context cancellation or error
+	select {
+	case <-ctx.Done():
+		return nil
+	case err := <-errChan:
+		return err
+	}
+}
+
+// loggingInterceptor returns a gRPC unary interceptor that logs incoming requests.
+func (s *Server) loggingInterceptor() grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		s.logger.Info("grpc request", "method", info.FullMethod)
+		resp, err := handler(ctx, req)
+		if err != nil {
+			s.logger.Info("grpc response", "method", info.FullMethod, "error", err)
+		}
+		return resp, err
+	}
 }
 
 // protoToBpfmanType converts proto program type to bpfman type.

@@ -12,6 +12,7 @@ import (
 // ServeCmd starts the gRPC daemon.
 type ServeCmd struct {
 	Socket     string `name:"socket" help:"Unix socket path for gRPC server." default:"${default_socket_path}"`
+	TCPAddress string `name:"tcp-address" help:"TCP address for gRPC server. Binds to localhost for security." default:"localhost:50051"`
 	CSISupport bool   `name:"csi-support" help:"Enable CSI driver support."`
 	CSISocket  string `name:"csi-socket" help:"Unix socket path for CSI driver." default:"${default_csi_socket}"`
 }
@@ -30,6 +31,7 @@ func (c *ServeCmd) Run(cli *CLI) error {
 
 	cfg := server.RunConfig{
 		SocketPath:    c.Socket,
+		TCPAddress:    c.TCPAddress,
 		DBPath:        cli.DB.Path,
 		CSISupport:    c.CSISupport,
 		CSISocketPath: c.CSISocket,
