@@ -40,7 +40,6 @@ func KongOptions() []kong.Option {
 	return []kong.Option{
 		kong.Name("bpfman"),
 		kong.Description("BPF program manager with integrated CSI driver."),
-		kong.UsageOnError(),
 		kong.ConfigureHelp(kong.HelpOptions{
 			Compact: true,
 		}),
