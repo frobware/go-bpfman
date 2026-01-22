@@ -65,3 +65,8 @@ func (s *Store) List(_ context.Context) (map[uint32]managed.Program, error) {
 	}
 	return result, nil
 }
+
+// Close is a no-op for the in-memory store.
+func (s *Store) Close() error {
+	return nil
+}

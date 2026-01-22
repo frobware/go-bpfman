@@ -4,6 +4,7 @@ package interpreter
 
 import (
 	"context"
+	"io"
 	"iter"
 
 	"github.com/frobware/go-bpfman/pkg/bpfman"
@@ -64,6 +65,7 @@ type DispatcherStore interface {
 
 // Store combines program, link, and dispatcher store operations.
 type Store interface {
+	io.Closer
 	ProgramStore
 	LinkStore
 	DispatcherStore

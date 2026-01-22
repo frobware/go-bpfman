@@ -14,8 +14,6 @@ import (
 	"github.com/frobware/go-bpfman/pkg/bpfman"
 	"github.com/frobware/go-bpfman/pkg/bpfman/config"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter"
-	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/ebpf"
-	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/store/sqlite"
 	"github.com/frobware/go-bpfman/pkg/bpfman/managed"
 	"github.com/frobware/go-bpfman/pkg/bpfman/manager"
 	"github.com/frobware/go-bpfman/pkg/bpfman/server"
@@ -32,12 +30,11 @@ import (
 //   - Image ops: pull locally, load via gRPC
 type EphemeralClient struct {
 	remote     *RemoteClient
-	mgr        *manager.Manager // Direct access for host-only operations
+	env        *manager.RuntimeEnv
 	puller     interpreter.ImagePuller
 	grpcServer *grpc.Server
 	listener   net.Listener
 	socketPath string // Cleaned up on Close
-	store      *sqlite.Store
 	cancel     context.CancelFunc
 	wg         sync.WaitGroup
 	logger     *slog.Logger
@@ -48,25 +45,14 @@ type EphemeralClient struct {
 // The server is started immediately and the client connects to it.
 // The socket file is removed when Close is called.
 func NewEphemeral(dirs config.RuntimeDirs, logger *slog.Logger) (*EphemeralClient, error) {
-	// Ensure runtime directories exist and bpffs is mounted
-	if err := dirs.EnsureDirectories(); err != nil {
-		return nil, fmt.Errorf("ensure directories: %w", err)
-	}
-
-	// Open SQLite store
-	st, err := sqlite.New(dirs.DBPath(), logger)
+	// Set up runtime environment (ensures directories, opens store, creates manager)
+	env, err := manager.SetupRuntimeEnv(dirs, logger)
 	if err != nil {
-		return nil, fmt.Errorf("open store: %w", err)
+		return nil, fmt.Errorf("setup runtime: %w", err)
 	}
-
-	// Create kernel adapter
-	kernel := ebpf.New()
-
-	// Create manager for direct GC operations
-	mgr := manager.New(dirs, st, kernel, logger)
 
 	// Create gRPC server with injected dependencies and logging
-	srv := server.New(dirs, st, kernel, logger)
+	srv := server.New(dirs, env.Store, env.Kernel, logger)
 	grpcServer := grpc.NewServer(
 		grpc.UnaryInterceptor(loggingInterceptor(logger)),
 	)
@@ -77,18 +63,17 @@ func NewEphemeral(dirs config.RuntimeDirs, logger *slog.Logger) (*EphemeralClien
 	socketPath := fmt.Sprintf("/tmp/bpfman-ephemeral-%d-%d.sock", os.Getpid(), time.Now().UnixNano())
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
-		st.Close()
+		env.Close()
 		return nil, fmt.Errorf("listen on socket %s: %w", socketPath, err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 
 	e := &EphemeralClient{
-		mgr:        mgr,
+		env:        env,
 		grpcServer: grpcServer,
 		listener:   listener,
 		socketPath: socketPath,
-		store:      st,
 		cancel:     cancel,
 		logger:     logger,
 	}
@@ -113,7 +98,7 @@ func NewEphemeral(dirs config.RuntimeDirs, logger *slog.Logger) (*EphemeralClien
 	if err != nil {
 		cancel()
 		grpcServer.GracefulStop()
-		st.Close()
+		env.Close()
 		os.Remove(socketPath)
 		return nil, fmt.Errorf("connect to ephemeral server: %w", err)
 	}
@@ -130,8 +115,8 @@ func (e *EphemeralClient) Close() error {
 	}
 	e.grpcServer.GracefulStop()
 	e.wg.Wait()
-	if e.store != nil {
-		e.store.Close()
+	if e.env != nil {
+		e.env.Close()
 	}
 	if e.socketPath != "" {
 		os.Remove(e.socketPath)
@@ -192,19 +177,19 @@ func (e *EphemeralClient) GetLink(ctx context.Context, kernelLinkID uint32) (man
 // PlanGC creates a garbage collection plan via direct manager access.
 // This bypasses gRPC as GC is a local-only operation.
 func (e *EphemeralClient) PlanGC(ctx context.Context, cfg manager.GCConfig) (manager.GCPlan, error) {
-	return e.mgr.PlanGC(ctx, cfg)
+	return e.env.Manager.PlanGC(ctx, cfg)
 }
 
 // ApplyGC executes a garbage collection plan via direct manager access.
 // This bypasses gRPC as GC is a local-only operation.
 func (e *EphemeralClient) ApplyGC(ctx context.Context, plan manager.GCPlan) (manager.GCResult, error) {
-	return e.mgr.ApplyGC(ctx, plan)
+	return e.env.Manager.ApplyGC(ctx, plan)
 }
 
 // Reconcile cleans up orphaned store entries via direct manager access.
 // This bypasses gRPC as reconciliation is a local-only operation.
 func (e *EphemeralClient) Reconcile(ctx context.Context) error {
-	return e.mgr.Reconcile(ctx)
+	return e.env.Manager.Reconcile(ctx)
 }
 
 // SetImagePuller configures the image puller for OCI operations.
