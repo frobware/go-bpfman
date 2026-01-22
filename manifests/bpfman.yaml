@@ -24,9 +24,13 @@ spec:
         - name: bpfman
           image: bpfman:dev
           imagePullPolicy: IfNotPresent
-          args: ["serve", "--csi-support", "--runtime-dir", "/run/bpfman"]
+          args: ["serve", "--csi-support", "--runtime-dir", "/run/bpfman", "--tcp-address", "[::]:50051"]
           securityContext:
             privileged: true
+          ports:
+            - name: grpc
+              containerPort: 50051
+              protocol: TCP
           volumeMounts:
             - name: bpffs
               mountPath: /sys/fs/bpf
@@ -94,3 +98,20 @@ kind: ServiceAccount
 metadata:
   name: bpfman-daemon-go
   namespace: bpfman
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bpfman-daemon-go
+  namespace: bpfman
+  labels:
+    app: bpfman-daemon-go
+spec:
+  selector:
+    app: bpfman-daemon-go
+  ports:
+    - name: grpc
+      port: 50051
+      targetPort: 50051
+      protocol: TCP
+  clusterIP: None  # Headless service for DaemonSet

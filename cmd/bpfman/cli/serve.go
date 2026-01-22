@@ -11,7 +11,7 @@ import (
 
 // ServeCmd starts the gRPC daemon.
 type ServeCmd struct {
-	TCPAddress string `name:"tcp-address" help:"TCP address for gRPC server. Binds to localhost for security." default:"localhost:50051"`
+	TCPAddress string `name:"tcp-address" help:"TCP address for gRPC server." default:"[::]:50051"`
 	CSISupport bool   `name:"csi-support" help:"Enable CSI driver support."`
 }
 
