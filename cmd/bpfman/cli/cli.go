@@ -7,6 +7,7 @@ import (
 
 	"github.com/alecthomas/kong"
 
+	"github.com/frobware/go-bpfman/pkg/bpfman/client"
 	"github.com/frobware/go-bpfman/pkg/bpfman/config"
 	"github.com/frobware/go-bpfman/pkg/logging"
 )
@@ -16,6 +17,7 @@ type CLI struct {
 	DB     DBPath `name:"db" help:"SQLite database path." default:"${default_db_path}"`
 	Config string `name:"config" help:"Config file path." default:"${default_config_path}"`
 	Log    string `name:"log" help:"Log spec (e.g., 'info,manager=debug')." env:"BPFMAN_LOG"`
+	Remote string `name:"remote" short:"r" help:"Remote endpoint (unix:///path or host:port). Connects via gRPC instead of local manager."`
 
 	Serve  ServeCmd  `cmd:"" help:"Start the gRPC daemon."`
 	Load   LoadCmd   `cmd:"" help:"Load a BPF program from an object file."`
@@ -112,4 +114,21 @@ func (c *CLI) LoggerFromConfig() (*slog.Logger, error) {
 	}
 
 	return logging.New(opts)
+}
+
+// Client returns a client appropriate for the configured transport.
+// If --remote is set, returns a RemoteClient connected via gRPC.
+// Otherwise, returns a LocalClient with direct manager access.
+// The returned client must be closed when no longer needed.
+func (c *CLI) Client() (client.Client, error) {
+	logger, err := c.Logger()
+	if err != nil {
+		return nil, err
+	}
+
+	if c.Remote != "" {
+		return client.NewRemote(c.Remote, logger)
+	}
+
+	return client.NewLocal(c.DB.Path, logger)
 }
