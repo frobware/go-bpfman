@@ -102,7 +102,6 @@ func objectPathMapper() kong.MapperFunc {
 	}
 }
 
-
 // programSpecMapper creates a Kong mapper for ProgramSpec.
 func programSpecMapper() kong.MapperFunc {
 	return func(ctx *kong.DecodeContext, target reflect.Value) error {
