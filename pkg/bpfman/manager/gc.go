@@ -208,26 +208,21 @@ func (m *Manager) planOrphanDBEntries(ctx context.Context, cfg GCConfig) ([]GCIt
 		return nil, err
 	}
 
-	// Build set of kernel program IDs
-	kernelIDs := make(map[uint32]bool)
-	for kp, err := range m.kernel.Programs(ctx) {
-		if err != nil {
-			continue
-		}
-		kernelIDs[kp.ID] = true
-	}
-
-	// Find DB entries without corresponding kernel objects
+	// Find DB entries whose pin paths no longer exist.
+	// The pin path is the source of truth for ownership - if the
+	// directory is gone, our program is gone (regardless of whether
+	// some other program now has the same kernel ID).
 	var items []GCItem
 	for kernelID, meta := range stored {
-		if kernelIDs[kernelID] {
-			continue // Has kernel object, not an orphan
+		pinPath := meta.LoadSpec.PinPath
+		if _, err := os.Stat(pinPath); err == nil {
+			continue // Pin path exists, not an orphan
 		}
 
 		items = append(items, GCItem{
 			Reason:   GCOrphanDB,
 			KernelID: kernelID,
-			PinPath:  meta.LoadSpec.PinPath,
+			PinPath:  pinPath,
 			Age:      cfg.Now.Sub(meta.CreatedAt),
 		})
 	}
