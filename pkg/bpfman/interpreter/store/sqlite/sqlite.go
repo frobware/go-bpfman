@@ -15,6 +15,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/frobware/go-bpfman/pkg/bpfman/dispatcher"
+	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/store"
 	"github.com/frobware/go-bpfman/pkg/bpfman/managed"
 )
@@ -22,9 +23,18 @@ import (
 //go:embed schema.sql
 var schemaSQL string
 
+// dbConn abstracts *sql.DB and *sql.Tx for query execution.
+type dbConn interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
 // Store implements interpreter.ProgramStore using SQLite.
 type Store struct {
-	db     *sql.DB
+	db     *sql.DB // original connection, used for BeginTx
+	conn   dbConn  // active connection (db or tx)
+	inTx   bool    // true if this store is operating within a transaction
 	logger *slog.Logger
 }
 
@@ -45,7 +55,7 @@ func New(dbPath string, logger *slog.Logger) (*Store, error) {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
-	s := &Store{db: db, logger: logger}
+	s := &Store{db: db, conn: db, logger: logger}
 	if err := s.migrate(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
@@ -67,7 +77,7 @@ func NewInMemory(logger *slog.Logger) (*Store, error) {
 		return nil, fmt.Errorf("failed to open in-memory database: %w", err)
 	}
 
-	s := &Store{db: db, logger: logger}
+	s := &Store{db: db, conn: db, logger: logger}
 	if err := s.migrate(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
@@ -93,7 +103,7 @@ func (s *Store) migrate() error {
 // Get retrieves program metadata by kernel ID.
 // Returns store.ErrNotFound if the program does not exist.
 func (s *Store) Get(ctx context.Context, kernelID uint32) (managed.Program, error) {
-	row := s.db.QueryRowContext(ctx,
+	row := s.conn.QueryRowContext(ctx,
 		"SELECT metadata FROM managed_programs WHERE kernel_id = ?",
 		kernelID)
 
@@ -115,19 +125,14 @@ func (s *Store) Get(ctx context.Context, kernelID uint32) (managed.Program, erro
 }
 
 // Save stores program metadata.
+// For atomicity with other operations, wrap in RunInTransaction.
 func (s *Store) Save(ctx context.Context, kernelID uint32, metadata managed.Program) error {
 	metadataJSON, err := json.Marshal(metadata)
 	if err != nil {
 		return fmt.Errorf("failed to marshal metadata: %w", err)
 	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback()
-
-	_, err = tx.ExecContext(ctx,
+	_, err = s.conn.ExecContext(ctx,
 		"INSERT OR REPLACE INTO managed_programs (kernel_id, metadata, created_at) VALUES (?, ?, ?)",
 		kernelID, string(metadataJSON), time.Now().Format(time.RFC3339))
 	if err != nil {
@@ -135,7 +140,7 @@ func (s *Store) Save(ctx context.Context, kernelID uint32, metadata managed.Prog
 	}
 
 	// Clear old metadata index entries for this program
-	_, err = tx.ExecContext(ctx,
+	_, err = s.conn.ExecContext(ctx,
 		"DELETE FROM program_metadata_index WHERE kernel_id = ?",
 		kernelID)
 	if err != nil {
@@ -144,7 +149,7 @@ func (s *Store) Save(ctx context.Context, kernelID uint32, metadata managed.Prog
 
 	// Insert metadata index entries for UserMetadata
 	for key, value := range metadata.UserMetadata {
-		_, err = tx.ExecContext(ctx,
+		_, err = s.conn.ExecContext(ctx,
 			"INSERT INTO program_metadata_index (kernel_id, key, value) VALUES (?, ?, ?)",
 			kernelID, key, value)
 		if err != nil {
@@ -152,16 +157,13 @@ func (s *Store) Save(ctx context.Context, kernelID uint32, metadata managed.Prog
 		}
 	}
 
-	if err := tx.Commit(); err != nil {
-		return err
-	}
 	s.logger.Debug("saved program", "kernel_id", kernelID)
 	return nil
 }
 
 // Delete removes program metadata.
 func (s *Store) Delete(ctx context.Context, kernelID uint32) error {
-	_, err := s.db.ExecContext(ctx,
+	_, err := s.conn.ExecContext(ctx,
 		"DELETE FROM managed_programs WHERE kernel_id = ?",
 		kernelID)
 	if err == nil {
@@ -172,7 +174,7 @@ func (s *Store) Delete(ctx context.Context, kernelID uint32) error {
 
 // List returns all program metadata.
 func (s *Store) List(ctx context.Context) (map[uint32]managed.Program, error) {
-	rows, err := s.db.QueryContext(ctx,
+	rows, err := s.conn.QueryContext(ctx,
 		"SELECT kernel_id, metadata FROM managed_programs")
 	if err != nil {
 		return nil, err
@@ -201,7 +203,7 @@ func (s *Store) List(ctx context.Context) (map[uint32]managed.Program, error) {
 // FindProgramByMetadata finds a program by a specific metadata key/value pair.
 // Returns store.ErrNotFound if no program matches.
 func (s *Store) FindProgramByMetadata(ctx context.Context, key, value string) (managed.Program, uint32, error) {
-	row := s.db.QueryRowContext(ctx, `
+	row := s.conn.QueryRowContext(ctx, `
 		SELECT m.kernel_id, m.metadata
 		FROM managed_programs m
 		JOIN program_metadata_index i ON m.kernel_id = i.kernel_id
@@ -232,7 +234,7 @@ func (s *Store) FindAllProgramsByMetadata(ctx context.Context, key, value string
 	KernelID uint32
 	Metadata managed.Program
 }, error) {
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := s.conn.QueryContext(ctx, `
 		SELECT m.kernel_id, m.metadata
 		FROM managed_programs m
 		JOIN program_metadata_index i ON m.kernel_id = i.kernel_id
@@ -276,7 +278,7 @@ func (s *Store) FindAllProgramsByMetadata(ctx context.Context, key, value string
 // DeleteLink removes link metadata by kernel link ID.
 // Due to CASCADE, this also removes the corresponding detail table entry.
 func (s *Store) DeleteLink(ctx context.Context, kernelLinkID uint32) error {
-	result, err := s.db.ExecContext(ctx,
+	result, err := s.conn.ExecContext(ctx,
 		"DELETE FROM link_registry WHERE kernel_link_id = ?",
 		kernelLinkID)
 	if err != nil {
@@ -298,7 +300,7 @@ func (s *Store) DeleteLink(ctx context.Context, kernelLinkID uint32) error {
 // GetLink retrieves link metadata by kernel link ID using two-phase lookup.
 func (s *Store) GetLink(ctx context.Context, kernelLinkID uint32) (managed.LinkSummary, managed.LinkDetails, error) {
 	// Phase 1: Get summary from registry
-	row := s.db.QueryRowContext(ctx,
+	row := s.conn.QueryRowContext(ctx,
 		`SELECT kernel_link_id, link_type, kernel_program_id, pin_path, created_at
 		 FROM link_registry WHERE kernel_link_id = ?`, kernelLinkID)
 
@@ -318,7 +320,7 @@ func (s *Store) GetLink(ctx context.Context, kernelLinkID uint32) (managed.LinkS
 
 // ListLinks returns all links (summary only).
 func (s *Store) ListLinks(ctx context.Context) ([]managed.LinkSummary, error) {
-	rows, err := s.db.QueryContext(ctx,
+	rows, err := s.conn.QueryContext(ctx,
 		`SELECT kernel_link_id, link_type, kernel_program_id, pin_path, created_at
 		 FROM link_registry`)
 	if err != nil {
@@ -331,7 +333,7 @@ func (s *Store) ListLinks(ctx context.Context) ([]managed.LinkSummary, error) {
 
 // ListLinksByProgram returns all links for a given program kernel ID.
 func (s *Store) ListLinksByProgram(ctx context.Context, programKernelID uint32) ([]managed.LinkSummary, error) {
-	rows, err := s.db.QueryContext(ctx,
+	rows, err := s.conn.QueryContext(ctx,
 		`SELECT kernel_link_id, link_type, kernel_program_id, pin_path, created_at
 		 FROM link_registry WHERE kernel_program_id = ?`, programKernelID)
 	if err != nil {
@@ -346,19 +348,14 @@ func (s *Store) ListLinksByProgram(ctx context.Context, programKernelID uint32) 
 // Type-Specific Link Save Methods
 // ----------------------------------------------------------------------------
 
-// SaveTracepointLink saves a tracepoint link atomically.
+// SaveTracepointLink saves a tracepoint link.
+// For atomicity with other operations, wrap in RunInTransaction.
 func (s *Store) SaveTracepointLink(ctx context.Context, summary managed.LinkSummary, details managed.TracepointDetails) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback()
-
-	if err := s.insertLinkRegistry(ctx, tx, summary); err != nil {
+	if err := s.insertLinkRegistry(ctx, summary); err != nil {
 		return err
 	}
 
-	_, err = tx.ExecContext(ctx,
+	_, err := s.conn.ExecContext(ctx,
 		`INSERT INTO tracepoint_link_details (kernel_link_id, tracepoint_group, tracepoint_name)
 		 VALUES (?, ?, ?)`,
 		summary.KernelLinkID, details.Group, details.Name)
@@ -366,23 +363,14 @@ func (s *Store) SaveTracepointLink(ctx context.Context, summary managed.LinkSumm
 		return fmt.Errorf("failed to insert tracepoint details: %w", err)
 	}
 
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-
 	s.logger.Debug("saved tracepoint link", "kernel_link_id", summary.KernelLinkID, "group", details.Group, "name", details.Name)
 	return nil
 }
 
-// SaveKprobeLink saves a kprobe/kretprobe link atomically.
+// SaveKprobeLink saves a kprobe/kretprobe link.
+// For atomicity with other operations, wrap in RunInTransaction.
 func (s *Store) SaveKprobeLink(ctx context.Context, summary managed.LinkSummary, details managed.KprobeDetails) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback()
-
-	if err := s.insertLinkRegistry(ctx, tx, summary); err != nil {
+	if err := s.insertLinkRegistry(ctx, summary); err != nil {
 		return err
 	}
 
@@ -391,7 +379,7 @@ func (s *Store) SaveKprobeLink(ctx context.Context, summary managed.LinkSummary,
 		retprobe = 1
 	}
 
-	_, err = tx.ExecContext(ctx,
+	_, err := s.conn.ExecContext(ctx,
 		`INSERT INTO kprobe_link_details (kernel_link_id, fn_name, offset, retprobe)
 		 VALUES (?, ?, ?, ?)`,
 		summary.KernelLinkID, details.FnName, details.Offset, retprobe)
@@ -399,23 +387,14 @@ func (s *Store) SaveKprobeLink(ctx context.Context, summary managed.LinkSummary,
 		return fmt.Errorf("failed to insert kprobe details: %w", err)
 	}
 
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-
 	s.logger.Debug("saved kprobe link", "kernel_link_id", summary.KernelLinkID, "fn_name", details.FnName)
 	return nil
 }
 
-// SaveUprobeLink saves a uprobe/uretprobe link atomically.
+// SaveUprobeLink saves a uprobe/uretprobe link.
+// For atomicity with other operations, wrap in RunInTransaction.
 func (s *Store) SaveUprobeLink(ctx context.Context, summary managed.LinkSummary, details managed.UprobeDetails) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback()
-
-	if err := s.insertLinkRegistry(ctx, tx, summary); err != nil {
+	if err := s.insertLinkRegistry(ctx, summary); err != nil {
 		return err
 	}
 
@@ -424,7 +403,7 @@ func (s *Store) SaveUprobeLink(ctx context.Context, summary managed.LinkSummary,
 		retprobe = 1
 	}
 
-	_, err = tx.ExecContext(ctx,
+	_, err := s.conn.ExecContext(ctx,
 		`INSERT INTO uprobe_link_details (kernel_link_id, target, fn_name, offset, pid, retprobe)
 		 VALUES (?, ?, ?, ?, ?, ?)`,
 		summary.KernelLinkID, details.Target, details.FnName, details.Offset, details.PID, retprobe)
@@ -432,27 +411,18 @@ func (s *Store) SaveUprobeLink(ctx context.Context, summary managed.LinkSummary,
 		return fmt.Errorf("failed to insert uprobe details: %w", err)
 	}
 
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-
 	s.logger.Debug("saved uprobe link", "kernel_link_id", summary.KernelLinkID, "target", details.Target)
 	return nil
 }
 
-// SaveFentryLink saves a fentry link atomically.
+// SaveFentryLink saves a fentry link.
+// For atomicity with other operations, wrap in RunInTransaction.
 func (s *Store) SaveFentryLink(ctx context.Context, summary managed.LinkSummary, details managed.FentryDetails) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback()
-
-	if err := s.insertLinkRegistry(ctx, tx, summary); err != nil {
+	if err := s.insertLinkRegistry(ctx, summary); err != nil {
 		return err
 	}
 
-	_, err = tx.ExecContext(ctx,
+	_, err := s.conn.ExecContext(ctx,
 		`INSERT INTO fentry_link_details (kernel_link_id, fn_name)
 		 VALUES (?, ?)`,
 		summary.KernelLinkID, details.FnName)
@@ -460,27 +430,18 @@ func (s *Store) SaveFentryLink(ctx context.Context, summary managed.LinkSummary,
 		return fmt.Errorf("failed to insert fentry details: %w", err)
 	}
 
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-
 	s.logger.Debug("saved fentry link", "kernel_link_id", summary.KernelLinkID, "fn_name", details.FnName)
 	return nil
 }
 
-// SaveFexitLink saves a fexit link atomically.
+// SaveFexitLink saves a fexit link.
+// For atomicity with other operations, wrap in RunInTransaction.
 func (s *Store) SaveFexitLink(ctx context.Context, summary managed.LinkSummary, details managed.FexitDetails) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback()
-
-	if err := s.insertLinkRegistry(ctx, tx, summary); err != nil {
+	if err := s.insertLinkRegistry(ctx, summary); err != nil {
 		return err
 	}
 
-	_, err = tx.ExecContext(ctx,
+	_, err := s.conn.ExecContext(ctx,
 		`INSERT INTO fexit_link_details (kernel_link_id, fn_name)
 		 VALUES (?, ?)`,
 		summary.KernelLinkID, details.FnName)
@@ -488,23 +449,14 @@ func (s *Store) SaveFexitLink(ctx context.Context, summary managed.LinkSummary, 
 		return fmt.Errorf("failed to insert fexit details: %w", err)
 	}
 
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-
 	s.logger.Debug("saved fexit link", "kernel_link_id", summary.KernelLinkID, "fn_name", details.FnName)
 	return nil
 }
 
-// SaveXDPLink saves an XDP link atomically.
+// SaveXDPLink saves an XDP link.
+// For atomicity with other operations, wrap in RunInTransaction.
 func (s *Store) SaveXDPLink(ctx context.Context, summary managed.LinkSummary, details managed.XDPDetails) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback()
-
-	if err := s.insertLinkRegistry(ctx, tx, summary); err != nil {
+	if err := s.insertLinkRegistry(ctx, summary); err != nil {
 		return err
 	}
 
@@ -513,7 +465,7 @@ func (s *Store) SaveXDPLink(ctx context.Context, summary managed.LinkSummary, de
 		return fmt.Errorf("failed to marshal proceed_on: %w", err)
 	}
 
-	_, err = tx.ExecContext(ctx,
+	_, err = s.conn.ExecContext(ctx,
 		`INSERT INTO xdp_link_details (kernel_link_id, interface, ifindex, priority, position, proceed_on, netns, nsid, dispatcher_id, revision)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		summary.KernelLinkID, details.Interface, details.Ifindex, details.Priority, details.Position,
@@ -522,23 +474,14 @@ func (s *Store) SaveXDPLink(ctx context.Context, summary managed.LinkSummary, de
 		return fmt.Errorf("failed to insert xdp details: %w", err)
 	}
 
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-
 	s.logger.Debug("saved xdp link", "kernel_link_id", summary.KernelLinkID, "interface", details.Interface)
 	return nil
 }
 
-// SaveTCLink saves a TC link atomically.
+// SaveTCLink saves a TC link.
+// For atomicity with other operations, wrap in RunInTransaction.
 func (s *Store) SaveTCLink(ctx context.Context, summary managed.LinkSummary, details managed.TCDetails) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback()
-
-	if err := s.insertLinkRegistry(ctx, tx, summary); err != nil {
+	if err := s.insertLinkRegistry(ctx, summary); err != nil {
 		return err
 	}
 
@@ -547,7 +490,7 @@ func (s *Store) SaveTCLink(ctx context.Context, summary managed.LinkSummary, det
 		return fmt.Errorf("failed to marshal proceed_on: %w", err)
 	}
 
-	_, err = tx.ExecContext(ctx,
+	_, err = s.conn.ExecContext(ctx,
 		`INSERT INTO tc_link_details (kernel_link_id, interface, ifindex, direction, priority, position, proceed_on, netns, nsid, dispatcher_id, revision)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		summary.KernelLinkID, details.Interface, details.Ifindex, details.Direction, details.Priority, details.Position,
@@ -556,36 +499,23 @@ func (s *Store) SaveTCLink(ctx context.Context, summary managed.LinkSummary, det
 		return fmt.Errorf("failed to insert tc details: %w", err)
 	}
 
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-
 	s.logger.Debug("saved tc link", "kernel_link_id", summary.KernelLinkID, "interface", details.Interface, "direction", details.Direction)
 	return nil
 }
 
-// SaveTCXLink saves a TCX link atomically.
+// SaveTCXLink saves a TCX link.
+// For atomicity with other operations, wrap in RunInTransaction.
 func (s *Store) SaveTCXLink(ctx context.Context, summary managed.LinkSummary, details managed.TCXDetails) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback()
-
-	if err := s.insertLinkRegistry(ctx, tx, summary); err != nil {
+	if err := s.insertLinkRegistry(ctx, summary); err != nil {
 		return err
 	}
 
-	_, err = tx.ExecContext(ctx,
+	_, err := s.conn.ExecContext(ctx,
 		`INSERT INTO tcx_link_details (kernel_link_id, interface, ifindex, direction, priority, netns, nsid)
 		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		summary.KernelLinkID, details.Interface, details.Ifindex, details.Direction, details.Priority, details.Netns, details.Nsid)
 	if err != nil {
 		return fmt.Errorf("failed to insert tcx details: %w", err)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return err
 	}
 
 	s.logger.Debug("saved tcx link", "kernel_link_id", summary.KernelLinkID, "interface", details.Interface, "direction", details.Direction)
@@ -596,9 +526,9 @@ func (s *Store) SaveTCXLink(ctx context.Context, summary managed.LinkSummary, de
 // Helper Functions
 // ----------------------------------------------------------------------------
 
-// insertLinkRegistry inserts a record into the link_registry table within a transaction.
-func (s *Store) insertLinkRegistry(ctx context.Context, tx *sql.Tx, summary managed.LinkSummary) error {
-	_, err := tx.ExecContext(ctx,
+// insertLinkRegistry inserts a record into the link_registry table.
+func (s *Store) insertLinkRegistry(ctx context.Context, summary managed.LinkSummary) error {
+	_, err := s.conn.ExecContext(ctx,
 		`INSERT INTO link_registry (kernel_link_id, link_type, kernel_program_id, pin_path, created_at)
 		 VALUES (?, ?, ?, ?, ?)`,
 		summary.KernelLinkID, string(summary.LinkType), summary.KernelProgramID,
@@ -685,7 +615,7 @@ func (s *Store) getLinkDetails(ctx context.Context, linkType managed.LinkType, k
 }
 
 func (s *Store) getTracepointDetails(ctx context.Context, kernelLinkID uint32) (managed.TracepointDetails, error) {
-	row := s.db.QueryRowContext(ctx,
+	row := s.conn.QueryRowContext(ctx,
 		`SELECT tracepoint_group, tracepoint_name FROM tracepoint_link_details WHERE kernel_link_id = ?`, kernelLinkID)
 
 	var details managed.TracepointDetails
@@ -700,7 +630,7 @@ func (s *Store) getTracepointDetails(ctx context.Context, kernelLinkID uint32) (
 }
 
 func (s *Store) getKprobeDetails(ctx context.Context, kernelLinkID uint32) (managed.KprobeDetails, error) {
-	row := s.db.QueryRowContext(ctx,
+	row := s.conn.QueryRowContext(ctx,
 		`SELECT fn_name, offset, retprobe FROM kprobe_link_details WHERE kernel_link_id = ?`, kernelLinkID)
 
 	var details managed.KprobeDetails
@@ -717,7 +647,7 @@ func (s *Store) getKprobeDetails(ctx context.Context, kernelLinkID uint32) (mana
 }
 
 func (s *Store) getUprobeDetails(ctx context.Context, kernelLinkID uint32) (managed.UprobeDetails, error) {
-	row := s.db.QueryRowContext(ctx,
+	row := s.conn.QueryRowContext(ctx,
 		`SELECT target, fn_name, offset, pid, retprobe FROM uprobe_link_details WHERE kernel_link_id = ?`, kernelLinkID)
 
 	var details managed.UprobeDetails
@@ -742,7 +672,7 @@ func (s *Store) getUprobeDetails(ctx context.Context, kernelLinkID uint32) (mana
 }
 
 func (s *Store) getFentryDetails(ctx context.Context, kernelLinkID uint32) (managed.FentryDetails, error) {
-	row := s.db.QueryRowContext(ctx,
+	row := s.conn.QueryRowContext(ctx,
 		`SELECT fn_name FROM fentry_link_details WHERE kernel_link_id = ?`, kernelLinkID)
 
 	var details managed.FentryDetails
@@ -757,7 +687,7 @@ func (s *Store) getFentryDetails(ctx context.Context, kernelLinkID uint32) (mana
 }
 
 func (s *Store) getFexitDetails(ctx context.Context, kernelLinkID uint32) (managed.FexitDetails, error) {
-	row := s.db.QueryRowContext(ctx,
+	row := s.conn.QueryRowContext(ctx,
 		`SELECT fn_name FROM fexit_link_details WHERE kernel_link_id = ?`, kernelLinkID)
 
 	var details managed.FexitDetails
@@ -772,7 +702,7 @@ func (s *Store) getFexitDetails(ctx context.Context, kernelLinkID uint32) (manag
 }
 
 func (s *Store) getXDPDetails(ctx context.Context, kernelLinkID uint32) (managed.XDPDetails, error) {
-	row := s.db.QueryRowContext(ctx,
+	row := s.conn.QueryRowContext(ctx,
 		`SELECT interface, ifindex, priority, position, proceed_on, netns, nsid, dispatcher_id, revision
 		 FROM xdp_link_details WHERE kernel_link_id = ?`, kernelLinkID)
 
@@ -798,7 +728,7 @@ func (s *Store) getXDPDetails(ctx context.Context, kernelLinkID uint32) (managed
 }
 
 func (s *Store) getTCDetails(ctx context.Context, kernelLinkID uint32) (managed.TCDetails, error) {
-	row := s.db.QueryRowContext(ctx,
+	row := s.conn.QueryRowContext(ctx,
 		`SELECT interface, ifindex, direction, priority, position, proceed_on, netns, nsid, dispatcher_id, revision
 		 FROM tc_link_details WHERE kernel_link_id = ?`, kernelLinkID)
 
@@ -824,7 +754,7 @@ func (s *Store) getTCDetails(ctx context.Context, kernelLinkID uint32) (managed.
 }
 
 func (s *Store) getTCXDetails(ctx context.Context, kernelLinkID uint32) (managed.TCXDetails, error) {
-	row := s.db.QueryRowContext(ctx,
+	row := s.conn.QueryRowContext(ctx,
 		`SELECT interface, ifindex, direction, priority, netns, nsid
 		 FROM tcx_link_details WHERE kernel_link_id = ?`, kernelLinkID)
 
@@ -854,7 +784,7 @@ func (s *Store) getTCXDetails(ctx context.Context, kernelLinkID uint32) (managed
 
 // GetDispatcher retrieves a dispatcher by type, nsid, and ifindex.
 func (s *Store) GetDispatcher(ctx context.Context, dispType string, nsid uint64, ifindex uint32) (managed.DispatcherState, error) {
-	row := s.db.QueryRowContext(ctx,
+	row := s.conn.QueryRowContext(ctx,
 		`SELECT id, type, nsid, ifindex, revision, kernel_id, link_id, link_pin_path, prog_pin_path, num_extensions
 		 FROM dispatchers WHERE type = ? AND nsid = ? AND ifindex = ?`,
 		dispType, nsid, ifindex)
@@ -879,7 +809,7 @@ func (s *Store) GetDispatcher(ctx context.Context, dispType string, nsid uint64,
 func (s *Store) SaveDispatcher(ctx context.Context, state managed.DispatcherState) error {
 	now := time.Now().Format(time.RFC3339)
 
-	_, err := s.db.ExecContext(ctx,
+	_, err := s.conn.ExecContext(ctx,
 		`INSERT INTO dispatchers (type, nsid, ifindex, revision, kernel_id, link_id, link_pin_path, prog_pin_path, num_extensions, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(type, nsid, ifindex) DO UPDATE SET
@@ -904,7 +834,7 @@ func (s *Store) SaveDispatcher(ctx context.Context, state managed.DispatcherStat
 
 // DeleteDispatcher removes a dispatcher by type, nsid, and ifindex.
 func (s *Store) DeleteDispatcher(ctx context.Context, dispType string, nsid uint64, ifindex uint32) error {
-	result, err := s.db.ExecContext(ctx,
+	result, err := s.conn.ExecContext(ctx,
 		`DELETE FROM dispatchers WHERE type = ? AND nsid = ? AND ifindex = ?`,
 		dispType, nsid, ifindex)
 	if err != nil {
@@ -925,17 +855,12 @@ func (s *Store) DeleteDispatcher(ctx context.Context, dispType string, nsid uint
 
 // IncrementRevision atomically increments the dispatcher revision.
 // Returns the new revision number. Wraps from MaxUint32 to 1.
+// For atomicity with other operations, wrap in RunInTransaction.
 func (s *Store) IncrementRevision(ctx context.Context, dispType string, nsid uint64, ifindex uint32) (uint32, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback()
-
 	now := time.Now().Format(time.RFC3339)
 
 	// Use CASE to handle wrap-around at MaxUint32
-	result, err := tx.ExecContext(ctx,
+	result, err := s.conn.ExecContext(ctx,
 		`UPDATE dispatchers
 		 SET revision = CASE WHEN revision = 4294967295 THEN 1 ELSE revision + 1 END,
 		     updated_at = ?
@@ -953,20 +878,41 @@ func (s *Store) IncrementRevision(ctx context.Context, dispType string, nsid uin
 		return 0, fmt.Errorf("dispatcher (%s, %d, %d): %w", dispType, nsid, ifindex, store.ErrNotFound)
 	}
 
-	// Fetch the new revision within the same transaction
+	// Fetch the new revision
 	var newRevision uint32
-	err = tx.QueryRowContext(ctx,
+	err = s.conn.QueryRowContext(ctx,
 		`SELECT revision FROM dispatchers WHERE type = ? AND nsid = ? AND ifindex = ?`,
 		dispType, nsid, ifindex).Scan(&newRevision)
 	if err != nil {
 		return 0, fmt.Errorf("fetch new revision: %w", err)
 	}
 
-	if err := tx.Commit(); err != nil {
-		return 0, err
-	}
-
 	s.logger.Debug("incremented dispatcher revision",
 		"type", dispType, "nsid", nsid, "ifindex", ifindex, "new_revision", newRevision)
 	return newRevision, nil
+}
+
+// RunInTransaction executes the callback within a database transaction.
+// If the callback returns nil, the transaction commits.
+// If the callback returns an error, the transaction rolls back.
+func (s *Store) RunInTransaction(ctx context.Context, fn func(interpreter.Store) error) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Create a transactional store using the same db but with tx as conn
+	txStore := &Store{
+		db:     s.db,
+		conn:   tx,
+		inTx:   true,
+		logger: s.logger,
+	}
+
+	if err := fn(txStore); err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
