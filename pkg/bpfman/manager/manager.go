@@ -422,14 +422,14 @@ func (m *Manager) AttachTracepoint(ctx context.Context, programKernelID uint32, 
 		linkPinPath = filepath.Join(linksDir, linkName)
 	}
 
-	// KERNEL I/O: Attach to the kernel (returns IDs needed for store action)
-	kernelLink, err := m.kernel.AttachTracepoint(progPinPath, group, name, linkPinPath)
+	// KERNEL I/O: Attach to the kernel (returns ManagedLink with full info)
+	link, err := m.kernel.AttachTracepoint(progPinPath, group, name, linkPinPath)
 	if err != nil {
 		return managed.LinkSummary{}, fmt.Errorf("attach tracepoint %s/%s: %w", group, name, err)
 	}
 
 	// COMPUTE: Build save action from kernel result
-	saveAction := computeAttachTracepointAction(programKernelID, kernelLink.ID, kernelLink.PinPath, group, name)
+	saveAction := computeAttachTracepointAction(programKernelID, link.Kernel.ID(), link.Managed.PinPath(), group, name)
 
 	// EXECUTE: Save link metadata
 	if err := m.executor.Execute(ctx, saveAction); err != nil {
@@ -437,10 +437,10 @@ func (m *Manager) AttachTracepoint(ctx context.Context, programKernelID uint32, 
 	}
 
 	m.logger.Info("attached tracepoint",
-		"kernel_link_id", kernelLink.ID,
+		"kernel_link_id", link.Kernel.ID(),
 		"program_id", programKernelID,
 		"tracepoint", group+"/"+name,
-		"pin_path", kernelLink.PinPath)
+		"pin_path", link.Managed.PinPath())
 
 	return saveAction.Summary, nil
 }
@@ -521,8 +521,8 @@ func (m *Manager) AttachXDP(ctx context.Context, programKernelID uint32, ifindex
 		linkPinPath = extensionLinkPath
 	}
 
-	// KERNEL I/O: Attach user program as extension (returns IDs)
-	extensionLink, err := m.kernel.AttachXDPExtension(
+	// KERNEL I/O: Attach user program as extension (returns ManagedLink)
+	link, err := m.kernel.AttachXDPExtension(
 		dispState.ProgPinPath,
 		prog.LoadSpec.ObjectPath,
 		prog.LoadSpec.ProgramName,
@@ -536,8 +536,8 @@ func (m *Manager) AttachXDP(ctx context.Context, programKernelID uint32, ifindex
 	// COMPUTE: Build save actions from kernel result
 	saveActions := computeAttachXDPActions(
 		programKernelID,
-		extensionLink.ID,
-		extensionLink.PinPath,
+		link.Kernel.ID(),
+		link.Managed.PinPath(),
 		ifname,
 		uint32(ifindex),
 		nsid,
@@ -551,14 +551,14 @@ func (m *Manager) AttachXDP(ctx context.Context, programKernelID uint32, ifindex
 	}
 
 	m.logger.Info("attached XDP via dispatcher",
-		"kernel_link_id", extensionLink.ID,
+		"kernel_link_id", link.Kernel.ID(),
 		"program_id", programKernelID,
 		"interface", ifname,
 		"ifindex", ifindex,
 		"nsid", nsid,
 		"position", position,
 		"revision", dispState.Revision,
-		"pin_path", extensionLink.PinPath)
+		"pin_path", link.Managed.PinPath())
 
 	// Extract summary from computed action for return value
 	for _, a := range saveActions {
@@ -568,10 +568,10 @@ func (m *Manager) AttachXDP(ctx context.Context, programKernelID uint32, ifindex
 	}
 	// Shouldn't happen, but return a constructed summary as fallback
 	return managed.LinkSummary{
-		KernelLinkID:    extensionLink.ID,
+		KernelLinkID:    link.Kernel.ID(),
 		LinkType:        managed.LinkTypeXDP,
 		KernelProgramID: programKernelID,
-		PinPath:         extensionLink.PinPath,
+		PinPath:         link.Managed.PinPath(),
 		CreatedAt:       time.Now(),
 	}, nil
 }

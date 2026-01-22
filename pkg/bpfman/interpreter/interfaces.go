@@ -135,9 +135,9 @@ type PinInspector interface {
 // ProgramAttacher attaches programs to hooks.
 type ProgramAttacher interface {
 	// AttachTracepoint attaches a pinned program to a tracepoint.
-	AttachTracepoint(progPinPath, group, name, linkPinPath string) (*bpfman.AttachedLink, error)
+	AttachTracepoint(progPinPath, group, name, linkPinPath string) (bpfman.ManagedLink, error)
 	// AttachXDP attaches a pinned XDP program to a network interface.
-	AttachXDP(progPinPath string, ifindex int, linkPinPath string) (*bpfman.AttachedLink, error)
+	AttachXDP(progPinPath string, ifindex int, linkPinPath string) (bpfman.ManagedLink, error)
 }
 
 // XDPDispatcherResult holds the result of loading an XDP dispatcher.
@@ -170,7 +170,7 @@ type DispatcherAttacher interface {
 	// AttachXDPExtension loads a program from ELF as Extension type and attaches
 	// it to a dispatcher slot. The program is loaded with BPF_PROG_TYPE_EXT
 	// targeting the dispatcher's slot function.
-	AttachXDPExtension(dispatcherPinPath, objectPath, programName string, position int, linkPinPath string) (*bpfman.AttachedLink, error)
+	AttachXDPExtension(dispatcherPinPath, objectPath, programName string, position int, linkPinPath string) (bpfman.ManagedLink, error)
 }
 
 // LinkDetacher detaches links from hooks.

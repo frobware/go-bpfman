@@ -100,6 +100,20 @@ func (f *fakeKernelInfo) LoadedAt() time.Time          { return time.Time{} }
 func (f *fakeKernelInfo) MemoryLocked() uint64         { return 0 }
 func (f *fakeKernelInfo) GPLCompatible() bool          { return true }
 
+// fakeKernelLinkInfo implements bpfman.KernelLinkInfo for testing.
+type fakeKernelLinkInfo struct {
+	id        uint32
+	programID uint32
+	linkType  string
+}
+
+func (f *fakeKernelLinkInfo) ID() uint32          { return f.id }
+func (f *fakeKernelLinkInfo) ProgramID() uint32   { return f.programID }
+func (f *fakeKernelLinkInfo) LinkType() string    { return f.linkType }
+func (f *fakeKernelLinkInfo) AttachType() string  { return "" }
+func (f *fakeKernelLinkInfo) TargetObjID() uint32 { return 0 }
+func (f *fakeKernelLinkInfo) TargetBTFId() uint32 { return 0 }
+
 func newFakeKernel() *fakeKernel {
 	fk := &fakeKernel{
 		programs: make(map[uint32]fakeProgram),
@@ -215,26 +229,32 @@ func (f *fakeKernel) GetPinned(pinPath string) (*kernel.PinnedProgram, error) {
 	return nil, nil
 }
 
-func (f *fakeKernel) AttachTracepoint(progPinPath, group, name, linkPinPath string) (*bpfman.AttachedLink, error) {
+func (f *fakeKernel) AttachTracepoint(progPinPath, group, name, linkPinPath string) (bpfman.ManagedLink, error) {
 	id := f.nextID.Add(1)
-	link := &bpfman.AttachedLink{
+	// Store for DetachLink lookup
+	f.links[id] = &bpfman.AttachedLink{
 		ID:      id,
 		PinPath: linkPinPath,
 		Type:    bpfman.AttachTracepoint,
 	}
-	f.links[id] = link
-	return link, nil
+	return bpfman.ManagedLink{
+		Managed: managed.NewLinkInfo(id, 0, managed.LinkTypeTracepoint, linkPinPath, time.Now(), managed.TracepointDetails{Group: group, Name: name}),
+		Kernel:  &fakeKernelLinkInfo{id: id, programID: 0, linkType: "tracepoint"},
+	}, nil
 }
 
-func (f *fakeKernel) AttachXDP(progPinPath string, ifindex int, linkPinPath string) (*bpfman.AttachedLink, error) {
+func (f *fakeKernel) AttachXDP(progPinPath string, ifindex int, linkPinPath string) (bpfman.ManagedLink, error) {
 	id := f.nextID.Add(1)
-	link := &bpfman.AttachedLink{
+	// Store for DetachLink lookup
+	f.links[id] = &bpfman.AttachedLink{
 		ID:      id,
 		PinPath: linkPinPath,
 		Type:    bpfman.AttachXDP,
 	}
-	f.links[id] = link
-	return link, nil
+	return bpfman.ManagedLink{
+		Managed: managed.NewLinkInfo(id, 0, managed.LinkTypeXDP, linkPinPath, time.Now(), managed.XDPDetails{Ifindex: uint32(ifindex)}),
+		Kernel:  &fakeKernelLinkInfo{id: id, programID: 0, linkType: "xdp"},
+	}, nil
 }
 
 func (f *fakeKernel) DetachLink(linkPinPath string) error {
@@ -269,15 +289,18 @@ func (f *fakeKernel) AttachXDPDispatcherWithPaths(ifindex int, progPinPath, link
 	}, nil
 }
 
-func (f *fakeKernel) AttachXDPExtension(dispatcherPinPath, objectPath, programName string, position int, linkPinPath string) (*bpfman.AttachedLink, error) {
+func (f *fakeKernel) AttachXDPExtension(dispatcherPinPath, objectPath, programName string, position int, linkPinPath string) (bpfman.ManagedLink, error) {
 	id := f.nextID.Add(1)
-	link := &bpfman.AttachedLink{
+	// Store for DetachLink lookup
+	f.links[id] = &bpfman.AttachedLink{
 		ID:      id,
 		PinPath: linkPinPath,
 		Type:    bpfman.AttachXDP,
 	}
-	f.links[id] = link
-	return link, nil
+	return bpfman.ManagedLink{
+		Managed: managed.NewLinkInfo(id, 0, managed.LinkTypeXDP, linkPinPath, time.Now(), managed.XDPDetails{Position: int32(position)}),
+		Kernel:  &fakeKernelLinkInfo{id: id, programID: 0, linkType: "xdp"},
+	}, nil
 }
 
 func (f *fakeKernel) RemovePin(path string) error {

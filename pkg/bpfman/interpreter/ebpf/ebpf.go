@@ -694,20 +694,23 @@ func (k *Kernel) RemovePin(path string) error {
 }
 
 // AttachTracepoint attaches a pinned program to a tracepoint.
-func (k *Kernel) AttachTracepoint(progPinPath, group, name, linkPinPath string) (*bpfman.AttachedLink, error) {
+func (k *Kernel) AttachTracepoint(progPinPath, group, name, linkPinPath string) (bpfman.ManagedLink, error) {
 	prog, err := ebpf.LoadPinnedProgram(progPinPath, nil)
 	if err != nil {
-		return nil, fmt.Errorf("load pinned program %s: %w", progPinPath, err)
+		return bpfman.ManagedLink{}, fmt.Errorf("load pinned program %s: %w", progPinPath, err)
 	}
 	defer prog.Close()
 
+	// Get program info to find kernel program ID
+	progInfo, err := prog.Info()
+	if err != nil {
+		return bpfman.ManagedLink{}, fmt.Errorf("get program info: %w", err)
+	}
+	progID, _ := progInfo.ID()
+
 	lnk, err := link.Tracepoint(group, name, prog, nil)
 	if err != nil {
-		return nil, fmt.Errorf("attach to tracepoint %s:%s: %w", group, name, err)
-	}
-
-	result := &bpfman.AttachedLink{
-		Type: bpfman.AttachTracepoint,
+		return bpfman.ManagedLink{}, fmt.Errorf("attach to tracepoint %s:%s: %w", group, name, err)
 	}
 
 	// Pin the link if a path is provided
@@ -715,66 +718,89 @@ func (k *Kernel) AttachTracepoint(progPinPath, group, name, linkPinPath string) 
 		// Ensure parent directory exists
 		if err := os.MkdirAll(filepath.Dir(linkPinPath), 0755); err != nil {
 			lnk.Close()
-			return nil, fmt.Errorf("create link pin directory: %w", err)
+			return bpfman.ManagedLink{}, fmt.Errorf("create link pin directory: %w", err)
 		}
 
 		if err := lnk.Pin(linkPinPath); err != nil {
 			lnk.Close()
-			return nil, fmt.Errorf("pin link to %s: %w", linkPinPath, err)
+			return bpfman.ManagedLink{}, fmt.Errorf("pin link to %s: %w", linkPinPath, err)
 		}
-		result.PinPath = linkPinPath
 	}
 
-	// Get link info if available
-	info, err := lnk.Info()
-	if err == nil {
-		result.ID = uint32(info.ID)
+	// Get link info
+	linkInfo, err := lnk.Info()
+	if err != nil {
+		lnk.Close()
+		return bpfman.ManagedLink{}, fmt.Errorf("get link info: %w", err)
 	}
 
-	return result, nil
+	return bpfman.ManagedLink{
+		Managed: managed.NewLinkInfo(
+			uint32(linkInfo.ID),
+			uint32(progID),
+			managed.LinkTypeTracepoint,
+			linkPinPath,
+			time.Now(),
+			managed.TracepointDetails{Group: group, Name: name},
+		),
+		Kernel: NewLinkInfo(linkInfo),
+	}, nil
 }
 
 // AttachXDP attaches a pinned XDP program to a network interface.
-func (k *Kernel) AttachXDP(progPinPath string, ifindex int, linkPinPath string) (*bpfman.AttachedLink, error) {
+func (k *Kernel) AttachXDP(progPinPath string, ifindex int, linkPinPath string) (bpfman.ManagedLink, error) {
 	prog, err := ebpf.LoadPinnedProgram(progPinPath, nil)
 	if err != nil {
-		return nil, fmt.Errorf("load pinned program %s: %w", progPinPath, err)
+		return bpfman.ManagedLink{}, fmt.Errorf("load pinned program %s: %w", progPinPath, err)
 	}
 	defer prog.Close()
+
+	// Get program info to find kernel program ID
+	progInfo, err := prog.Info()
+	if err != nil {
+		return bpfman.ManagedLink{}, fmt.Errorf("get program info: %w", err)
+	}
+	progID, _ := progInfo.ID()
 
 	lnk, err := link.AttachXDP(link.XDPOptions{
 		Program:   prog,
 		Interface: ifindex,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("attach XDP to ifindex %d: %w", ifindex, err)
-	}
-
-	result := &bpfman.AttachedLink{
-		Type: bpfman.AttachXDP,
+		return bpfman.ManagedLink{}, fmt.Errorf("attach XDP to ifindex %d: %w", ifindex, err)
 	}
 
 	// Pin the link if a path is provided
 	if linkPinPath != "" {
 		if err := os.MkdirAll(filepath.Dir(linkPinPath), 0755); err != nil {
 			lnk.Close()
-			return nil, fmt.Errorf("create link pin directory: %w", err)
+			return bpfman.ManagedLink{}, fmt.Errorf("create link pin directory: %w", err)
 		}
 
 		if err := lnk.Pin(linkPinPath); err != nil {
 			lnk.Close()
-			return nil, fmt.Errorf("pin link to %s: %w", linkPinPath, err)
+			return bpfman.ManagedLink{}, fmt.Errorf("pin link to %s: %w", linkPinPath, err)
 		}
-		result.PinPath = linkPinPath
 	}
 
-	// Get link info if available
-	info, err := lnk.Info()
-	if err == nil {
-		result.ID = uint32(info.ID)
+	// Get link info
+	linkInfo, err := lnk.Info()
+	if err != nil {
+		lnk.Close()
+		return bpfman.ManagedLink{}, fmt.Errorf("get link info: %w", err)
 	}
 
-	return result, nil
+	return bpfman.ManagedLink{
+		Managed: managed.NewLinkInfo(
+			uint32(linkInfo.ID),
+			uint32(progID),
+			managed.LinkTypeXDP,
+			linkPinPath,
+			time.Now(),
+			managed.XDPDetails{Ifindex: uint32(ifindex)},
+		),
+		Kernel: NewLinkInfo(linkInfo),
+	}, nil
 }
 
 // AttachXDPDispatcher loads and attaches an XDP dispatcher to an interface.
@@ -974,24 +1000,24 @@ func (k *Kernel) AttachXDPDispatcherWithPaths(ifindex int, progPinPath, linkPinP
 // specifically as BPF_PROG_TYPE_EXT with the dispatcher as the attach target.
 // The same ELF bytecode used for direct XDP attachment is reloaded with
 // different type settings.
-func (k *Kernel) AttachXDPExtension(dispatcherPinPath, objectPath, programName string, position int, linkPinPath string) (*bpfman.AttachedLink, error) {
+func (k *Kernel) AttachXDPExtension(dispatcherPinPath, objectPath, programName string, position int, linkPinPath string) (bpfman.ManagedLink, error) {
 	// Load the pinned dispatcher to use as attach target
 	dispatcherProg, err := ebpf.LoadPinnedProgram(dispatcherPinPath, nil)
 	if err != nil {
-		return nil, fmt.Errorf("load pinned dispatcher %s: %w", dispatcherPinPath, err)
+		return bpfman.ManagedLink{}, fmt.Errorf("load pinned dispatcher %s: %w", dispatcherPinPath, err)
 	}
 	defer dispatcherProg.Close()
 
 	// Load the collection spec from the ELF file
 	collSpec, err := ebpf.LoadCollectionSpec(objectPath)
 	if err != nil {
-		return nil, fmt.Errorf("load collection spec from %s: %w", objectPath, err)
+		return bpfman.ManagedLink{}, fmt.Errorf("load collection spec from %s: %w", objectPath, err)
 	}
 
 	// Verify the program exists in the collection
 	progSpec, ok := collSpec.Programs[programName]
 	if !ok {
-		return nil, fmt.Errorf("program %q not found in %s", programName, objectPath)
+		return bpfman.ManagedLink{}, fmt.Errorf("program %q not found in %s", programName, objectPath)
 	}
 
 	// Modify the program spec to be Extension type targeting the dispatcher
@@ -1003,47 +1029,60 @@ func (k *Kernel) AttachXDPExtension(dispatcherPinPath, objectPath, programName s
 	// This ensures any maps the program depends on are also loaded.
 	coll, err := ebpf.NewCollection(collSpec)
 	if err != nil {
-		return nil, fmt.Errorf("load extension collection: %w", err)
+		return bpfman.ManagedLink{}, fmt.Errorf("load extension collection: %w", err)
 	}
 	defer coll.Close()
 
 	// Get the loaded extension program
 	extensionProg := coll.Programs[programName]
 	if extensionProg == nil {
-		return nil, fmt.Errorf("extension program %q not in loaded collection", programName)
+		return bpfman.ManagedLink{}, fmt.Errorf("extension program %q not in loaded collection", programName)
 	}
+
+	// Get program info for the extension
+	progInfo, err := extensionProg.Info()
+	if err != nil {
+		return bpfman.ManagedLink{}, fmt.Errorf("get extension program info: %w", err)
+	}
+	progID, _ := progInfo.ID()
 
 	// Attach the extension using freplace link
 	lnk, err := link.AttachFreplace(dispatcherProg, progSpec.AttachTo, extensionProg)
 	if err != nil {
-		return nil, fmt.Errorf("attach freplace to %s: %w", progSpec.AttachTo, err)
-	}
-
-	result := &bpfman.AttachedLink{
-		Type: bpfman.AttachXDP,
+		return bpfman.ManagedLink{}, fmt.Errorf("attach freplace to %s: %w", progSpec.AttachTo, err)
 	}
 
 	// Pin the link if path provided
 	if linkPinPath != "" {
 		if err := os.MkdirAll(filepath.Dir(linkPinPath), 0755); err != nil {
 			lnk.Close()
-			return nil, fmt.Errorf("create extension link pin directory: %w", err)
+			return bpfman.ManagedLink{}, fmt.Errorf("create extension link pin directory: %w", err)
 		}
 
 		if err := lnk.Pin(linkPinPath); err != nil {
 			lnk.Close()
-			return nil, fmt.Errorf("pin extension link to %s: %w", linkPinPath, err)
+			return bpfman.ManagedLink{}, fmt.Errorf("pin extension link to %s: %w", linkPinPath, err)
 		}
-		result.PinPath = linkPinPath
 	}
 
 	// Get link info
-	info, err := lnk.Info()
-	if err == nil {
-		result.ID = uint32(info.ID)
+	linkInfo, err := lnk.Info()
+	if err != nil {
+		lnk.Close()
+		return bpfman.ManagedLink{}, fmt.Errorf("get link info: %w", err)
 	}
 
-	return result, nil
+	return bpfman.ManagedLink{
+		Managed: managed.NewLinkInfo(
+			uint32(linkInfo.ID),
+			uint32(progID),
+			managed.LinkTypeXDP, // XDP extension
+			linkPinPath,
+			time.Now(),
+			managed.XDPDetails{Position: int32(position)},
+		),
+		Kernel: NewLinkInfo(linkInfo),
+	}, nil
 }
 
 // sanitiseFilename replaces characters that are invalid in filenames.
