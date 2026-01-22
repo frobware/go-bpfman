@@ -549,7 +549,7 @@ func (m *Manager) AttachXDP(ctx context.Context, programKernelID uint32, ifindex
 		"dispatcher_id", dispState.KernelID)
 
 	// COMPUTE: Calculate extension link path
-	revisionDir := dispatcher.DispatcherRevisionDir(dispatcher.DispatcherTypeXDP, nsid, uint32(ifindex), dispState.Revision)
+	revisionDir := dispatcher.DispatcherRevisionDir(m.dirs.FS, dispatcher.DispatcherTypeXDP, nsid, uint32(ifindex), dispState.Revision)
 	position := int(dispState.NumExtensions)
 	extensionLinkPath := dispatcher.ExtensionLinkPath(revisionDir, position)
 	if linkPinPath == "" {
@@ -662,8 +662,8 @@ func computeAttachXDPActions(
 func (m *Manager) createXDPDispatcher(ctx context.Context, nsid uint64, ifindex uint32) (managed.DispatcherState, error) {
 	// COMPUTE: Calculate paths according to Rust bpfman convention
 	revision := uint32(1)
-	linkPinPath := dispatcher.DispatcherLinkPath(dispatcher.DispatcherTypeXDP, nsid, ifindex)
-	revisionDir := dispatcher.DispatcherRevisionDir(dispatcher.DispatcherTypeXDP, nsid, ifindex, revision)
+	linkPinPath := dispatcher.DispatcherLinkPath(m.dirs.FS, dispatcher.DispatcherTypeXDP, nsid, ifindex)
+	revisionDir := dispatcher.DispatcherRevisionDir(m.dirs.FS, dispatcher.DispatcherTypeXDP, nsid, ifindex, revision)
 	progPinPath := dispatcher.DispatcherProgPath(revisionDir)
 
 	m.logger.Info("creating XDP dispatcher",
