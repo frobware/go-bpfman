@@ -86,8 +86,8 @@ ensure_clean_state() {
 load_program() {
     log_info "Step 1: Loading XDP program..."
     local output
-    output=$(bpfman load image --program=xdp:pass quay.io/bpfman-bytecode/xdp_pass:latest 2>&1)
-    PROG_ID=$(echo "$output" | jq -r '.[0].id')
+    output=$(bpfman load image -o json --program=xdp:pass quay.io/bpfman-bytecode/xdp_pass:latest 2>&1)
+    PROG_ID=$(echo "$output" | jq -r '.[0].kernel.id')
 
     if [ -z "$PROG_ID" ] || [ "$PROG_ID" = "null" ]; then
         log_fail "Failed to load program"
