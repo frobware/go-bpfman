@@ -2,7 +2,9 @@ package cli
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
+	"strings"
 
 	"github.com/frobware/go-bpfman"
 	"github.com/frobware/go-bpfman/client"
@@ -15,11 +17,12 @@ type LoadImageCmd struct {
 	MetadataFlags
 	GlobalDataFlags
 
-	ImageURL   string          `arg:"" name:"image" help:"OCI image reference (e.g., quay.io/bpfman-bytecode/xdp_pass:latest)."`
-	Programs   []ProgramSpec   `short:"p" name:"program" help:"TYPE:NAME program to load (can be repeated)." required:""`
-	PullPolicy ImagePullPolicy `name:"pull-policy" help:"Image pull policy (Always, IfNotPresent, Never)." default:"IfNotPresent"`
-	Username   string          `name:"username" help:"Registry username for authentication."`
-	Password   string          `name:"password" help:"Registry password for authentication."`
+	ImageURL     string          `short:"i" name:"image-url" help:"OCI image reference (e.g., quay.io/bpfman-bytecode/xdp_pass:latest)." required:""`
+	Programs     []ProgramSpec   `name:"programs" help:"TYPE:NAME or TYPE:NAME:ATTACH_FUNC program to load (can be repeated). For fentry/fexit, ATTACH_FUNC is required." required:""`
+	PullPolicy   ImagePullPolicy `short:"p" name:"pull-policy" help:"Image pull policy (Always, IfNotPresent, Never)." default:"IfNotPresent"`
+	RegistryAuth string          `name:"registry-auth" help:"Base64-encoded registry auth (username:password)."`
+	Application  string          `short:"a" name:"application" help:"Application name to group programs (stored as bpfman.io/application metadata)."`
+	MapOwnerID   uint32          `name:"map-owner-id" help:"Program ID of another program to share maps with."`
 }
 
 // Run executes the load image command.
@@ -48,13 +51,17 @@ func (c *LoadImageCmd) Run(cli *CLI) error {
 	}
 	defer b.Close()
 
-	// Build auth config
+	// Build auth config from base64-encoded registry-auth
 	var authConfig *interpreter.ImageAuth
-	if c.Username != "" {
-		logger.Debug("using explicit credentials", "username", c.Username)
+	if c.RegistryAuth != "" {
+		username, password, err := parseRegistryAuth(c.RegistryAuth)
+		if err != nil {
+			return fmt.Errorf("invalid registry-auth: %w", err)
+		}
+		logger.Debug("using registry auth", "username", username)
 		authConfig = &interpreter.ImageAuth{
-			Username: c.Username,
-			Password: c.Password,
+			Username: username,
+			Password: password,
 		}
 	}
 
@@ -71,6 +78,15 @@ func (c *LoadImageCmd) Run(cli *CLI) error {
 		globalData = GlobalDataMap(c.GlobalData)
 	}
 
+	// Build metadata map, adding application if specified
+	metadata := MetadataMap(c.Metadata)
+	if c.Application != "" {
+		if metadata == nil {
+			metadata = make(map[string]string)
+		}
+		metadata["bpfman.io/application"] = c.Application
+	}
+
 	// Build LoadSpecs for each program
 	programs := make([]bpfman.LoadSpec, 0, len(c.Programs))
 	for _, spec := range c.Programs {
@@ -78,13 +94,15 @@ func (c *LoadImageCmd) Run(cli *CLI) error {
 			ProgramName: spec.Name,
 			ProgramType: spec.Type,
 			GlobalData:  globalData,
+			AttachFunc:  spec.AttachFunc,
+			MapOwnerID:  c.MapOwnerID,
 		})
 	}
 
 	// Load via gRPC - server handles image pulling
 	ctx := context.Background()
 	results, err := b.LoadImage(ctx, ref, programs, client.LoadImageOpts{
-		UserMetadata: MetadataMap(c.Metadata),
+		UserMetadata: metadata,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to load from image: %w", err)
@@ -106,4 +124,19 @@ func (c *LoadImageCmd) Run(cli *CLI) error {
 
 	fmt.Print(output)
 	return nil
+}
+
+// parseRegistryAuth parses a base64-encoded "username:password" string.
+func parseRegistryAuth(encoded string) (username, password string, err error) {
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return "", "", fmt.Errorf("invalid base64 encoding: %w", err)
+	}
+
+	parts := strings.SplitN(string(decoded), ":", 2)
+	if len(parts) != 2 {
+		return "", "", fmt.Errorf("expected 'username:password' format")
+	}
+
+	return parts[0], parts[1], nil
 }

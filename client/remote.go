@@ -142,8 +142,7 @@ func (c *remoteClient) AttachTracepoint(ctx context.Context, programKernelID uin
 	}, nil
 }
 
-// AttachXDP is not fully supported via gRPC.
-// The proto exists but the server returns Unimplemented.
+// AttachXDP attaches an XDP program to a network interface via gRPC.
 func (c *remoteClient) AttachXDP(ctx context.Context, programKernelID uint32, ifindex int, ifname, linkPinPath string) (bpfman.LinkSummary, error) {
 	req := &pb.AttachRequest{
 		Id: programKernelID,
@@ -170,7 +169,36 @@ func (c *remoteClient) AttachXDP(ctx context.Context, programKernelID uint32, if
 	}, nil
 }
 
-// Detach is not fully supported via gRPC.
+// AttachTC attaches a TC program to a network interface via gRPC.
+func (c *remoteClient) AttachTC(ctx context.Context, programKernelID uint32, ifindex int, ifname, direction string, priority int, proceedOn []int32, linkPinPath string) (bpfman.LinkSummary, error) {
+	req := &pb.AttachRequest{
+		Id: programKernelID,
+		Attach: &pb.AttachInfo{
+			Info: &pb.AttachInfo_TcAttachInfo{
+				TcAttachInfo: &pb.TCAttachInfo{
+					Iface:     ifname,
+					Direction: direction,
+					Priority:  int32(priority),
+					ProceedOn: proceedOn,
+				},
+			},
+		},
+	}
+
+	resp, err := c.client.Attach(ctx, req)
+	if err != nil {
+		return bpfman.LinkSummary{}, translateGRPCError(err)
+	}
+
+	return bpfman.LinkSummary{
+		LinkType:        bpfman.LinkTypeTC,
+		KernelProgramID: programKernelID,
+		KernelLinkID:    resp.LinkId,
+		PinPath:         linkPinPath,
+	}, nil
+}
+
+// Detach removes a link via gRPC.
 // The proto uses link_id (uint32) which matches our kernel_link_id.
 func (c *remoteClient) Detach(ctx context.Context, kernelLinkID uint32) error {
 	_, err := c.client.Detach(ctx, &pb.DetachRequest{LinkId: kernelLinkID})

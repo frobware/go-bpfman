@@ -48,6 +48,7 @@ type Client interface {
 	// Attach/detach operations
 	AttachTracepoint(ctx context.Context, programKernelID uint32, group, name, linkPinPath string) (bpfman.LinkSummary, error)
 	AttachXDP(ctx context.Context, programKernelID uint32, ifindex int, ifname, linkPinPath string) (bpfman.LinkSummary, error)
+	AttachTC(ctx context.Context, programKernelID uint32, ifindex int, ifname, direction string, priority int, proceedOn []int32, linkPinPath string) (bpfman.LinkSummary, error)
 	Detach(ctx context.Context, kernelLinkID uint32) error
 
 	// Link operations

@@ -684,6 +684,258 @@ func computeDispatcherState(
 	}
 }
 
+// TC proceed-on action bits (matches TC_ACT_* return codes).
+const (
+	tcProceedOnOK               = 1 << 0  // TC_ACT_OK
+	tcProceedOnPipe             = 1 << 3  // TC_ACT_PIPE
+	tcProceedOnDispatcherReturn = 1 << 30 // bpfman-specific sentinel
+)
+
+// DefaultTCProceedOn is the default bitmask for TC proceed-on actions.
+var DefaultTCProceedOn = tcProceedOnOK | tcProceedOnPipe | tcProceedOnDispatcherReturn
+
+// AttachTC attaches a TC program to a network interface using the
+// dispatcher model for multi-program chaining.
+//
+// The dispatcher is created automatically if it doesn't exist for the interface
+// and direction combination. Programs are attached as extensions (freplace) to
+// dispatcher slots.
+//
+// Pin paths follow the Rust bpfman convention:
+//   - Dispatcher link: /sys/fs/bpf/bpfman/tc-{direction}/dispatcher_{nsid}_{ifindex}_link
+//   - Dispatcher prog: /sys/fs/bpf/bpfman/tc-{direction}/dispatcher_{nsid}_{ifindex}_{revision}/dispatcher
+//   - Extension links: /sys/fs/bpf/bpfman/tc-{direction}/dispatcher_{nsid}_{ifindex}_{revision}/link_{position}
+//
+// Pattern: FETCH -> KERNEL I/O -> COMPUTE -> EXECUTE
+func (m *Manager) AttachTC(ctx context.Context, programKernelID uint32, ifindex int, ifname, direction string, priority int, proceedOn []int32, linkPinPath string) (bpfman.LinkSummary, error) {
+	// Validate direction
+	if direction != "ingress" && direction != "egress" {
+		return bpfman.LinkSummary{}, fmt.Errorf("invalid TC direction %q: must be ingress or egress", direction)
+	}
+
+	// FETCH: Get program metadata to access ObjectPath and ProgramName
+	prog, err := m.store.Get(ctx, programKernelID)
+	if err != nil {
+		return bpfman.LinkSummary{}, fmt.Errorf("get program %d: %w", programKernelID, err)
+	}
+
+	// FETCH: Get network namespace ID
+	nsid, err := netns.GetCurrentNsid()
+	if err != nil {
+		return bpfman.LinkSummary{}, fmt.Errorf("get current nsid: %w", err)
+	}
+
+	// Determine dispatcher type based on direction
+	var dispType dispatcher.DispatcherType
+	if direction == "ingress" {
+		dispType = dispatcher.DispatcherTypeTCIngress
+	} else {
+		dispType = dispatcher.DispatcherTypeTCEgress
+	}
+
+	// FETCH: Look up existing dispatcher or create new one
+	dispState, err := m.store.GetDispatcher(ctx, string(dispType), nsid, uint32(ifindex))
+	if errors.Is(err, store.ErrNotFound) {
+		// KERNEL I/O + EXECUTE: Create new dispatcher
+		dispState, err = m.createTCDispatcher(ctx, nsid, uint32(ifindex), direction, dispType)
+		if err != nil {
+			return bpfman.LinkSummary{}, fmt.Errorf("create TC dispatcher for %s %s: %w", ifname, direction, err)
+		}
+	} else if err != nil {
+		return bpfman.LinkSummary{}, fmt.Errorf("get dispatcher: %w", err)
+	}
+
+	m.logger.Debug("using TC dispatcher",
+		"interface", ifname,
+		"direction", direction,
+		"nsid", nsid,
+		"ifindex", ifindex,
+		"revision", dispState.Revision,
+		"dispatcher_id", dispState.KernelID)
+
+	// COMPUTE: Calculate extension link path
+	revisionDir := dispatcher.DispatcherRevisionDir(m.dirs.FS, dispType, nsid, uint32(ifindex), dispState.Revision)
+	position := int(dispState.NumExtensions)
+	extensionLinkPath := dispatcher.ExtensionLinkPath(revisionDir, position)
+	if linkPinPath == "" {
+		linkPinPath = extensionLinkPath
+	}
+
+	// KERNEL I/O: Attach user program as extension (returns ManagedLink)
+	link, err := m.kernel.AttachTCExtension(
+		dispState.ProgPinPath,
+		prog.LoadSpec.ObjectPath,
+		prog.LoadSpec.ProgramName,
+		position,
+		linkPinPath,
+	)
+	if err != nil {
+		return bpfman.LinkSummary{}, fmt.Errorf("attach TC extension to %s %s slot %d: %w", ifname, direction, position, err)
+	}
+
+	// COMPUTE: Build save actions from kernel result
+	saveActions := computeAttachTCActions(
+		programKernelID,
+		link.Kernel.ID(),
+		link.Managed.PinPath,
+		ifname,
+		uint32(ifindex),
+		direction,
+		int32(priority),
+		proceedOn,
+		nsid,
+		position,
+		dispState,
+	)
+
+	// EXECUTE: Save dispatcher update and link metadata
+	if err := m.executor.ExecuteAll(ctx, saveActions); err != nil {
+		return bpfman.LinkSummary{}, fmt.Errorf("save link metadata: %w", err)
+	}
+
+	m.logger.Info("attached TC via dispatcher",
+		"kernel_link_id", link.Kernel.ID(),
+		"program_id", programKernelID,
+		"interface", ifname,
+		"direction", direction,
+		"ifindex", ifindex,
+		"nsid", nsid,
+		"position", position,
+		"revision", dispState.Revision,
+		"pin_path", link.Managed.PinPath)
+
+	// Extract summary from computed action for return value
+	for _, a := range saveActions {
+		if saveTC, ok := a.(action.SaveTCLink); ok {
+			return saveTC.Summary, nil
+		}
+	}
+	// Shouldn't happen, but return a constructed summary as fallback
+	return bpfman.LinkSummary{
+		KernelLinkID:    link.Kernel.ID(),
+		LinkType:        bpfman.LinkTypeTC,
+		KernelProgramID: programKernelID,
+		PinPath:         link.Managed.PinPath,
+		CreatedAt:       time.Now(),
+	}, nil
+}
+
+// computeAttachTCActions is a pure function that builds the actions needed
+// to save TC attachment metadata (dispatcher update + link save).
+func computeAttachTCActions(
+	programKernelID, kernelLinkID uint32,
+	pinPath, ifname string,
+	ifindex uint32,
+	direction string,
+	priority int32,
+	proceedOn []int32,
+	nsid uint64,
+	position int,
+	dispState dispatcher.State,
+) []action.Action {
+	// Update dispatcher extension count
+	updatedDispState := dispState
+	updatedDispState.NumExtensions++
+
+	return []action.Action{
+		action.SaveDispatcher{State: updatedDispState},
+		action.SaveTCLink{
+			Summary: bpfman.LinkSummary{
+				KernelLinkID:    kernelLinkID,
+				LinkType:        bpfman.LinkTypeTC,
+				KernelProgramID: programKernelID,
+				PinPath:         pinPath,
+				CreatedAt:       time.Now(),
+			},
+			Details: bpfman.TCDetails{
+				Interface:    ifname,
+				Ifindex:      ifindex,
+				Direction:    direction,
+				Priority:     priority,
+				Position:     int32(position),
+				ProceedOn:    proceedOn,
+				Nsid:         nsid,
+				DispatcherID: dispState.KernelID,
+				Revision:     dispState.Revision,
+			},
+		},
+	}
+}
+
+// createTCDispatcher creates a new TC dispatcher for the given interface and direction.
+//
+// Pattern: COMPUTE -> KERNEL I/O -> COMPUTE -> EXECUTE
+func (m *Manager) createTCDispatcher(ctx context.Context, nsid uint64, ifindex uint32, direction string, dispType dispatcher.DispatcherType) (dispatcher.State, error) {
+	// COMPUTE: Calculate paths according to Rust bpfman convention
+	revision := uint32(1)
+	linkPinPath := dispatcher.DispatcherLinkPath(m.dirs.FS, dispType, nsid, ifindex)
+	revisionDir := dispatcher.DispatcherRevisionDir(m.dirs.FS, dispType, nsid, ifindex, revision)
+	progPinPath := dispatcher.DispatcherProgPath(revisionDir)
+
+	m.logger.Info("creating TC dispatcher",
+		"direction", direction,
+		"nsid", nsid,
+		"ifindex", ifindex,
+		"revision", revision,
+		"prog_pin_path", progPinPath,
+		"link_pin_path", linkPinPath)
+
+	// KERNEL I/O: Create TC dispatcher using TCX link
+	result, err := m.kernel.AttachTCDispatcherWithPaths(
+		int(ifindex),
+		progPinPath,
+		linkPinPath,
+		direction,
+		dispatcher.MaxPrograms,
+		uint32(DefaultTCProceedOn),
+	)
+	if err != nil {
+		return dispatcher.State{}, err
+	}
+
+	// COMPUTE: Build save action from kernel result
+	state := computeTCDispatcherState(dispType, nsid, ifindex, revision, result, progPinPath, linkPinPath)
+	saveAction := action.SaveDispatcher{State: state}
+
+	// EXECUTE: Save through executor
+	if err := m.executor.Execute(ctx, saveAction); err != nil {
+		return dispatcher.State{}, fmt.Errorf("save TC dispatcher: %w", err)
+	}
+
+	m.logger.Info("created TC dispatcher",
+		"direction", direction,
+		"nsid", nsid,
+		"ifindex", ifindex,
+		"dispatcher_id", result.DispatcherID,
+		"link_id", result.LinkID,
+		"prog_pin_path", progPinPath,
+		"link_pin_path", linkPinPath)
+
+	return state, nil
+}
+
+// computeTCDispatcherState is a pure function that builds a DispatcherState
+// from TC kernel attach results.
+func computeTCDispatcherState(
+	dispType dispatcher.DispatcherType,
+	nsid uint64,
+	ifindex, revision uint32,
+	result *interpreter.TCDispatcherResult,
+	progPinPath, linkPinPath string,
+) dispatcher.State {
+	return dispatcher.State{
+		Type:          dispType,
+		Nsid:          nsid,
+		Ifindex:       ifindex,
+		Revision:      revision,
+		KernelID:      result.DispatcherID,
+		LinkID:        result.LinkID,
+		LinkPinPath:   linkPinPath,
+		ProgPinPath:   progPinPath,
+		NumExtensions: 0,
+	}
+}
+
 // ListLinks returns all managed links (summaries only).
 func (m *Manager) ListLinks(ctx context.Context) ([]bpfman.LinkSummary, error) {
 	return m.store.ListLinks(ctx)

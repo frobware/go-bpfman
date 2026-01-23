@@ -13,6 +13,8 @@ const (
 	AttachKprobe     AttachType = "kprobe"
 	AttachKretprobe  AttachType = "kretprobe"
 	AttachXDP        AttachType = "xdp"
+	AttachTC         AttachType = "tc"
+	AttachTCX        AttachType = "tcx"
 )
 
 // AttachInfo describes how to attach a BPF program.

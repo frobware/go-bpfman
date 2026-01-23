@@ -20,8 +20,10 @@ type LoadFileCmd struct {
 	MetadataFlags
 	GlobalDataFlags
 
-	Path     string        `short:"p" name:"path" help:"Path to the BPF object file (.o)." required:""`
-	Programs []ProgramSpec `name:"programs" help:"TYPE:NAME program to load (can be repeated)." required:""`
+	Path        string        `short:"p" name:"path" help:"Path to the BPF object file (.o)." required:""`
+	Programs    []ProgramSpec `name:"programs" help:"TYPE:NAME or TYPE:NAME:ATTACH_FUNC program to load (can be repeated). For fentry/fexit, ATTACH_FUNC is required." required:""`
+	Application string        `short:"a" name:"application" help:"Application name to group programs (stored as bpfman.io/application metadata)."`
+	MapOwnerID  uint32        `name:"map-owner-id" help:"Program ID of another program to share maps with."`
 }
 
 // Run executes the load file command.
@@ -44,6 +46,15 @@ func (c *LoadFileCmd) Run(cli *CLI) error {
 		globalData = GlobalDataMap(c.GlobalData)
 	}
 
+	// Build metadata map, adding application if specified
+	metadata := MetadataMap(c.Metadata)
+	if c.Application != "" {
+		if metadata == nil {
+			metadata = make(map[string]string)
+		}
+		metadata["bpfman.io/application"] = c.Application
+	}
+
 	ctx := context.Background()
 	results := make([]bpfman.ManagedProgram, 0, len(c.Programs))
 
@@ -56,9 +67,11 @@ func (c *LoadFileCmd) Run(cli *CLI) error {
 			ProgramType: prog.Type, // Already validated at parse time
 			PinPath:     cli.RuntimeDirs().FS,
 			GlobalData:  globalData,
+			AttachFunc:  prog.AttachFunc, // For fentry/fexit
+			MapOwnerID:  c.MapOwnerID,
 		}
 		opts := manager.LoadOpts{
-			UserMetadata: MetadataMap(c.Metadata),
+			UserMetadata: metadata,
 		}
 
 		// Load through client

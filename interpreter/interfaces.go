@@ -158,6 +158,14 @@ type XDPDispatcherResult struct {
 	LinkPin       string // Pin path for link
 }
 
+// TCDispatcherResult holds the result of loading a TC dispatcher.
+type TCDispatcherResult struct {
+	DispatcherID  uint32 // Kernel program ID of the dispatcher
+	LinkID        uint32 // Kernel link ID
+	DispatcherPin string // Pin path for dispatcher program
+	LinkPin       string // Pin path for link
+}
+
 // DispatcherAttacher attaches dispatcher programs for multi-program chaining.
 type DispatcherAttacher interface {
 	// AttachXDPDispatcher loads and attaches an XDP dispatcher to an interface.
@@ -181,6 +189,23 @@ type DispatcherAttacher interface {
 	// it to a dispatcher slot. The program is loaded with BPF_PROG_TYPE_EXT
 	// targeting the dispatcher's slot function.
 	AttachXDPExtension(dispatcherPinPath, objectPath, programName string, position int, linkPinPath string) (bpfman.ManagedLink, error)
+
+	// AttachTCDispatcherWithPaths loads and attaches a TC dispatcher to an interface.
+	// The dispatcher allows multiple TC programs to be chained together.
+	//
+	// Parameters:
+	//   - ifindex: Network interface index
+	//   - progPinPath: Path to pin the dispatcher program
+	//   - linkPinPath: Stable path to pin the TCX link
+	//   - direction: "ingress" or "egress"
+	//   - numProgs: Number of extension slots to enable
+	//   - proceedOn: Bitmask of TC return codes that trigger continuation to next program
+	AttachTCDispatcherWithPaths(ifindex int, progPinPath, linkPinPath, direction string, numProgs int, proceedOn uint32) (*TCDispatcherResult, error)
+
+	// AttachTCExtension loads a program from ELF as Extension type and attaches
+	// it to a TC dispatcher slot. The program is loaded with BPF_PROG_TYPE_EXT
+	// targeting the dispatcher's slot function.
+	AttachTCExtension(dispatcherPinPath, objectPath, programName string, position int, linkPinPath string) (bpfman.ManagedLink, error)
 }
 
 // LinkDetacher detaches links from hooks.

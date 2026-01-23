@@ -336,6 +336,8 @@ func (s *Server) Attach(ctx context.Context, req *pb.AttachRequest) (*pb.AttachR
 		return s.attachTracepoint(ctx, req.Id, info.TracepointAttachInfo)
 	case *pb.AttachInfo_XdpAttachInfo:
 		return s.attachXDP(ctx, req.Id, info.XdpAttachInfo)
+	case *pb.AttachInfo_TcAttachInfo:
+		return s.attachTC(ctx, req.Id, info.TcAttachInfo)
 	default:
 		return nil, status.Errorf(codes.Unimplemented, "attach type %T not yet implemented", req.Attach.Info)
 	}
@@ -373,6 +375,44 @@ func (s *Server) attachXDP(ctx context.Context, programID uint32, info *pb.XDPAt
 	summary, err := s.mgr.AttachXDP(ctx, programID, iface.Index, iface.Name, "")
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "attach XDP: %v", err)
+	}
+
+	return &pb.AttachResponse{
+		LinkId: summary.KernelLinkID,
+	}, nil
+}
+
+// attachTC handles TC attachment via the manager.
+func (s *Server) attachTC(ctx context.Context, programID uint32, info *pb.TCAttachInfo) (*pb.AttachResponse, error) {
+	// Validate direction
+	direction := strings.ToLower(info.Direction)
+	if direction != "ingress" && direction != "egress" {
+		return nil, status.Errorf(codes.InvalidArgument, "direction must be 'ingress' or 'egress', got %q", info.Direction)
+	}
+
+	// Get interface index from name
+	iface, err := net.InterfaceByName(info.Iface)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "interface %q: %v", info.Iface, err)
+	}
+
+	// Use provided priority or default
+	priority := int(info.Priority)
+	if priority == 0 {
+		priority = 50 // Default priority
+	}
+
+	// Use provided proceed-on or default
+	proceedOn := info.ProceedOn
+	if len(proceedOn) == 0 {
+		// Default: ok (0), pipe (3), dispatcher_return (30)
+		proceedOn = []int32{0, 3, 30}
+	}
+
+	// Call manager with empty linkPinPath to auto-generate
+	summary, err := s.mgr.AttachTC(ctx, programID, iface.Index, iface.Name, direction, priority, proceedOn, "")
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "attach TC: %v", err)
 	}
 
 	return &pb.AttachResponse{

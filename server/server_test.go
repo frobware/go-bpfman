@@ -309,6 +309,38 @@ func (f *fakeKernel) AttachXDPExtension(dispatcherPinPath, objectPath, programNa
 	}, nil
 }
 
+func (f *fakeKernel) AttachTCDispatcherWithPaths(ifindex int, progPinPath, linkPinPath, direction string, numProgs int, proceedOn uint32) (*interpreter.TCDispatcherResult, error) {
+	dispatcherID := f.nextID.Add(1)
+	linkID := f.nextID.Add(1)
+	return &interpreter.TCDispatcherResult{
+		DispatcherID:  dispatcherID,
+		LinkID:        linkID,
+		DispatcherPin: progPinPath,
+		LinkPin:       linkPinPath,
+	}, nil
+}
+
+func (f *fakeKernel) AttachTCExtension(dispatcherPinPath, objectPath, programName string, position int, linkPinPath string) (bpfman.ManagedLink, error) {
+	id := f.nextID.Add(1)
+	// Store for DetachLink lookup
+	f.links[id] = &bpfman.AttachedLink{
+		ID:      id,
+		PinPath: linkPinPath,
+		Type:    bpfman.AttachTC,
+	}
+	return bpfman.ManagedLink{
+		Managed: &bpfman.LinkInfo{
+			KernelLinkID:    id,
+			KernelProgramID: 0,
+			Type:            bpfman.LinkTypeTC,
+			PinPath:         linkPinPath,
+			CreatedAt:       time.Now(),
+			Details:         bpfman.TCDetails{Position: int32(position)},
+		},
+		Kernel: &fakeKernelLinkInfo{id: id, programID: 0, linkType: "tc"},
+	}, nil
+}
+
 func (f *fakeKernel) RemovePin(path string) error {
 	return nil // Fake implementation - no-op
 }

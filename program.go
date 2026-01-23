@@ -110,6 +110,10 @@ type LoadSpec struct {
 	PinPath     string            `json:"pin_path"`
 	GlobalData  map[string][]byte `json:"global_data,omitempty"`
 	ImageSource *ImageSource      `json:"image_source,omitempty"`
+	// AttachFunc is the kernel function to attach to (required for fentry/fexit).
+	AttachFunc string `json:"attach_func,omitempty"`
+	// MapOwnerID is the program ID of another program to share maps with.
+	MapOwnerID uint32 `json:"map_owner_id,omitempty"`
 }
 
 // Program contains metadata for programs managed by bpfman.

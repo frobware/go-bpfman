@@ -18,9 +18,18 @@ type AttachCmd struct {
 	// Tracepoint flags
 	Tracepoint string `short:"t" name:"tracepoint" help:"Tracepoint to attach to (group/name format, e.g., sched/sched_switch)."`
 
-	// XDP/TC flags
+	// XDP/TC/TCX flags
 	Iface    string `short:"i" name:"iface" help:"Network interface to attach to."`
 	Priority int    `short:"p" name:"priority" help:"Priority in chain (1-1000, lower runs first)." default:"50"`
+
+	// TC/TCX direction flag
+	Direction string `short:"d" name:"direction" help:"Direction for TC/TCX (ingress or egress)."`
+
+	// TC proceed-on flag
+	ProceedOn []string `name:"proceed-on" help:"TC actions to proceed on (can be repeated). Values: unspec, ok, reclassify, shot, pipe, stolen, queued, repeat, redirect, trap, dispatcher_return." default:"ok,pipe,dispatcher_return"`
+
+	// Network namespace flag
+	Netns string `short:"n" name:"netns" help:"Network namespace path (e.g., /var/run/netns/myns)."`
 
 	// Kprobe/uprobe flags
 	FnName   string `short:"f" name:"fn-name" help:"Function name to attach to."`
@@ -28,7 +37,7 @@ type AttachCmd struct {
 	RetProbe bool   `name:"retprobe" help:"Attach as return probe instead of entry probe."`
 
 	// Common flags
-	Metadata string `short:"m" name:"metadata" help:"Key/Value metadata (KEY=VALUE)."`
+	Metadata []KeyValue `short:"m" name:"metadata" help:"KEY=VALUE metadata (can be repeated)."`
 }
 
 // Run executes the attach command.
@@ -38,9 +47,11 @@ func (c *AttachCmd) Run(cli *CLI) error {
 		return c.attachTracepoint(cli)
 	case "xdp":
 		return c.attachXDP(cli)
+	case "tc":
+		return c.attachTC(cli)
 	case "kprobe":
 		return c.attachKprobe(cli)
-	case "tc", "tcx", "uprobe", "fentry", "fexit":
+	case "tcx", "uprobe", "fentry", "fexit":
 		return fmt.Errorf("%s attachment not yet implemented", c.Type)
 	default:
 		return fmt.Errorf("unknown attach type: %s", c.Type)
@@ -91,6 +102,45 @@ func (c *AttachCmd) attachXDP(cli *CLI) error {
 
 	ctx := context.Background()
 	result, err := b.AttachXDP(ctx, c.ProgramID.Value, iface.Index, c.Iface, "")
+	if err != nil {
+		return err
+	}
+
+	return c.printLinkResult(ctx, b, result.KernelLinkID)
+}
+
+func (c *AttachCmd) attachTC(cli *CLI) error {
+	if c.Iface == "" {
+		return fmt.Errorf("--iface is required for TC attachment")
+	}
+	if c.Direction == "" {
+		return fmt.Errorf("--direction is required for TC attachment")
+	}
+
+	direction, err := ParseTCDirection(c.Direction)
+	if err != nil {
+		return err
+	}
+
+	b, err := cli.Client()
+	if err != nil {
+		return fmt.Errorf("failed to create client: %w", err)
+	}
+	defer b.Close()
+
+	iface, err := net.InterfaceByName(c.Iface)
+	if err != nil {
+		return fmt.Errorf("failed to find interface %q: %w", c.Iface, err)
+	}
+
+	// Parse proceed-on values
+	proceedOn, err := ParseTCActions(c.ProceedOn)
+	if err != nil {
+		return fmt.Errorf("invalid proceed-on value: %w", err)
+	}
+
+	ctx := context.Background()
+	result, err := b.AttachTC(ctx, c.ProgramID.Value, iface.Index, c.Iface, string(direction), c.Priority, proceedOn, "")
 	if err != nil {
 		return err
 	}
