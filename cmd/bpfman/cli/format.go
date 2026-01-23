@@ -356,12 +356,12 @@ func formatLoadedProgramsTable(programs []bpfman.ManagedProgram) string {
 		// Bpfman State section
 		b.WriteString(" Bpfman State\n")
 		bw := tabwriter.NewWriter(&b, 0, 0, 1, ' ', 0)
-		fmt.Fprintf(bw, " BPF Function:\t%s\n", p.Managed.Name())
-		fmt.Fprintf(bw, " Program Type:\t%s\n", p.Managed.ProgramType())
-		fmt.Fprintf(bw, " Path:\t%s\n", p.Managed.ObjectPath())
+		fmt.Fprintf(bw, " BPF Function:\t%s\n", p.Managed.Name)
+		fmt.Fprintf(bw, " Program Type:\t%s\n", p.Managed.Type)
+		fmt.Fprintf(bw, " Path:\t%s\n", p.Managed.ObjectPath)
 		fmt.Fprintf(bw, " Global:\t%s\n", "TODO / FIX ME")
 		fmt.Fprintf(bw, " Metadata:\t%s\n", "TODO / FIX ME")
-		fmt.Fprintf(bw, " Map Pin Path:\t%s\n", p.Managed.PinDir())
+		fmt.Fprintf(bw, " Map Pin Path:\t%s\n", p.Managed.PinDir)
 		fmt.Fprintf(bw, " Map Owner ID:\t%s\n", "TODO / FIX ME")
 		if mapIDs := p.Kernel.MapIDs(); len(mapIDs) > 0 {
 			fmt.Fprintf(bw, " Owned Maps:\t%v\n", mapIDs)

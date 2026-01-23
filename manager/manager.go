@@ -111,13 +111,13 @@ func (m *Manager) Load(ctx context.Context, spec bpfman.LoadSpec, opts LoadOpts)
 	m.logger.Info("loaded program",
 		"name", spec.ProgramName,
 		"kernel_id", loaded.Kernel.ID(),
-		"prog_pin", loaded.Managed.PinPath(),
-		"maps_dir", loaded.Managed.PinDir())
+		"prog_pin", loaded.Managed.PinPath,
+		"maps_dir", loaded.Managed.PinDir)
 
 	// Phase 2: Persist metadata to DB (single transaction)
 	// Store the actual pin paths (not the root) for later use
 	storedSpec := spec
-	storedSpec.PinPath = loaded.Managed.PinDir() // Store maps directory for CSI/unload
+	storedSpec.PinPath = loaded.Managed.PinDir // Store maps directory for CSI/unload
 	metadata := bpfman.Program{
 		LoadSpec:     storedSpec,
 		UserMetadata: opts.UserMetadata,
@@ -129,7 +129,7 @@ func (m *Manager) Load(ctx context.Context, spec bpfman.LoadSpec, opts LoadOpts)
 	if err := m.store.Save(ctx, loaded.Kernel.ID(), metadata); err != nil {
 		m.logger.Error("persist failed, rolling back", "kernel_id", loaded.Kernel.ID(), "error", err)
 		// Cleanup kernel state using the upstream layout
-		if rbErr := m.kernel.UnloadProgram(ctx, loaded.Managed.PinPath(), loaded.Managed.PinDir()); rbErr != nil {
+		if rbErr := m.kernel.UnloadProgram(ctx, loaded.Managed.PinPath, loaded.Managed.PinDir); rbErr != nil {
 			m.logger.Error("rollback failed", "kernel_id", loaded.Kernel.ID(), "error", rbErr)
 			return bpfman.ManagedProgram{}, errors.Join(
 				fmt.Errorf("persist metadata: %w", err),
@@ -428,7 +428,7 @@ func (m *Manager) AttachTracepoint(ctx context.Context, programKernelID uint32, 
 	}
 
 	// COMPUTE: Build save action from kernel result
-	saveAction := computeAttachTracepointAction(programKernelID, link.Kernel.ID(), link.Managed.PinPath(), group, name)
+	saveAction := computeAttachTracepointAction(programKernelID, link.Kernel.ID(), link.Managed.PinPath, group, name)
 
 	// EXECUTE: Save link metadata
 	if err := m.executor.Execute(ctx, saveAction); err != nil {
@@ -439,7 +439,7 @@ func (m *Manager) AttachTracepoint(ctx context.Context, programKernelID uint32, 
 		"kernel_link_id", link.Kernel.ID(),
 		"program_id", programKernelID,
 		"tracepoint", group+"/"+name,
-		"pin_path", link.Managed.PinPath())
+		"pin_path", link.Managed.PinPath)
 
 	return saveAction.Summary, nil
 }
@@ -536,7 +536,7 @@ func (m *Manager) AttachXDP(ctx context.Context, programKernelID uint32, ifindex
 	saveActions := computeAttachXDPActions(
 		programKernelID,
 		link.Kernel.ID(),
-		link.Managed.PinPath(),
+		link.Managed.PinPath,
 		ifname,
 		uint32(ifindex),
 		nsid,
@@ -557,7 +557,7 @@ func (m *Manager) AttachXDP(ctx context.Context, programKernelID uint32, ifindex
 		"nsid", nsid,
 		"position", position,
 		"revision", dispState.Revision,
-		"pin_path", link.Managed.PinPath())
+		"pin_path", link.Managed.PinPath)
 
 	// Extract summary from computed action for return value
 	for _, a := range saveActions {
@@ -570,7 +570,7 @@ func (m *Manager) AttachXDP(ctx context.Context, programKernelID uint32, ifindex
 		KernelLinkID:    link.Kernel.ID(),
 		LinkType:        bpfman.LinkTypeXDP,
 		KernelProgramID: programKernelID,
-		PinPath:         link.Managed.PinPath(),
+		PinPath:         link.Managed.PinPath,
 		CreatedAt:       time.Now(),
 	}, nil
 }

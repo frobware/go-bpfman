@@ -193,65 +193,20 @@ type TCXDetails struct {
 
 func (TCXDetails) linkDetails() {}
 
-// LinkInfo is the concrete implementation of ManagedLinkInfo.
-// It holds what bpfman tracks about a link.
+// LinkInfo holds what bpfman tracks about a link.
 type LinkInfo struct {
-	kernelLinkID    uint32
-	kernelProgramID uint32
-	linkType        LinkType
-	pinPath         string
-	createdAt       time.Time
-	details         LinkDetails
+	KernelLinkID    uint32      `json:"kernel_link_id"`
+	KernelProgramID uint32      `json:"kernel_program_id"`
+	Type            LinkType    `json:"link_type"`
+	PinPath         string      `json:"pin_path,omitempty"`
+	CreatedAt       time.Time   `json:"created_at,omitempty"`
+	Details         LinkDetails `json:"details,omitempty"`
 }
-
-// NewLinkInfo creates a new LinkInfo.
-func NewLinkInfo(kernelLinkID, kernelProgramID uint32, linkType LinkType, pinPath string, createdAt time.Time, details LinkDetails) *LinkInfo {
-	return &LinkInfo{
-		kernelLinkID:    kernelLinkID,
-		kernelProgramID: kernelProgramID,
-		linkType:        linkType,
-		pinPath:         pinPath,
-		createdAt:       createdAt,
-		details:         details,
-	}
-}
-
-// NewLinkInfoFromSummary creates a LinkInfo from a LinkSummary and optional details.
-func NewLinkInfoFromSummary(summary LinkSummary, details LinkDetails) *LinkInfo {
-	return &LinkInfo{
-		kernelLinkID:    summary.KernelLinkID,
-		kernelProgramID: summary.KernelProgramID,
-		linkType:        summary.LinkType,
-		pinPath:         summary.PinPath,
-		createdAt:       summary.CreatedAt,
-		details:         details,
-	}
-}
-
-func (l *LinkInfo) KernelLinkID() uint32    { return l.kernelLinkID }
-func (l *LinkInfo) KernelProgramID() uint32 { return l.kernelProgramID }
-func (l *LinkInfo) LinkType() string        { return string(l.linkType) }
-func (l *LinkInfo) PinPath() string         { return l.pinPath }
-func (l *LinkInfo) CreatedAt() time.Time    { return l.createdAt }
-func (l *LinkInfo) Details() any            { return l.details }
-
-// Verify interface compliance at compile time.
-var _ ManagedLinkInfo = (*LinkInfo)(nil)
 
 // ManagedLink combines bpfman-managed state with kernel-reported info for a link.
 type ManagedLink struct {
-	Managed ManagedLinkInfo
+	Managed *LinkInfo
 	Kernel  KernelLinkInfo
-}
-
-// ManagedLinkInfo describes what bpfman tracks about a link.
-type ManagedLinkInfo interface {
-	KernelLinkID() uint32
-	KernelProgramID() uint32
-	LinkType() string
-	PinPath() string
-	CreatedAt() time.Time
-	Details() any // Type-specific details (TracepointDetails, KprobeDetails, etc.)
 }
 
 // KernelLinkInfo describes what the kernel reports about a link.
@@ -267,39 +222,11 @@ type KernelLinkInfo interface {
 // MarshalJSON implements json.Marshaler for ManagedLink.
 func (l ManagedLink) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
-		Managed managedLinkView `json:"managed"`
-		Kernel  kernelLinkView  `json:"kernel"`
+		Managed *LinkInfo      `json:"managed"`
+		Kernel  kernelLinkView `json:"kernel"`
 	}{
-		Managed: managedLinkView{l.Managed},
+		Managed: l.Managed,
 		Kernel:  kernelLinkView{l.Kernel},
-	})
-}
-
-// managedLinkView is a JSON-serializable view of ManagedLinkInfo.
-type managedLinkView struct {
-	info ManagedLinkInfo
-}
-
-func (v managedLinkView) MarshalJSON() ([]byte, error) {
-	var createdAt string
-	if !v.info.CreatedAt().IsZero() {
-		createdAt = v.info.CreatedAt().Format(time.RFC3339)
-	}
-
-	return json.Marshal(struct {
-		KernelLinkID    uint32 `json:"kernel_link_id"`
-		KernelProgramID uint32 `json:"kernel_program_id"`
-		LinkType        string `json:"link_type"`
-		PinPath         string `json:"pin_path,omitempty"`
-		CreatedAt       string `json:"created_at,omitempty"`
-		Details         any    `json:"details,omitempty"`
-	}{
-		KernelLinkID:    v.info.KernelLinkID(),
-		KernelProgramID: v.info.KernelProgramID(),
-		LinkType:        v.info.LinkType(),
-		PinPath:         v.info.PinPath(),
-		CreatedAt:       createdAt,
-		Details:         v.info.Details(),
 	})
 }
 

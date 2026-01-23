@@ -286,7 +286,7 @@ func (s *Server) Load(ctx context.Context, req *pb.LoadRequest) (*pb.LoadRespons
 				Bytecode:   req.Bytecode,
 				Metadata:   req.Metadata,
 				GlobalData: req.GlobalData,
-				MapPinPath: loaded.Managed.PinDir(), // maps directory computed from kernel ID
+				MapPinPath: loaded.Managed.PinDir, // maps directory computed from kernel ID
 			},
 			KernelInfo: &pb.KernelProgramInfo{
 				Id:            loaded.Kernel.ID(),

@@ -154,50 +154,20 @@ func cloneMap[K comparable, V any](m map[K]V) map[K]V {
 	return result
 }
 
-// ProgramInfo is the concrete implementation of ManagedProgramInfo.
-// It holds what bpfman tracks about a loaded program.
+// ProgramInfo holds what bpfman tracks about a loaded program.
 type ProgramInfo struct {
-	name        string
-	programType ProgramType
-	objectPath  string
-	pinPath     string
-	pinDir      string
+	Name       string      `json:"name"`
+	Type       ProgramType `json:"type"`
+	ObjectPath string      `json:"object_path,omitempty"`
+	PinPath    string      `json:"pin_path"`
+	PinDir     string      `json:"pin_dir,omitempty"`
 }
-
-// NewProgramInfo creates a new ProgramInfo.
-func NewProgramInfo(name string, programType ProgramType, objectPath, pinPath, pinDir string) *ProgramInfo {
-	return &ProgramInfo{
-		name:        name,
-		programType: programType,
-		objectPath:  objectPath,
-		pinPath:     pinPath,
-		pinDir:      pinDir,
-	}
-}
-
-func (p *ProgramInfo) Name() string             { return p.name }
-func (p *ProgramInfo) ProgramType() ProgramType { return p.programType }
-func (p *ProgramInfo) ObjectPath() string       { return p.objectPath }
-func (p *ProgramInfo) PinPath() string          { return p.pinPath }
-func (p *ProgramInfo) PinDir() string           { return p.pinDir }
-
-// Verify interface compliance at compile time.
-var _ ManagedProgramInfo = (*ProgramInfo)(nil)
 
 // ManagedProgram is the result of loading a BPF program.
 // It combines bpfman-managed state with kernel-reported info.
 type ManagedProgram struct {
-	Managed ManagedProgramInfo
+	Managed *ProgramInfo
 	Kernel  KernelProgramInfo
-}
-
-// ManagedProgramInfo describes what bpfman tracks about a loaded program.
-type ManagedProgramInfo interface {
-	Name() string
-	ProgramType() ProgramType
-	PinPath() string
-	PinDir() string
-	ObjectPath() string
 }
 
 // KernelProgramInfo describes what the kernel reports about a loaded program.
@@ -219,32 +189,11 @@ type KernelProgramInfo interface {
 // MarshalJSON implements json.Marshaler for ManagedProgram.
 func (p ManagedProgram) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
-		Managed managedProgramView `json:"managed"`
-		Kernel  kernelProgramView  `json:"kernel"`
+		Managed *ProgramInfo      `json:"managed"`
+		Kernel  kernelProgramView `json:"kernel"`
 	}{
-		Managed: managedProgramView{p.Managed},
+		Managed: p.Managed,
 		Kernel:  kernelProgramView{p.Kernel},
-	})
-}
-
-// managedProgramView is a JSON-serializable view of ManagedProgramInfo.
-type managedProgramView struct {
-	info ManagedProgramInfo
-}
-
-func (v managedProgramView) MarshalJSON() ([]byte, error) {
-	return json.Marshal(struct {
-		Name        string      `json:"name"`
-		ProgramType ProgramType `json:"type"`
-		ObjectPath  string      `json:"object_path,omitempty"`
-		PinPath     string      `json:"pin_path"`
-		PinDir      string      `json:"pin_dir,omitempty"`
-	}{
-		Name:        v.info.Name(),
-		ProgramType: v.info.ProgramType(),
-		ObjectPath:  v.info.ObjectPath(),
-		PinPath:     v.info.PinPath(),
-		PinDir:      v.info.PinDir(),
 	})
 }
 

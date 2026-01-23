@@ -65,21 +65,6 @@ type fakeProgram struct {
 	pinDir      string
 }
 
-// fakeManagedInfo implements bpfman.ManagedProgramInfo for testing.
-type fakeManagedInfo struct {
-	name        string
-	programType bpfman.ProgramType
-	objectPath  string
-	pinPath     string
-	pinDir      string
-}
-
-func (f *fakeManagedInfo) Name() string                    { return f.name }
-func (f *fakeManagedInfo) ProgramType() bpfman.ProgramType { return f.programType }
-func (f *fakeManagedInfo) ObjectPath() string              { return f.objectPath }
-func (f *fakeManagedInfo) PinPath() string                 { return f.pinPath }
-func (f *fakeManagedInfo) PinDir() string                  { return f.pinDir }
-
 // fakeKernelInfo implements bpfman.KernelProgramInfo for testing.
 type fakeKernelInfo struct {
 	id          uint32
@@ -134,11 +119,11 @@ func (f *fakeKernel) Load(_ context.Context, spec bpfman.LoadSpec) (bpfman.Manag
 	}
 	f.programs[id] = fp
 	return bpfman.ManagedProgram{
-		Managed: &fakeManagedInfo{
-			name:        fp.name,
-			programType: fp.programType,
-			pinPath:     fp.pinPath,
-			pinDir:      fp.pinDir,
+		Managed: &bpfman.ProgramInfo{
+			Name:    fp.name,
+			Type:    fp.programType,
+			PinPath: fp.pinPath,
+			PinDir:  fp.pinDir,
 		},
 		Kernel: &fakeKernelInfo{
 			id:          fp.id,
@@ -238,8 +223,15 @@ func (f *fakeKernel) AttachTracepoint(progPinPath, group, name, linkPinPath stri
 		Type:    bpfman.AttachTracepoint,
 	}
 	return bpfman.ManagedLink{
-		Managed: bpfman.NewLinkInfo(id, 0, bpfman.LinkTypeTracepoint, linkPinPath, time.Now(), bpfman.TracepointDetails{Group: group, Name: name}),
-		Kernel:  &fakeKernelLinkInfo{id: id, programID: 0, linkType: "tracepoint"},
+		Managed: &bpfman.LinkInfo{
+			KernelLinkID:    id,
+			KernelProgramID: 0,
+			Type:            bpfman.LinkTypeTracepoint,
+			PinPath:         linkPinPath,
+			CreatedAt:       time.Now(),
+			Details:         bpfman.TracepointDetails{Group: group, Name: name},
+		},
+		Kernel: &fakeKernelLinkInfo{id: id, programID: 0, linkType: "tracepoint"},
 	}, nil
 }
 
@@ -252,8 +244,15 @@ func (f *fakeKernel) AttachXDP(progPinPath string, ifindex int, linkPinPath stri
 		Type:    bpfman.AttachXDP,
 	}
 	return bpfman.ManagedLink{
-		Managed: bpfman.NewLinkInfo(id, 0, bpfman.LinkTypeXDP, linkPinPath, time.Now(), bpfman.XDPDetails{Ifindex: uint32(ifindex)}),
-		Kernel:  &fakeKernelLinkInfo{id: id, programID: 0, linkType: "xdp"},
+		Managed: &bpfman.LinkInfo{
+			KernelLinkID:    id,
+			KernelProgramID: 0,
+			Type:            bpfman.LinkTypeXDP,
+			PinPath:         linkPinPath,
+			CreatedAt:       time.Now(),
+			Details:         bpfman.XDPDetails{Ifindex: uint32(ifindex)},
+		},
+		Kernel: &fakeKernelLinkInfo{id: id, programID: 0, linkType: "xdp"},
 	}, nil
 }
 
@@ -298,8 +297,15 @@ func (f *fakeKernel) AttachXDPExtension(dispatcherPinPath, objectPath, programNa
 		Type:    bpfman.AttachXDP,
 	}
 	return bpfman.ManagedLink{
-		Managed: bpfman.NewLinkInfo(id, 0, bpfman.LinkTypeXDP, linkPinPath, time.Now(), bpfman.XDPDetails{Position: int32(position)}),
-		Kernel:  &fakeKernelLinkInfo{id: id, programID: 0, linkType: "xdp"},
+		Managed: &bpfman.LinkInfo{
+			KernelLinkID:    id,
+			KernelProgramID: 0,
+			Type:            bpfman.LinkTypeXDP,
+			PinPath:         linkPinPath,
+			CreatedAt:       time.Now(),
+			Details:         bpfman.XDPDetails{Position: int32(position)},
+		},
+		Kernel: &fakeKernelLinkInfo{id: id, programID: 0, linkType: "xdp"},
 	}, nil
 }
 

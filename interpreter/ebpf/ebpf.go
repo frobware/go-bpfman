@@ -268,8 +268,14 @@ func (k *kernelAdapter) Load(ctx context.Context, spec bpfman.LoadSpec) (bpfman.
 	_ = ebpfMapIDs // MapIDs now accessed via KernelProgramInfo
 
 	return bpfman.ManagedProgram{
-		Managed: bpfman.NewProgramInfo(spec.ProgramName, spec.ProgramType, spec.ObjectPath, progPinPath, mapsDir),
-		Kernel:  NewProgramInfo(info),
+		Managed: &bpfman.ProgramInfo{
+			Name:       spec.ProgramName,
+			Type:       spec.ProgramType,
+			ObjectPath: spec.ObjectPath,
+			PinPath:    progPinPath,
+			PinDir:     mapsDir,
+		},
+		Kernel: NewProgramInfo(info),
 	}, nil
 }
 
@@ -607,9 +613,9 @@ func (k *kernelAdapter) LoadSingle(ctx context.Context, objectPath, programName,
 	return &kernel.LoadResult{
 		Program: kernel.PinnedProgram{
 			ID:         loaded.Kernel.ID(),
-			Name:       loaded.Managed.Name(),
+			Name:       loaded.Managed.Name,
 			Type:       loaded.Kernel.Type().String(),
-			PinnedPath: loaded.Managed.PinPath(),
+			PinnedPath: loaded.Managed.PinPath,
 			MapIDs:     loaded.Kernel.MapIDs(),
 		},
 		Maps:   maps,
@@ -734,14 +740,14 @@ func (k *kernelAdapter) AttachTracepoint(progPinPath, group, name, linkPinPath s
 	}
 
 	return bpfman.ManagedLink{
-		Managed: bpfman.NewLinkInfo(
-			uint32(linkInfo.ID),
-			uint32(progID),
-			bpfman.LinkTypeTracepoint,
-			linkPinPath,
-			time.Now(),
-			bpfman.TracepointDetails{Group: group, Name: name},
-		),
+		Managed: &bpfman.LinkInfo{
+			KernelLinkID:    uint32(linkInfo.ID),
+			KernelProgramID: uint32(progID),
+			Type:            bpfman.LinkTypeTracepoint,
+			PinPath:         linkPinPath,
+			CreatedAt:       time.Now(),
+			Details:         bpfman.TracepointDetails{Group: group, Name: name},
+		},
 		Kernel: NewLinkInfo(linkInfo),
 	}, nil
 }
@@ -790,14 +796,14 @@ func (k *kernelAdapter) AttachXDP(progPinPath string, ifindex int, linkPinPath s
 	}
 
 	return bpfman.ManagedLink{
-		Managed: bpfman.NewLinkInfo(
-			uint32(linkInfo.ID),
-			uint32(progID),
-			bpfman.LinkTypeXDP,
-			linkPinPath,
-			time.Now(),
-			bpfman.XDPDetails{Ifindex: uint32(ifindex)},
-		),
+		Managed: &bpfman.LinkInfo{
+			KernelLinkID:    uint32(linkInfo.ID),
+			KernelProgramID: uint32(progID),
+			Type:            bpfman.LinkTypeXDP,
+			PinPath:         linkPinPath,
+			CreatedAt:       time.Now(),
+			Details:         bpfman.XDPDetails{Ifindex: uint32(ifindex)},
+		},
 		Kernel: NewLinkInfo(linkInfo),
 	}, nil
 }
@@ -1072,14 +1078,14 @@ func (k *kernelAdapter) AttachXDPExtension(dispatcherPinPath, objectPath, progra
 	}
 
 	return bpfman.ManagedLink{
-		Managed: bpfman.NewLinkInfo(
-			uint32(linkInfo.ID),
-			uint32(progID),
-			bpfman.LinkTypeXDP, // XDP extension
-			linkPinPath,
-			time.Now(),
-			bpfman.XDPDetails{Position: int32(position)},
-		),
+		Managed: &bpfman.LinkInfo{
+			KernelLinkID:    uint32(linkInfo.ID),
+			KernelProgramID: uint32(progID),
+			Type:            bpfman.LinkTypeXDP, // XDP extension
+			PinPath:         linkPinPath,
+			CreatedAt:       time.Now(),
+			Details:         bpfman.XDPDetails{Position: int32(position)},
+		},
 		Kernel: NewLinkInfo(linkInfo),
 	}, nil
 }

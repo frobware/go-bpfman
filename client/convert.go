@@ -109,7 +109,13 @@ func protoLoadResponseToManagedProgram(resp *pb.LoadResponseInfo) bpfman.Managed
 		}
 	}
 
-	managedInfo := bpfman.NewProgramInfo(name, progType, objectPath, pinPath, pinDir)
+	managedInfo := &bpfman.ProgramInfo{
+		Name:       name,
+		Type:       progType,
+		ObjectPath: objectPath,
+		PinPath:    pinPath,
+		PinDir:     pinDir,
+	}
 
 	kernelInfo := &remoteKernelInfo{
 		programType:   progType,

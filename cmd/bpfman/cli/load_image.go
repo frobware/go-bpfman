@@ -94,7 +94,7 @@ func (c *LoadImageCmd) Run(cli *CLI) error {
 		logger.Info("program loaded successfully",
 			"name", loaded.Kernel.Name(),
 			"kernel_id", loaded.Kernel.ID(),
-			"pin_path", loaded.Managed.PinPath(),
+			"pin_path", loaded.Managed.PinPath,
 		)
 	}
 
