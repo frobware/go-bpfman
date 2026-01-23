@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/frobware/go-bpfman/config"
-	"github.com/frobware/go-bpfman/interpreter/image/cosign"
+	"github.com/frobware/go-bpfman/interpreter/image/verify"
 )
 
 // ImageCmd groups image-related subcommands.
@@ -50,9 +50,9 @@ func (c *ImageVerifyCmd) Run(cli *CLI) error {
 	)
 
 	// Create verifier
-	verifier := cosign.NewVerifier(
-		cosign.WithLogger(logger),
-		cosign.WithAllowUnsigned(cfg.Signing.AllowUnsigned),
+	verifier := verify.Cosign(
+		verify.WithLogger(logger),
+		verify.WithAllowUnsigned(cfg.Signing.AllowUnsigned),
 	)
 
 	// Verify

@@ -22,9 +22,8 @@ import (
 	"github.com/frobware/go-bpfman/csi"
 	"github.com/frobware/go-bpfman/interpreter"
 	"github.com/frobware/go-bpfman/interpreter/ebpf"
-	"github.com/frobware/go-bpfman/interpreter/image/cosign"
-	"github.com/frobware/go-bpfman/interpreter/image/noop"
 	"github.com/frobware/go-bpfman/interpreter/image/oci"
+	"github.com/frobware/go-bpfman/interpreter/image/verify"
 	"github.com/frobware/go-bpfman/interpreter/store"
 	"github.com/frobware/go-bpfman/interpreter/store/sqlite"
 	"github.com/frobware/go-bpfman/manager"
@@ -78,13 +77,13 @@ func Run(ctx context.Context, cfg RunConfig) error {
 	var verifier interpreter.SignatureVerifier
 	if cfg.Config.Signing.ShouldVerify() {
 		logger.Info("signature verification enabled")
-		verifier = cosign.NewVerifier(
-			cosign.WithLogger(logger),
-			cosign.WithAllowUnsigned(cfg.Config.Signing.AllowUnsigned),
+		verifier = verify.Cosign(
+			verify.WithLogger(logger),
+			verify.WithAllowUnsigned(cfg.Config.Signing.AllowUnsigned),
 		)
 	} else {
 		logger.Info("signature verification disabled")
-		verifier = noop.NewVerifier()
+		verifier = verify.NoSign()
 	}
 
 	// Create image puller for OCI images

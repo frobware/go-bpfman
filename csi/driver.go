@@ -31,10 +31,10 @@ type Driver struct {
 	csi.UnimplementedIdentityServer
 	csi.UnimplementedNodeServer
 
-	name     string      // CSI driver name for registration.
-	version  string      // Driver version reported to kubelet.
-	nodeID   string      // Kubernetes node name.
-	endpoint string      // CSI socket endpoint (unix:// or tcp://).
+	name     string // CSI driver name for registration.
+	version  string // Driver version reported to kubelet.
+	nodeID   string // Kubernetes node name.
+	endpoint string // CSI socket endpoint (unix:// or tcp://).
 	logger   *slog.Logger
 
 	// store provides program metadata lookups. When nil, the driver

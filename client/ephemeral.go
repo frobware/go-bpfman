@@ -14,9 +14,8 @@ import (
 	"github.com/frobware/go-bpfman"
 	"github.com/frobware/go-bpfman/config"
 	"github.com/frobware/go-bpfman/interpreter"
-	"github.com/frobware/go-bpfman/interpreter/image/cosign"
-	"github.com/frobware/go-bpfman/interpreter/image/noop"
 	"github.com/frobware/go-bpfman/interpreter/image/oci"
+	"github.com/frobware/go-bpfman/interpreter/image/verify"
 	"github.com/frobware/go-bpfman/manager"
 	"github.com/frobware/go-bpfman/server"
 	pb "github.com/frobware/go-bpfman/server/pb"
@@ -55,13 +54,13 @@ func newEphemeral(dirs config.RuntimeDirs, cfg config.Config, logger *slog.Logge
 	var verifier interpreter.SignatureVerifier
 	if cfg.Signing.ShouldVerify() {
 		logger.Info("signature verification enabled")
-		verifier = cosign.NewVerifier(
-			cosign.WithLogger(logger),
-			cosign.WithAllowUnsigned(cfg.Signing.AllowUnsigned),
+		verifier = verify.Cosign(
+			verify.WithLogger(logger),
+			verify.WithAllowUnsigned(cfg.Signing.AllowUnsigned),
 		)
 	} else {
 		logger.Info("signature verification disabled")
-		verifier = noop.NewVerifier()
+		verifier = verify.NoSign()
 	}
 
 	// Create image puller for OCI images

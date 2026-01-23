@@ -1,5 +1,5 @@
-// Package cosign provides sigstore/cosign signature verification for OCI images.
-package cosign
+// Package verify provides OCI image signature verification.
+package verify
 
 import (
 	"context"
@@ -16,44 +16,47 @@ import (
 	"github.com/frobware/go-bpfman/interpreter"
 )
 
-// verifier verifies OCI image signatures using cosign/sigstore.
-type verifier struct {
-	logger        *slog.Logger
-	allowUnsigned bool
-	// Identity constraints for certificate verification
-	issuerRegexp  string
-	subjectRegexp string
+// NoSign returns a verifier that always succeeds without checking signatures.
+// Use this when signature verification is disabled.
+func NoSign() interpreter.SignatureVerifier {
+	return noSignVerifier{}
 }
 
-// Option configures a verifier.
-type Option func(*verifier)
+type noSignVerifier struct{}
 
-// WithLogger sets the logger.
-func WithLogger(logger *slog.Logger) Option {
-	return func(v *verifier) {
+func (noSignVerifier) Verify(ctx context.Context, imageRef string) error {
+	return nil
+}
+
+// CosignOption configures a cosign verifier.
+type CosignOption func(*cosignVerifier)
+
+// WithLogger sets the logger for verification operations.
+func WithLogger(logger *slog.Logger) CosignOption {
+	return func(v *cosignVerifier) {
 		v.logger = logger
 	}
 }
 
 // WithAllowUnsigned controls whether unsigned images are accepted.
-func WithAllowUnsigned(allow bool) Option {
-	return func(v *verifier) {
+func WithAllowUnsigned(allow bool) CosignOption {
+	return func(v *cosignVerifier) {
 		v.allowUnsigned = allow
 	}
 }
 
 // WithIdentity sets the certificate identity constraints.
 // Use ".*" for either value to accept any valid certificate.
-func WithIdentity(issuerRegexp, subjectRegexp string) Option {
-	return func(v *verifier) {
+func WithIdentity(issuerRegexp, subjectRegexp string) CosignOption {
+	return func(v *cosignVerifier) {
 		v.issuerRegexp = issuerRegexp
 		v.subjectRegexp = subjectRegexp
 	}
 }
 
-// NewVerifier creates a new cosign signature verifier.
-func NewVerifier(opts ...Option) interpreter.SignatureVerifier {
-	v := &verifier{
+// Cosign returns a verifier that uses sigstore/cosign for signature verification.
+func Cosign(opts ...CosignOption) interpreter.SignatureVerifier {
+	v := &cosignVerifier{
 		logger:        slog.Default(),
 		allowUnsigned: true, // Permissive default
 		issuerRegexp:  ".*", // Accept any issuer by default
@@ -65,18 +68,24 @@ func NewVerifier(opts ...Option) interpreter.SignatureVerifier {
 	return v
 }
 
+// cosignVerifier verifies OCI image signatures using cosign/sigstore.
+type cosignVerifier struct {
+	logger        *slog.Logger
+	allowUnsigned bool
+	issuerRegexp  string
+	subjectRegexp string
+}
+
 // Verify checks that the image has a valid sigstore signature.
-func (v *verifier) Verify(ctx context.Context, imageRef string) error {
+func (v *cosignVerifier) Verify(ctx context.Context, imageRef string) error {
 	logger := v.logger.With("image", imageRef)
 	logger.Debug("verifying image signature")
 
-	// Parse the image reference
 	ref, err := name.ParseReference(imageRef)
 	if err != nil {
 		return fmt.Errorf("failed to parse image reference: %w", err)
 	}
 
-	// Get Fulcio root certificates for keyless verification
 	rootCerts, err := fulcio.GetRoots()
 	if err != nil {
 		return fmt.Errorf("failed to get Fulcio root certificates: %w", err)
@@ -87,34 +96,27 @@ func (v *verifier) Verify(ctx context.Context, imageRef string) error {
 		return fmt.Errorf("failed to get Fulcio intermediate certificates: %w", err)
 	}
 
-	// Create Rekor client for transparency log verification
 	rekorClient, err := rekor.NewClient(options.DefaultRekorURL)
 	if err != nil {
 		return fmt.Errorf("failed to create Rekor client: %w", err)
 	}
 
-	// Get Rekor public keys for verifying transparency log entries
 	rekorPubKeys, err := cosign.GetRekorPubs(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get Rekor public keys: %w", err)
 	}
 
-	// Get CT log public keys for SCT verification
 	ctLogPubKeys, err := cosign.GetCTLogPubs(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get CT log public keys: %w", err)
 	}
 
-	// Build verification options for keyless (Fulcio) verification
-	// This is the standard sigstore public good instance
 	co := &cosign.CheckOpts{
 		RekorClient:       rekorClient,
 		RekorPubKeys:      rekorPubKeys,
 		RootCerts:         rootCerts,
 		IntermediateCerts: intermediateCerts,
 		CTLogPubKeys:      ctLogPubKeys,
-		// Identity constraints for certificate verification
-		// These specify which certificates are trusted
 		Identities: []cosign.Identity{
 			{
 				IssuerRegExp:  v.issuerRegexp,
@@ -123,7 +125,6 @@ func (v *verifier) Verify(ctx context.Context, imageRef string) error {
 		},
 	}
 
-	// Attempt to verify signatures
 	logger.Debug("calling cosign.VerifyImageSignatures",
 		"issuer_regexp", v.issuerRegexp,
 		"subject_regexp", v.subjectRegexp,
@@ -131,7 +132,6 @@ func (v *verifier) Verify(ctx context.Context, imageRef string) error {
 	signatures, bundleVerified, err := cosign.VerifyImageSignatures(ctx, ref, co)
 	if err != nil {
 		logger.Debug("VerifyImageSignatures returned error", "error", err)
-		// Check if this is a "no signatures found" error
 		if isNoSignaturesError(err) {
 			if v.allowUnsigned {
 				logger.Debug("image has no signatures, but unsigned images are allowed")
@@ -152,7 +152,6 @@ func (v *verifier) Verify(ctx context.Context, imageRef string) error {
 	return nil
 }
 
-// isNoSignaturesError checks if the error indicates no signatures were found.
 func isNoSignaturesError(err error) bool {
 	if err == nil {
 		return false
