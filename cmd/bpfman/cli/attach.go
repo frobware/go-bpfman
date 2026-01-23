@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/frobware/go-bpfman"
+	"github.com/frobware/go-bpfman/manager"
 )
 
 // AttachCmd attaches a loaded program to a hook.
@@ -157,18 +158,28 @@ func (c *AttachCmd) attachKprobe(cli *CLI) error {
 
 func (c *AttachCmd) printLinkResult(ctx context.Context, b interface {
 	GetLink(context.Context, uint32) (bpfman.LinkSummary, bpfman.LinkDetails, error)
+	Get(context.Context, uint32) (manager.ProgramInfo, error)
 }, kernelLinkID uint32) error {
 	summary, details, err := b.GetLink(ctx, kernelLinkID)
 	if err != nil {
 		return fmt.Errorf("failed to get link details: %w", err)
 	}
 
+	// Fetch program info to get the BPF function name
+	var bpfFunction string
+	progInfo, err := b.Get(ctx, summary.KernelProgramID)
+	if err == nil && progInfo.Kernel != nil && progInfo.Kernel.Program != nil {
+		bpfFunction = progInfo.Kernel.Program.Name
+	}
+
 	output, err := json.MarshalIndent(struct {
-		Summary any `json:"summary"`
-		Details any `json:"details,omitempty"`
+		BPFFunction string `json:"bpf_function,omitempty"`
+		Summary     any    `json:"summary"`
+		Details     any    `json:"details,omitempty"`
 	}{
-		Summary: summary,
-		Details: details,
+		BPFFunction: bpfFunction,
+		Summary:     summary,
+		Details:     details,
 	}, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal result: %w", err)
