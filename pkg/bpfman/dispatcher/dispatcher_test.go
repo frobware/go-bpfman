@@ -1,4 +1,4 @@
-package dispatcher
+package dispatcher_test
 
 import (
 	"os"
@@ -6,6 +6,8 @@ import (
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
+
+	"github.com/frobware/go-bpfman/pkg/bpfman/dispatcher"
 )
 
 func TestLoadXDPDispatcher(t *testing.T) {
@@ -14,11 +16,11 @@ func TestLoadXDPDispatcher(t *testing.T) {
 	}
 
 	// Create config for 1 program
-	cfg := NewXDPConfig(1)
-	cfg.ChainCallActions[0] = ProceedOnMask(XDPPass) // Continue on XDP_PASS
+	cfg := dispatcher.NewXDPConfig(1)
+	cfg.ChainCallActions[0] = dispatcher.ProceedOnMask(dispatcher.XDPPass) // Continue on XDP_PASS
 
 	// Load the dispatcher spec
-	spec, err := LoadXDPDispatcher(cfg)
+	spec, err := dispatcher.LoadXDPDispatcher(cfg)
 	if err != nil {
 		t.Fatalf("LoadXDPDispatcher: %v", err)
 	}
@@ -42,12 +44,12 @@ func TestLoadXDPDispatcher(t *testing.T) {
 	}
 	defer coll.Close()
 
-	dispatcher := coll.Programs["xdp_dispatcher"]
-	if dispatcher == nil {
+	prog := coll.Programs["xdp_dispatcher"]
+	if prog == nil {
 		t.Fatal("xdp_dispatcher not found in collection")
 	}
 
-	info, err := dispatcher.Info()
+	info, err := prog.Info()
 	if err != nil {
 		t.Fatalf("dispatcher.Info: %v", err)
 	}
@@ -56,7 +58,7 @@ func TestLoadXDPDispatcher(t *testing.T) {
 
 	// Attach dispatcher to lo
 	lo, err := link.AttachXDP(link.XDPOptions{
-		Program:   dispatcher,
+		Program:   prog,
 		Interface: 1, // lo is always ifindex 1
 	})
 	if err != nil {
@@ -67,9 +69,9 @@ func TestLoadXDPDispatcher(t *testing.T) {
 	t.Log("XDP dispatcher attached to lo")
 
 	// List the stub programs that can be replaced
-	for name, prog := range spec.Programs {
+	for name, p := range spec.Programs {
 		if name != "xdp_dispatcher" {
-			t.Logf("  Stub function: %s (type: %s)", name, prog.Type)
+			t.Logf("  Stub function: %s (type: %s)", name, p.Type)
 		}
 	}
 }
@@ -80,10 +82,10 @@ func TestLoadTCDispatcher(t *testing.T) {
 	}
 
 	// Create config for 1 program
-	cfg := NewTCConfig(1)
+	cfg := dispatcher.NewTCConfig(1)
 
 	// Load the dispatcher spec
-	spec, err := LoadTCDispatcher(cfg)
+	spec, err := dispatcher.LoadTCDispatcher(cfg)
 	if err != nil {
 		t.Fatalf("LoadTCDispatcher: %v", err)
 	}
