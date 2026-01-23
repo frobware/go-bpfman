@@ -36,6 +36,13 @@ func (c *CLI) RuntimeDirs() config.RuntimeDirs {
 	return config.NewRuntimeDirs(c.RuntimeDir)
 }
 
+// Run parses command-line arguments and executes the selected command.
+func Run() {
+	var c CLI
+	ctx := kong.Parse(&c, KongOptions()...)
+	ctx.FatalIfErrorf(ctx.Run(&c))
+}
+
 // KongOptions returns the Kong configuration options for the CLI.
 func KongOptions() []kong.Option {
 	return []kong.Option{
