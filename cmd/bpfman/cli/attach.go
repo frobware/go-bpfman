@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net"
 	"strings"
@@ -13,6 +12,8 @@ import (
 
 // AttachCmd attaches a loaded program to a hook.
 type AttachCmd struct {
+	OutputFlags
+
 	ProgramID ProgramID `arg:"" help:"Program ID to attach."`
 	Type      string    `arg:"" enum:"xdp,tracepoint,kprobe,tc,tcx,uprobe,fentry,fexit" help:"Attach type."`
 
@@ -175,19 +176,11 @@ func (c *AttachCmd) printLinkResult(ctx context.Context, b interface {
 		bpfFunction = progInfo.Kernel.Program.Name
 	}
 
-	output, err := json.MarshalIndent(struct {
-		BPFFunction string `json:"bpf_function,omitempty"`
-		Summary     any    `json:"summary"`
-		Details     any    `json:"details,omitempty"`
-	}{
-		BPFFunction: bpfFunction,
-		Summary:     summary,
-		Details:     details,
-	}, "", "  ")
+	output, err := FormatLinkResult(bpfFunction, summary, details, &c.OutputFlags)
 	if err != nil {
-		return fmt.Errorf("failed to marshal result: %w", err)
+		return err
 	}
 
-	fmt.Println(string(output))
+	fmt.Print(output)
 	return nil
 }

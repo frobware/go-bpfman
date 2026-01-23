@@ -266,6 +266,153 @@ func formatProgramListTable(programs []manager.ManagedProgram) string {
 	return b.String()
 }
 
+// FormatLinkResult formats a link result (from attach command) according to
+// the specified output flags. The bpfFunction is the name of the BPF function.
+func FormatLinkResult(bpfFunction string, summary bpfman.LinkSummary, details bpfman.LinkDetails, flags *OutputFlags) (string, error) {
+	switch flags.Format() {
+	case OutputFormatJSON:
+		return formatLinkResultJSON(bpfFunction, summary, details)
+	case OutputFormatTable:
+		return formatLinkResultTable(bpfFunction, summary, details), nil
+	case OutputFormatJSONPath:
+		return formatLinkResultJSONPath(bpfFunction, summary, details, flags.JSONPathExpr())
+	default:
+		return formatLinkResultTable(bpfFunction, summary, details), nil
+	}
+}
+
+// linkResultData combines summary, details, and bpf function for JSON serialisation.
+type linkResultData struct {
+	BPFFunction string             `json:"bpf_function,omitempty"`
+	Summary     bpfman.LinkSummary `json:"summary"`
+	Details     bpfman.LinkDetails `json:"details"`
+}
+
+func formatLinkResultJSON(bpfFunction string, summary bpfman.LinkSummary, details bpfman.LinkDetails) (string, error) {
+	data := linkResultData{
+		BPFFunction: bpfFunction,
+		Summary:     summary,
+		Details:     details,
+	}
+	output, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal result: %w", err)
+	}
+	return string(output) + "\n", nil
+}
+
+func formatLinkResultJSONPath(bpfFunction string, summary bpfman.LinkSummary, details bpfman.LinkDetails, expr string) (string, error) {
+	data := linkResultData{
+		BPFFunction: bpfFunction,
+		Summary:     summary,
+		Details:     details,
+	}
+
+	jp := jsonpath.New("output")
+	if err := jp.Parse(expr); err != nil {
+		return "", fmt.Errorf("invalid jsonpath expression %q: %w", expr, err)
+	}
+
+	jsonBytes, err := json.Marshal(data)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal: %w", err)
+	}
+
+	var genericData interface{}
+	if err := json.Unmarshal(jsonBytes, &genericData); err != nil {
+		return "", fmt.Errorf("failed to unmarshal: %w", err)
+	}
+
+	var buf bytes.Buffer
+	if err := jp.Execute(&buf, genericData); err != nil {
+		return "", fmt.Errorf("jsonpath execution failed: %w", err)
+	}
+
+	return buf.String() + "\n", nil
+}
+
+func formatLinkResultTable(bpfFunction string, summary bpfman.LinkSummary, details bpfman.LinkDetails) string {
+	var b strings.Builder
+	w := tabwriter.NewWriter(&b, 0, 0, 1, ' ', 0)
+
+	// Header
+	fmt.Fprintln(w, " Bpfman State")
+
+	// Common fields
+	fmt.Fprintf(w, " BPF Function:\t%s\n", bpfFunction)
+	fmt.Fprintf(w, " Program Type:\t%s\n", summary.LinkType)
+	fmt.Fprintf(w, " Program ID:\t%d\n", summary.KernelProgramID)
+	fmt.Fprintf(w, " Link ID:\t%d\n", summary.KernelLinkID)
+
+	// Type-specific fields
+	switch d := details.(type) {
+	case bpfman.TCDetails:
+		fmt.Fprintf(w, " Interface:\t%s\n", d.Interface)
+		fmt.Fprintf(w, " Direction:\t%s\n", d.Direction)
+		fmt.Fprintf(w, " Priority:\t%d\n", d.Priority)
+		fmt.Fprintf(w, " Position:\t%d\n", d.Position)
+		fmt.Fprintf(w, " Proceed On:\t%s\n", TCActionsToString(d.ProceedOn))
+		if d.Netns != "" {
+			fmt.Fprintf(w, " Network Namespace:\t%s\n", d.Netns)
+		} else {
+			fmt.Fprintf(w, " Network Namespace:\tNone\n")
+		}
+	case bpfman.XDPDetails:
+		fmt.Fprintf(w, " Interface:\t%s\n", d.Interface)
+		fmt.Fprintf(w, " Priority:\t%d\n", d.Priority)
+		fmt.Fprintf(w, " Position:\t%d\n", d.Position)
+		fmt.Fprintf(w, " Proceed On:\t%s\n", formatXDPProceedOn(d.ProceedOn))
+		if d.Netns != "" {
+			fmt.Fprintf(w, " Network Namespace:\t%s\n", d.Netns)
+		} else {
+			fmt.Fprintf(w, " Network Namespace:\tNone\n")
+		}
+	case bpfman.TracepointDetails:
+		fmt.Fprintf(w, " Tracepoint:\t%s/%s\n", d.Group, d.Name)
+	case bpfman.KprobeDetails:
+		if d.Retprobe {
+			fmt.Fprintf(w, " Attach Type:\tkretprobe\n")
+		} else {
+			fmt.Fprintf(w, " Attach Type:\tkprobe\n")
+		}
+		fmt.Fprintf(w, " Function:\t%s\n", d.FnName)
+		if d.Offset != 0 {
+			fmt.Fprintf(w, " Offset:\t%d\n", d.Offset)
+		}
+	}
+
+	// Metadata placeholder
+	fmt.Fprintf(w, " Metadata:\tNone\n")
+
+	w.Flush()
+	return b.String()
+}
+
+// formatXDPProceedOn converts XDP proceed-on values to a human-readable string.
+func formatXDPProceedOn(actions []int32) string {
+	if len(actions) == 0 {
+		return "None"
+	}
+	// XDP actions: 0=aborted, 1=drop, 2=pass, 3=tx, 4=redirect, 31=dispatcher_return
+	xdpNames := map[int32]string{
+		0:  "aborted",
+		1:  "drop",
+		2:  "pass",
+		3:  "tx",
+		4:  "redirect",
+		31: "dispatcher_return",
+	}
+	names := make([]string, len(actions))
+	for i, a := range actions {
+		if name, ok := xdpNames[a]; ok {
+			names[i] = name
+		} else {
+			names[i] = fmt.Sprintf("unknown(%d)", a)
+		}
+	}
+	return strings.Join(names, ", ")
+}
+
 // formatAttachDetails formats type-specific link details for display.
 func formatAttachDetails(details bpfman.LinkDetails) string {
 	if details == nil {

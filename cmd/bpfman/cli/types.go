@@ -328,3 +328,38 @@ func ParseTCDirection(s string) (TCDirection, error) {
 		return "", fmt.Errorf("invalid TC direction %q: must be ingress or egress", s)
 	}
 }
+
+// tcActionToString maps TC action values to human-readable names.
+var tcActionToString = map[TCAction]string{
+	TCActionUnspec:           "unspec",
+	TCActionOK:               "ok",
+	TCActionReclassify:       "reclassify",
+	TCActionShot:             "shot",
+	TCActionPipe:             "pipe",
+	TCActionStolen:           "stolen",
+	TCActionQueued:           "queued",
+	TCActionRepeat:           "repeat",
+	TCActionRedirect:         "redirect",
+	TCActionTrap:             "trap",
+	TCActionDispatcherReturn: "dispatcher_return",
+}
+
+// TCActionToString converts a TC action int32 value to its string name.
+func TCActionToString(action int32) string {
+	if name, ok := tcActionToString[TCAction(action)]; ok {
+		return name
+	}
+	return fmt.Sprintf("unknown(%d)", action)
+}
+
+// TCActionsToString converts a slice of TC action values to a comma-separated string.
+func TCActionsToString(actions []int32) string {
+	if len(actions) == 0 {
+		return "None"
+	}
+	names := make([]string, len(actions))
+	for i, a := range actions {
+		names[i] = TCActionToString(a)
+	}
+	return strings.Join(names, ", ")
+}

@@ -140,7 +140,7 @@ attach_ingress() {
     LINK_IDS=()
 
     local output
-    output=$(bpfman attach "$PROG_ID" tc --iface "$IFACE" --direction ingress --priority 50 2>&1)
+    output=$(bpfman attach "$PROG_ID" tc --iface "$IFACE" --direction ingress --priority 50 -o json 2>&1)
 
     local link_id
     link_id=$(echo "$output" | jq -r '.summary.kernel_link_id // empty' 2>/dev/null) || true
@@ -171,7 +171,7 @@ attach_egress() {
     log_info "Step 3: Attaching TC program to $IFACE egress..."
 
     local output
-    output=$(bpfman attach "$PROG_ID" tc --iface "$IFACE" --direction egress --priority 50 2>&1)
+    output=$(bpfman attach "$PROG_ID" tc --iface "$IFACE" --direction egress --priority 50 -o json 2>&1)
 
     local link_id
     link_id=$(echo "$output" | jq -r '.summary.kernel_link_id // empty' 2>/dev/null) || true
