@@ -21,7 +21,7 @@ type AttachCmd struct {
 
 	// XDP/TC/TCX flags
 	Iface    string `short:"i" name:"iface" help:"Network interface to attach to."`
-	Priority int    `short:"p" name:"priority" help:"Priority in chain (1-1000, lower runs first)." default:"50"`
+	Priority int    `short:"p" name:"priority" help:"Priority in chain (1-1000, lower runs first)."`
 
 	// TC/TCX direction flag
 	Direction string `short:"d" name:"direction" help:"Direction for TC/TCX (ingress or egress)."`
@@ -116,6 +116,9 @@ func (c *AttachCmd) attachTC(cli *CLI) error {
 	}
 	if c.Direction == "" {
 		return fmt.Errorf("--direction is required for TC attachment")
+	}
+	if c.Priority < 1 || c.Priority > 1000 {
+		return fmt.Errorf("--priority is required for TC attachment (must be 1-1000)")
 	}
 
 	direction, err := ParseTCDirection(c.Direction)
