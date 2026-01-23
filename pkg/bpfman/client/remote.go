@@ -18,26 +18,26 @@ import (
 	pb "github.com/frobware/go-bpfman/pkg/bpfman/server/pb"
 )
 
-// RemoteClient wraps a gRPC client to provide remote BPF operations.
+// remoteClient wraps a gRPC client to provide remote BPF operations.
 // It implements the Client interface by translating between domain
 // types and protobuf messages.
 //
 // For image operations, the pull happens locally and the load is sent
 // to the remote daemon.
-type RemoteClient struct {
+type remoteClient struct {
 	client pb.BpfmanClient
 	conn   *grpc.ClientConn
 	puller interpreter.ImagePuller
 	logger *slog.Logger
 }
 
-// NewRemote creates a new RemoteClient connected to the specified address.
+// NewRemote creates a Client connected to the specified address.
 // The address can be:
 //   - "host:port" for TCP connections
 //   - "unix:///path/to/socket" for Unix socket connections
 //
 // The returned client must be closed when no longer needed.
-func NewRemote(address string, logger *slog.Logger) (*RemoteClient, error) {
+func NewRemote(address string, logger *slog.Logger) (Client, error) {
 	target := ParseAddress(address)
 
 	conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -45,7 +45,7 @@ func NewRemote(address string, logger *slog.Logger) (*RemoteClient, error) {
 		return nil, fmt.Errorf("connect to %s: %w", target, err)
 	}
 
-	return &RemoteClient{
+	return &remoteClient{
 		client: pb.NewBpfmanClient(conn),
 		conn:   conn,
 		logger: logger,
@@ -66,12 +66,12 @@ func ParseAddress(address string) string {
 }
 
 // Close releases the gRPC connection.
-func (c *RemoteClient) Close() error {
+func (c *remoteClient) Close() error {
 	return c.conn.Close()
 }
 
 // Load loads a BPF program via gRPC.
-func (c *RemoteClient) Load(ctx context.Context, spec managed.LoadSpec, opts manager.LoadOpts) (bpfman.ManagedProgram, error) {
+func (c *remoteClient) Load(ctx context.Context, spec managed.LoadSpec, opts manager.LoadOpts) (bpfman.ManagedProgram, error) {
 	req := &pb.LoadRequest{
 		Bytecode: &pb.BytecodeLocation{
 			Location: &pb.BytecodeLocation_File{File: spec.ObjectPath},
@@ -97,13 +97,13 @@ func (c *RemoteClient) Load(ctx context.Context, spec managed.LoadSpec, opts man
 }
 
 // Unload removes a BPF program via gRPC.
-func (c *RemoteClient) Unload(ctx context.Context, kernelID uint32) error {
+func (c *remoteClient) Unload(ctx context.Context, kernelID uint32) error {
 	_, err := c.client.Unload(ctx, &pb.UnloadRequest{Id: kernelID})
 	return translateGRPCError(err)
 }
 
 // List returns all managed programs via gRPC.
-func (c *RemoteClient) List(ctx context.Context) ([]manager.ManagedProgram, error) {
+func (c *remoteClient) List(ctx context.Context) ([]manager.ManagedProgram, error) {
 	resp, err := c.client.List(ctx, &pb.ListRequest{})
 	if err != nil {
 		return nil, translateGRPCError(err)
@@ -113,7 +113,7 @@ func (c *RemoteClient) List(ctx context.Context) ([]manager.ManagedProgram, erro
 }
 
 // Get retrieves a program by its kernel ID via gRPC.
-func (c *RemoteClient) Get(ctx context.Context, kernelID uint32) (manager.ProgramInfo, error) {
+func (c *remoteClient) Get(ctx context.Context, kernelID uint32) (manager.ProgramInfo, error) {
 	resp, err := c.client.Get(ctx, &pb.GetRequest{Id: kernelID})
 	if err != nil {
 		return manager.ProgramInfo{}, translateGRPCError(err)
@@ -123,7 +123,7 @@ func (c *RemoteClient) Get(ctx context.Context, kernelID uint32) (manager.Progra
 }
 
 // AttachTracepoint attaches a program to a tracepoint via gRPC.
-func (c *RemoteClient) AttachTracepoint(ctx context.Context, programKernelID uint32, group, name, linkPinPath string) (managed.LinkSummary, error) {
+func (c *remoteClient) AttachTracepoint(ctx context.Context, programKernelID uint32, group, name, linkPinPath string) (managed.LinkSummary, error) {
 	req := &pb.AttachRequest{
 		Id: programKernelID,
 		Attach: &pb.AttachInfo{
@@ -150,7 +150,7 @@ func (c *RemoteClient) AttachTracepoint(ctx context.Context, programKernelID uin
 
 // AttachXDP is not fully supported via gRPC.
 // The proto exists but the server returns Unimplemented.
-func (c *RemoteClient) AttachXDP(ctx context.Context, programKernelID uint32, ifindex int, ifname, linkPinPath string) (managed.LinkSummary, error) {
+func (c *remoteClient) AttachXDP(ctx context.Context, programKernelID uint32, ifindex int, ifname, linkPinPath string) (managed.LinkSummary, error) {
 	req := &pb.AttachRequest{
 		Id: programKernelID,
 		Attach: &pb.AttachInfo{
@@ -178,13 +178,13 @@ func (c *RemoteClient) AttachXDP(ctx context.Context, programKernelID uint32, if
 
 // Detach is not fully supported via gRPC.
 // The proto uses link_id (uint32) which matches our kernel_link_id.
-func (c *RemoteClient) Detach(ctx context.Context, kernelLinkID uint32) error {
+func (c *remoteClient) Detach(ctx context.Context, kernelLinkID uint32) error {
 	_, err := c.client.Detach(ctx, &pb.DetachRequest{LinkId: kernelLinkID})
 	return translateGRPCError(err)
 }
 
 // ListLinks returns all managed links via gRPC.
-func (c *RemoteClient) ListLinks(ctx context.Context) ([]managed.LinkSummary, error) {
+func (c *remoteClient) ListLinks(ctx context.Context) ([]managed.LinkSummary, error) {
 	resp, err := c.client.ListLinks(ctx, &pb.ListLinksRequest{})
 	if err != nil {
 		return nil, translateGRPCError(err)
@@ -193,7 +193,7 @@ func (c *RemoteClient) ListLinks(ctx context.Context) ([]managed.LinkSummary, er
 }
 
 // ListLinksByProgram returns all links for a given program via gRPC.
-func (c *RemoteClient) ListLinksByProgram(ctx context.Context, programKernelID uint32) ([]managed.LinkSummary, error) {
+func (c *remoteClient) ListLinksByProgram(ctx context.Context, programKernelID uint32) ([]managed.LinkSummary, error) {
 	resp, err := c.client.ListLinks(ctx, &pb.ListLinksRequest{ProgramId: &programKernelID})
 	if err != nil {
 		return nil, translateGRPCError(err)
@@ -202,7 +202,7 @@ func (c *RemoteClient) ListLinksByProgram(ctx context.Context, programKernelID u
 }
 
 // GetLink retrieves a link by kernel link ID via gRPC.
-func (c *RemoteClient) GetLink(ctx context.Context, kernelLinkID uint32) (managed.LinkSummary, managed.LinkDetails, error) {
+func (c *remoteClient) GetLink(ctx context.Context, kernelLinkID uint32) (managed.LinkSummary, managed.LinkDetails, error) {
 	resp, err := c.client.GetLink(ctx, &pb.GetLinkRequest{KernelLinkId: kernelLinkID})
 	if err != nil {
 		return managed.LinkSummary{}, nil, translateGRPCError(err)
@@ -213,63 +213,82 @@ func (c *RemoteClient) GetLink(ctx context.Context, kernelLinkID uint32) (manage
 }
 
 // PlanGC is a local-only operation.
-func (c *RemoteClient) PlanGC(ctx context.Context, cfg manager.GCConfig) (manager.GCPlan, error) {
+func (c *remoteClient) PlanGC(ctx context.Context, cfg manager.GCConfig) (manager.GCPlan, error) {
 	return manager.GCPlan{}, fmt.Errorf("PlanGC: %w", ErrNotSupported)
 }
 
 // ApplyGC is a local-only operation.
-func (c *RemoteClient) ApplyGC(ctx context.Context, plan manager.GCPlan) (manager.GCResult, error) {
+func (c *remoteClient) ApplyGC(ctx context.Context, plan manager.GCPlan) (manager.GCResult, error) {
 	return manager.GCResult{}, fmt.Errorf("ApplyGC: %w", ErrNotSupported)
 }
 
 // Reconcile is a local-only operation.
-func (c *RemoteClient) Reconcile(ctx context.Context) error {
+func (c *remoteClient) Reconcile(ctx context.Context) error {
 	return fmt.Errorf("Reconcile: %w", ErrNotSupported)
 }
 
 // SetImagePuller configures the image puller for OCI operations.
-func (c *RemoteClient) SetImagePuller(p interpreter.ImagePuller) {
+func (c *remoteClient) SetImagePuller(p interpreter.ImagePuller) {
 	c.puller = p
 }
 
 // PullImage pulls an OCI image and extracts the bytecode.
 // Always executes locally, never forwarded to daemon.
-func (c *RemoteClient) PullImage(ctx context.Context, ref interpreter.ImageRef) (interpreter.PulledImage, error) {
+func (c *remoteClient) PullImage(ctx context.Context, ref interpreter.ImageRef) (interpreter.PulledImage, error) {
 	if c.puller == nil {
 		return interpreter.PulledImage{}, fmt.Errorf("PullImage: %w (no image puller configured)", ErrNotSupported)
 	}
 	return c.puller.Pull(ctx, ref)
 }
 
-// LoadImage pulls an OCI image and loads the specified programs.
-// Pull happens locally, load is sent to the remote daemon.
-func (c *RemoteClient) LoadImage(ctx context.Context, ref interpreter.ImageRef, programs []managed.LoadSpec, opts LoadImageOpts) ([]bpfman.ManagedProgram, error) {
-	// Step 1: Pull image locally
-	pulled, err := c.PullImage(ctx, ref)
-	if err != nil {
-		return nil, fmt.Errorf("pull image: %w", err)
+// LoadImage loads programs from an OCI image via gRPC.
+// The server handles pulling and caching the image.
+func (c *remoteClient) LoadImage(ctx context.Context, ref interpreter.ImageRef, programs []managed.LoadSpec, opts LoadImageOpts) ([]bpfman.ManagedProgram, error) {
+	// Build LoadInfo for each program
+	loadInfo := make([]*pb.LoadInfo, 0, len(programs))
+	var globalData map[string][]byte
+	for _, spec := range programs {
+		loadInfo = append(loadInfo, &pb.LoadInfo{
+			Name:        spec.ProgramName,
+			ProgramType: domainTypeToProto(spec.ProgramType),
+		})
+		if spec.GlobalData != nil {
+			globalData = spec.GlobalData
+		}
 	}
 
-	// Step 2: Load each program via gRPC to remote daemon
-	results := make([]bpfman.ManagedProgram, 0, len(programs))
-	for _, spec := range programs {
-		// Override ObjectPath with pulled location
-		spec.ObjectPath = pulled.ObjectPath
-		spec.ImageSource = &managed.ImageSource{
-			URL:        ref.URL,
-			Digest:     pulled.Digest,
-			PullPolicy: ref.PullPolicy,
-		}
+	// Build BytecodeImage with credentials
+	var username, password *string
+	if ref.Auth != nil {
+		username = &ref.Auth.Username
+		password = &ref.Auth.Password
+	}
 
-		loadOpts := manager.LoadOpts{
-			UserMetadata: opts.UserMetadata,
-		}
+	req := &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_Image{
+				Image: &pb.BytecodeImage{
+					Url:             ref.URL,
+					ImagePullPolicy: int32(ref.PullPolicy),
+					Username:        username,
+					Password:        password,
+				},
+			},
+		},
+		Metadata:   opts.UserMetadata,
+		GlobalData: globalData,
+		Info:       loadInfo,
+	}
 
-		loaded, err := c.Load(ctx, spec, loadOpts)
-		if err != nil {
-			return results, fmt.Errorf("load program %s: %w", spec.ProgramName, err)
-		}
-		results = append(results, loaded)
+	resp, err := c.client.Load(ctx, req)
+	if err != nil {
+		return nil, translateGRPCError(err)
+	}
+
+	// Convert response to ManagedPrograms
+	results := make([]bpfman.ManagedProgram, 0, len(resp.Programs))
+	for _, p := range resp.Programs {
+		results = append(results, protoLoadResponseToManagedProgram(p))
 	}
 
 	return results, nil
