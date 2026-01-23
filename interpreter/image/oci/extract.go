@@ -116,14 +116,20 @@ func extractGzippedELF(gzPath, destDir string, logger *slog.Logger) (string, err
 	}
 
 	limited := io.LimitReader(gzr, maxBytecodeSize)
-	_, err = io.Copy(outFile, limited)
-	outFile.Close()
+	_, copyErr := io.Copy(outFile, limited)
+	closeErr := outFile.Close()
 
-	if err != nil {
+	if copyErr != nil {
 		if rmErr := os.Remove(destPath); rmErr != nil && !os.IsNotExist(rmErr) {
 			logger.Warn("failed to remove file during cleanup", "path", destPath, "error", rmErr)
 		}
-		return "", err
+		return "", copyErr
+	}
+	if closeErr != nil {
+		if rmErr := os.Remove(destPath); rmErr != nil && !os.IsNotExist(rmErr) {
+			logger.Warn("failed to remove file during cleanup", "path", destPath, "error", rmErr)
+		}
+		return "", fmt.Errorf("failed to close output file: %w", closeErr)
 	}
 
 	// Verify it's an ELF file
@@ -205,14 +211,20 @@ func extractFromTarReader(tr *tar.Reader, destDir string, logger *slog.Logger) (
 
 		// Use LimitReader to prevent decompression bombs
 		limited := io.LimitReader(tr, maxBytecodeSize)
-		_, err = io.Copy(outFile, limited)
-		outFile.Close()
+		_, copyErr := io.Copy(outFile, limited)
+		closeErr := outFile.Close()
 
-		if err != nil {
+		if copyErr != nil {
 			if rmErr := os.Remove(destPath); rmErr != nil && !os.IsNotExist(rmErr) {
 				logger.Warn("failed to remove file during cleanup", "path", destPath, "error", rmErr)
 			}
-			return "", fmt.Errorf("failed to extract file: %w", err)
+			return "", fmt.Errorf("failed to extract file: %w", copyErr)
+		}
+		if closeErr != nil {
+			if rmErr := os.Remove(destPath); rmErr != nil && !os.IsNotExist(rmErr) {
+				logger.Warn("failed to remove file during cleanup", "path", destPath, "error", rmErr)
+			}
+			return "", fmt.Errorf("failed to close output file: %w", closeErr)
 		}
 
 		// Verify it's a valid ELF
