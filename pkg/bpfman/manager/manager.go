@@ -59,7 +59,7 @@ type Manager struct {
 	dirs     config.RuntimeDirs
 	store    interpreter.Store
 	kernel   interpreter.KernelOperations
-	executor *interpreter.Executor
+	executor interpreter.ActionExecutor
 	logger   *slog.Logger
 }
 
