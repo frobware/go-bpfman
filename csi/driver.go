@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/url"
 	"os"
-	"strings"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"google.golang.org/grpc"
@@ -26,24 +26,26 @@ type KernelOperations interface {
 	RepinMap(srcPath, dstPath string) error
 }
 
-// Driver implements a minimal CSI driver for learning purposes.
+// Driver implements a CSI node plugin that exposes BPF maps to pods.
 type Driver struct {
 	csi.UnimplementedIdentityServer
 	csi.UnimplementedNodeServer
 
-	name     string
-	version  string
-	nodeID   string
-	endpoint string
+	name     string      // CSI driver name for registration.
+	version  string      // Driver version reported to kubelet.
+	nodeID   string      // Kubernetes node name.
+	endpoint string      // CSI socket endpoint (unix:// or tcp://).
 	logger   *slog.Logger
 
-	// Optional dependencies for bpfman integration.
-	// When nil, the driver operates in simple bind-mount mode.
-	store  ProgramStore
+	// store provides program metadata lookups. When nil, the driver
+	// operates in simple bind-mount mode without bpfman integration.
+	store ProgramStore
+
+	// kernel provides BPF map operations. When nil, map re-pinning
+	// is unavailable.
 	kernel KernelOperations
 
 	// csiFsRoot is the root directory for per-pod bpffs mounts.
-	// Defaults to /run/bpfman/csi/fs
 	csiFsRoot string
 
 	server *grpc.Server
@@ -131,12 +133,21 @@ func (d *Driver) Stop() {
 	}
 }
 
+// parseEndpoint parses an endpoint URL and returns the network type and
+// address. Supported schemes are "unix" (returns path) and "tcp" (returns
+// host:port).
 func parseEndpoint(endpoint string) (string, string, error) {
-	if strings.HasPrefix(endpoint, "unix://") {
-		return "unix", strings.TrimPrefix(endpoint, "unix://"), nil
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return "", "", err
 	}
-	if strings.HasPrefix(endpoint, "tcp://") {
-		return "tcp", strings.TrimPrefix(endpoint, "tcp://"), nil
+
+	switch u.Scheme {
+	case "unix":
+		return "unix", u.Path, nil
+	case "tcp":
+		return "tcp", u.Host, nil
+	default:
+		return "", "", fmt.Errorf("unsupported endpoint scheme: %s", u.Scheme)
 	}
-	return "", "", fmt.Errorf("unsupported endpoint scheme: %s", endpoint)
 }
