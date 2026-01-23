@@ -1,4 +1,4 @@
-package logging
+package logging_test
 
 import (
 	"bytes"
@@ -10,20 +10,22 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/frobware/go-bpfman/pkg/logging"
 )
 
 func TestFilteringHandler_Enabled(t *testing.T) {
-	spec := &Spec{
-		BaseLevel: LevelWarn,
-		Components: map[string]Level{
-			"manager": LevelDebug,
-			"store":   LevelTrace,
+	spec := &logging.Spec{
+		BaseLevel: logging.LevelWarn,
+		Components: map[string]logging.Level{
+			"manager": logging.LevelDebug,
+			"store":   logging.LevelTrace,
 		},
 	}
 
 	var buf bytes.Buffer
-	inner := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: LevelTrace.ToSlog()})
-	handler := NewFilteringHandler(inner, spec)
+	inner := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: logging.LevelTrace.ToSlog()})
+	handler := logging.NewFilteringHandler(inner, spec)
 
 	// Base handler (no component) uses warn level
 	assert.False(t, handler.Enabled(context.Background(), slog.LevelDebug))
@@ -36,25 +38,25 @@ func TestFilteringHandler_Enabled(t *testing.T) {
 	assert.True(t, managerHandler.Enabled(context.Background(), slog.LevelDebug))
 	assert.True(t, managerHandler.Enabled(context.Background(), slog.LevelInfo))
 	assert.True(t, managerHandler.Enabled(context.Background(), slog.LevelWarn))
-	assert.False(t, managerHandler.Enabled(context.Background(), LevelTrace.ToSlog()))
+	assert.False(t, managerHandler.Enabled(context.Background(), logging.LevelTrace.ToSlog()))
 
 	// Store component uses trace level
 	storeHandler := handler.WithAttrs([]slog.Attr{slog.String("component", "store")})
-	assert.True(t, storeHandler.Enabled(context.Background(), LevelTrace.ToSlog()))
+	assert.True(t, storeHandler.Enabled(context.Background(), logging.LevelTrace.ToSlog()))
 	assert.True(t, storeHandler.Enabled(context.Background(), slog.LevelDebug))
 }
 
 func TestFilteringHandler_Handle(t *testing.T) {
-	spec := &Spec{
-		BaseLevel: LevelWarn,
-		Components: map[string]Level{
-			"manager": LevelDebug,
+	spec := &logging.Spec{
+		BaseLevel: logging.LevelWarn,
+		Components: map[string]logging.Level{
+			"manager": logging.LevelDebug,
 		},
 	}
 
 	var buf bytes.Buffer
-	inner := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: LevelTrace.ToSlog()})
-	handler := NewFilteringHandler(inner, spec)
+	inner := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: logging.LevelTrace.ToSlog()})
+	handler := logging.NewFilteringHandler(inner, spec)
 
 	ctx := context.Background()
 
@@ -82,16 +84,16 @@ func TestFilteringHandler_Handle(t *testing.T) {
 }
 
 func TestFilteringHandler_WithGroup(t *testing.T) {
-	spec := &Spec{
-		BaseLevel: LevelInfo,
-		Components: map[string]Level{
-			"manager": LevelDebug,
+	spec := &logging.Spec{
+		BaseLevel: logging.LevelInfo,
+		Components: map[string]logging.Level{
+			"manager": logging.LevelDebug,
 		},
 	}
 
 	var buf bytes.Buffer
-	inner := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: LevelTrace.ToSlog()})
-	handler := NewFilteringHandler(inner, spec)
+	inner := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: logging.LevelTrace.ToSlog()})
+	handler := logging.NewFilteringHandler(inner, spec)
 
 	// WithGroup should preserve the component
 	managerHandler := handler.WithAttrs([]slog.Attr{slog.String("component", "manager")})
@@ -102,11 +104,11 @@ func TestFilteringHandler_WithGroup(t *testing.T) {
 }
 
 func TestFilteringHandler_Integration(t *testing.T) {
-	spec, err := ParseSpec("warn,manager=debug,store=trace")
+	spec, err := logging.ParseSpec("warn,manager=debug,store=trace")
 	require.NoError(t, err)
 
 	var buf bytes.Buffer
-	logger, err := New(Options{
+	logger, err := logging.New(logging.Options{
 		CLISpec: spec.String(),
 		Output:  &buf,
 	})
@@ -136,7 +138,7 @@ func TestFilteringHandler_Integration(t *testing.T) {
 	storeLogger := logger.With("component", "store")
 
 	buf.Reset()
-	storeLogger.Log(context.Background(), LevelTrace.ToSlog(), "store trace")
+	storeLogger.Log(context.Background(), logging.LevelTrace.ToSlog(), "store trace")
 	assert.Contains(t, buf.String(), "store trace")
 
 	// Server logger (not in spec) falls back to warn
@@ -154,28 +156,28 @@ func TestFilteringHandler_Integration(t *testing.T) {
 func TestNew_Precedence(t *testing.T) {
 	tests := []struct {
 		name      string
-		opts      Options
-		wantLevel Level
+		opts      logging.Options
+		wantLevel logging.Level
 	}{
 		{
 			name:      "cli takes precedence over env",
-			opts:      Options{CLISpec: "error", EnvSpec: "debug", ConfigSpec: "info"},
-			wantLevel: LevelError,
+			opts:      logging.Options{CLISpec: "error", EnvSpec: "debug", ConfigSpec: "info"},
+			wantLevel: logging.LevelError,
 		},
 		{
 			name:      "env takes precedence over config",
-			opts:      Options{EnvSpec: "debug", ConfigSpec: "info"},
-			wantLevel: LevelDebug,
+			opts:      logging.Options{EnvSpec: "debug", ConfigSpec: "info"},
+			wantLevel: logging.LevelDebug,
 		},
 		{
 			name:      "config used when nothing else specified",
-			opts:      Options{ConfigSpec: "warn"},
-			wantLevel: LevelWarn,
+			opts:      logging.Options{ConfigSpec: "warn"},
+			wantLevel: logging.LevelWarn,
 		},
 		{
 			name:      "default is warn",
-			opts:      Options{},
-			wantLevel: LevelWarn,
+			opts:      logging.Options{},
+			wantLevel: logging.LevelWarn,
 		},
 	}
 
@@ -184,7 +186,7 @@ func TestNew_Precedence(t *testing.T) {
 			var buf bytes.Buffer
 			tt.opts.Output = &buf
 
-			logger, err := New(tt.opts)
+			logger, err := logging.New(tt.opts)
 			require.NoError(t, err)
 
 			// Check that the expected level is enabled
@@ -195,8 +197,8 @@ func TestNew_Precedence(t *testing.T) {
 			assert.NotEmpty(t, buf.String(), "expected level %s should be logged", tt.wantLevel)
 
 			// Check that the level below is not enabled
-			if tt.wantLevel > LevelTrace {
-				belowLevel := Level(int(tt.wantLevel) - 4)
+			if tt.wantLevel > logging.LevelTrace {
+				belowLevel := logging.Level(int(tt.wantLevel) - 4)
 				buf.Reset()
 				logger.Log(ctx, belowLevel.ToSlog(), "test message below")
 				assert.Empty(t, buf.String(), "level %s below %s should not be logged", belowLevel, tt.wantLevel)
@@ -206,7 +208,7 @@ func TestNew_Precedence(t *testing.T) {
 }
 
 func TestNew_InvalidSpec(t *testing.T) {
-	_, err := New(Options{CLISpec: "invalid"})
+	_, err := logging.New(logging.Options{CLISpec: "invalid"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid log spec")
 }
@@ -214,20 +216,20 @@ func TestNew_InvalidSpec(t *testing.T) {
 func TestParseFormat(t *testing.T) {
 	tests := []struct {
 		input   string
-		want    Format
+		want    logging.Format
 		wantErr bool
 	}{
-		{"text", FormatText, false},
-		{"json", FormatJSON, false},
-		{"TEXT", FormatText, false},
-		{"JSON", FormatJSON, false},
-		{"", FormatText, false},
-		{"invalid", FormatText, true},
+		{"text", logging.FormatText, false},
+		{"json", logging.FormatJSON, false},
+		{"TEXT", logging.FormatText, false},
+		{"JSON", logging.FormatJSON, false},
+		{"", logging.FormatText, false},
+		{"invalid", logging.FormatText, true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			got, err := ParseFormat(tt.input)
+			got, err := logging.ParseFormat(tt.input)
 			if tt.wantErr {
 				require.Error(t, err)
 				return
@@ -240,9 +242,9 @@ func TestParseFormat(t *testing.T) {
 
 func TestNew_JSONFormat(t *testing.T) {
 	var buf bytes.Buffer
-	logger, err := New(Options{
+	logger, err := logging.New(logging.Options{
 		CLISpec: "info",
-		Format:  FormatJSON,
+		Format:  logging.FormatJSON,
 		Output:  &buf,
 	})
 	require.NoError(t, err)

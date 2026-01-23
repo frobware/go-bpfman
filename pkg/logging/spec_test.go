@@ -1,54 +1,56 @@
-package logging
+package logging_test
 
 import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/frobware/go-bpfman/pkg/logging"
 )
 
 func TestParseSpec(t *testing.T) {
 	tests := []struct {
 		name       string
 		input      string
-		wantBase   Level
-		wantComps  map[string]Level
+		wantBase   logging.Level
+		wantComps  map[string]logging.Level
 		wantErr    bool
 		errContain string
 	}{
 		{
 			name:     "empty string defaults to warn",
 			input:    "",
-			wantBase: LevelWarn,
+			wantBase: logging.LevelWarn,
 		},
 		{
 			name:     "base level only",
 			input:    "debug",
-			wantBase: LevelDebug,
+			wantBase: logging.LevelDebug,
 		},
 		{
 			name:      "single component override",
 			input:     "info,manager=debug",
-			wantBase:  LevelInfo,
-			wantComps: map[string]Level{"manager": LevelDebug},
+			wantBase:  logging.LevelInfo,
+			wantComps: map[string]logging.Level{"manager": logging.LevelDebug},
 		},
 		{
 			name:      "multiple component overrides",
 			input:     "warn,manager=debug,store=trace",
-			wantBase:  LevelWarn,
-			wantComps: map[string]Level{"manager": LevelDebug, "store": LevelTrace},
+			wantBase:  logging.LevelWarn,
+			wantComps: map[string]logging.Level{"manager": logging.LevelDebug, "store": logging.LevelTrace},
 		},
 		{
 			name:      "with whitespace",
 			input:     "  info , manager = debug , store = trace  ",
-			wantBase:  LevelInfo,
-			wantComps: map[string]Level{"manager": LevelDebug, "store": LevelTrace},
+			wantBase:  logging.LevelInfo,
+			wantComps: map[string]logging.Level{"manager": logging.LevelDebug, "store": logging.LevelTrace},
 		},
 		{
 			name:      "component only (no base level specified)",
 			input:     "manager=debug",
-			wantBase:  LevelWarn,
-			wantComps: map[string]Level{"manager": LevelDebug},
+			wantBase:  logging.LevelWarn,
+			wantComps: map[string]logging.Level{"manager": logging.LevelDebug},
 		},
 		{
 			name:       "invalid base level",
@@ -77,14 +79,14 @@ func TestParseSpec(t *testing.T) {
 		{
 			name:      "empty parts are skipped",
 			input:     "info,,manager=debug,",
-			wantBase:  LevelInfo,
-			wantComps: map[string]Level{"manager": LevelDebug},
+			wantBase:  logging.LevelInfo,
+			wantComps: map[string]logging.Level{"manager": logging.LevelDebug},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := ParseSpec(tt.input)
+			got, err := logging.ParseSpec(tt.input)
 			if tt.wantErr {
 				require.Error(t, err)
 				if tt.errContain != "" {
@@ -105,23 +107,23 @@ func TestParseSpec(t *testing.T) {
 }
 
 func TestSpec_LevelFor(t *testing.T) {
-	spec := Spec{
-		BaseLevel: LevelWarn,
-		Components: map[string]Level{
-			"manager": LevelDebug,
-			"store":   LevelTrace,
+	spec := logging.Spec{
+		BaseLevel: logging.LevelWarn,
+		Components: map[string]logging.Level{
+			"manager": logging.LevelDebug,
+			"store":   logging.LevelTrace,
 		},
 	}
 
 	tests := []struct {
 		component string
-		want      Level
+		want      logging.Level
 	}{
-		{"manager", LevelDebug},
-		{"store", LevelTrace},
-		{"server", LevelWarn},  // falls back to base
-		{"", LevelWarn},        // empty falls back to base
-		{"unknown", LevelWarn}, // unknown falls back to base
+		{"manager", logging.LevelDebug},
+		{"store", logging.LevelTrace},
+		{"server", logging.LevelWarn},  // falls back to base
+		{"", logging.LevelWarn},        // empty falls back to base
+		{"unknown", logging.LevelWarn}, // unknown falls back to base
 	}
 
 	for _, tt := range tests {
@@ -132,14 +134,14 @@ func TestSpec_LevelFor(t *testing.T) {
 }
 
 func TestSpec_String(t *testing.T) {
-	spec := Spec{
-		BaseLevel:  LevelInfo,
-		Components: map[string]Level{},
+	spec := logging.Spec{
+		BaseLevel:  logging.LevelInfo,
+		Components: map[string]logging.Level{},
 	}
 	assert.Equal(t, "info", spec.String())
 
 	// With components - order may vary due to map iteration
-	spec.Components["manager"] = LevelDebug
+	spec.Components["manager"] = logging.LevelDebug
 	s := spec.String()
 	assert.Contains(t, s, "info")
 	assert.Contains(t, s, "manager=debug")
