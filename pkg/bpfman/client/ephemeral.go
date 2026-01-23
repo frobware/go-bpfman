@@ -64,7 +64,7 @@ func NewEphemeral(dirs config.RuntimeDirs, cfg config.Config, logger *slog.Logge
 		)
 	} else {
 		logger.Info("signature verification disabled")
-		verifier = noop.Verifier{}
+		verifier = noop.NewVerifier()
 	}
 
 	// Create image puller for OCI images

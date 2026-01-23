@@ -50,26 +50,26 @@ type cachedMetadata struct {
 	PulledAt time.Time         `json:"pulled_at"`
 }
 
-// Puller implements ImagePuller using ORAS for OCI registry access.
-type Puller struct {
+// puller implements ImagePuller using ORAS for OCI registry access.
+type puller struct {
 	cacheDir string
 	logger   *slog.Logger
 	verifier interpreter.SignatureVerifier
 }
 
-// Option configures a Puller.
-type Option func(*Puller)
+// Option configures a puller.
+type Option func(*puller)
 
 // WithCacheDir sets the cache directory.
 func WithCacheDir(dir string) Option {
-	return func(p *Puller) {
+	return func(p *puller) {
 		p.cacheDir = dir
 	}
 }
 
 // WithLogger sets the logger.
 func WithLogger(logger *slog.Logger) Option {
-	return func(p *Puller) {
+	return func(p *puller) {
 		p.logger = logger
 	}
 }
@@ -77,14 +77,14 @@ func WithLogger(logger *slog.Logger) Option {
 // WithVerifier sets the signature verifier.
 // If not set, no signature verification is performed.
 func WithVerifier(v interpreter.SignatureVerifier) Option {
-	return func(p *Puller) {
+	return func(p *puller) {
 		p.verifier = v
 	}
 }
 
 // NewPuller creates a new OCI image puller.
-func NewPuller(opts ...Option) (*Puller, error) {
-	p := &Puller{
+func NewPuller(opts ...Option) (interpreter.ImagePuller, error) {
+	p := &puller{
 		cacheDir: DefaultCacheDir(),
 		logger:   slog.Default(),
 	}
@@ -119,7 +119,7 @@ func DefaultCacheDir() string {
 }
 
 // Pull downloads an image and returns the extracted bytecode.
-func (p *Puller) Pull(ctx context.Context, ref interpreter.ImageRef) (interpreter.PulledImage, error) {
+func (p *puller) Pull(ctx context.Context, ref interpreter.ImageRef) (interpreter.PulledImage, error) {
 	logger := p.logger.With("url", ref.URL, "policy", ref.PullPolicy.String())
 	logger.Info("pulling OCI image")
 
@@ -330,7 +330,7 @@ func (p *Puller) Pull(ctx context.Context, ref interpreter.ImageRef) (interprete
 }
 
 // checkCache checks if a valid cached image exists.
-func (p *Puller) checkCache(cacheDir string, logger *slog.Logger) (interpreter.PulledImage, bool) {
+func (p *puller) checkCache(cacheDir string, logger *slog.Logger) (interpreter.PulledImage, bool) {
 	bytecodeFile := filepath.Join(cacheDir, BytecodeFile)
 	metadataFile := filepath.Join(cacheDir, MetadataFile)
 
@@ -358,7 +358,7 @@ func (p *Puller) checkCache(cacheDir string, logger *slog.Logger) (interpreter.P
 }
 
 // configureAuth sets up authentication for the repository.
-func (p *Puller) configureAuth(repo *remote.Repository, authConfig *interpreter.ImageAuth, logger *slog.Logger) error {
+func (p *puller) configureAuth(repo *remote.Repository, authConfig *interpreter.ImageAuth, logger *slog.Logger) error {
 	// If explicit credentials provided, use them
 	if authConfig != nil && authConfig.Username != "" {
 		logger.Debug("using explicit credentials", "username", authConfig.Username)
@@ -414,7 +414,7 @@ func newCredentialStore(logger *slog.Logger) (credentials.Store, error) {
 }
 
 // selectPlatform selects the appropriate platform manifest from an image index.
-func (p *Puller) selectPlatform(ctx context.Context, repo *remote.Repository, indexDesc ocispec.Descriptor, logger *slog.Logger) (ocispec.Descriptor, error) {
+func (p *puller) selectPlatform(ctx context.Context, repo *remote.Repository, indexDesc ocispec.Descriptor, logger *slog.Logger) (ocispec.Descriptor, error) {
 	rc, err := repo.Manifests().Fetch(ctx, indexDesc)
 	if err != nil {
 		return ocispec.Descriptor{}, fmt.Errorf("failed to fetch index: %w", err)
@@ -515,7 +515,7 @@ func goArchToOCI(goArch string) string {
 
 // extractLabels fetches the image config blob and extracts BPF labels.
 // configDigest should be the digest of the config blob from the manifest.
-func (p *Puller) extractLabels(ctx context.Context, repo *remote.Repository, configDigest string, logger *slog.Logger) (programs, maps map[string]string, err error) {
+func (p *puller) extractLabels(ctx context.Context, repo *remote.Repository, configDigest string, logger *slog.Logger) (programs, maps map[string]string, err error) {
 	if configDigest == "" {
 		logger.Debug("no config digest provided, skipping label extraction")
 		return nil, nil, nil

@@ -12,10 +12,12 @@ import (
 	"github.com/sigstore/cosign/v2/cmd/cosign/cli/options"
 	"github.com/sigstore/cosign/v2/cmd/cosign/cli/rekor"
 	"github.com/sigstore/cosign/v2/pkg/cosign"
+
+	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter"
 )
 
-// Verifier verifies OCI image signatures using cosign/sigstore.
-type Verifier struct {
+// verifier verifies OCI image signatures using cosign/sigstore.
+type verifier struct {
 	logger        *slog.Logger
 	allowUnsigned bool
 	// Identity constraints for certificate verification
@@ -23,19 +25,19 @@ type Verifier struct {
 	subjectRegexp string
 }
 
-// Option configures a Verifier.
-type Option func(*Verifier)
+// Option configures a verifier.
+type Option func(*verifier)
 
 // WithLogger sets the logger.
 func WithLogger(logger *slog.Logger) Option {
-	return func(v *Verifier) {
+	return func(v *verifier) {
 		v.logger = logger
 	}
 }
 
 // WithAllowUnsigned controls whether unsigned images are accepted.
 func WithAllowUnsigned(allow bool) Option {
-	return func(v *Verifier) {
+	return func(v *verifier) {
 		v.allowUnsigned = allow
 	}
 }
@@ -43,15 +45,15 @@ func WithAllowUnsigned(allow bool) Option {
 // WithIdentity sets the certificate identity constraints.
 // Use ".*" for either value to accept any valid certificate.
 func WithIdentity(issuerRegexp, subjectRegexp string) Option {
-	return func(v *Verifier) {
+	return func(v *verifier) {
 		v.issuerRegexp = issuerRegexp
 		v.subjectRegexp = subjectRegexp
 	}
 }
 
 // NewVerifier creates a new cosign signature verifier.
-func NewVerifier(opts ...Option) *Verifier {
-	v := &Verifier{
+func NewVerifier(opts ...Option) interpreter.SignatureVerifier {
+	v := &verifier{
 		logger:        slog.Default(),
 		allowUnsigned: true, // Permissive default
 		issuerRegexp:  ".*", // Accept any issuer by default
@@ -64,7 +66,7 @@ func NewVerifier(opts ...Option) *Verifier {
 }
 
 // Verify checks that the image has a valid sigstore signature.
-func (v *Verifier) Verify(ctx context.Context, imageRef string) error {
+func (v *verifier) Verify(ctx context.Context, imageRef string) error {
 	logger := v.logger.With("image", imageRef)
 	logger.Debug("verifying image signature")
 

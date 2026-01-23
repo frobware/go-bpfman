@@ -21,6 +21,9 @@ import (
 	"github.com/frobware/go-bpfman/pkg/bpfman/config"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/ebpf"
+	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/image/cosign"
+	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/image/noop"
+	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/image/oci"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/store"
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/store/sqlite"
 	"github.com/frobware/go-bpfman/pkg/bpfman/managed"
@@ -72,6 +75,28 @@ func Run(ctx context.Context, cfg RunConfig) error {
 	// Create kernel adapter
 	kernel := ebpf.New()
 
+	// Build signature verifier based on config
+	var verifier interpreter.SignatureVerifier
+	if cfg.Config.Signing.ShouldVerify() {
+		logger.Info("signature verification enabled")
+		verifier = cosign.NewVerifier(
+			cosign.WithLogger(logger),
+			cosign.WithAllowUnsigned(cfg.Config.Signing.AllowUnsigned),
+		)
+	} else {
+		logger.Info("signature verification disabled")
+		verifier = noop.NewVerifier()
+	}
+
+	// Create image puller for OCI images
+	puller, err := oci.NewPuller(
+		oci.WithLogger(logger),
+		oci.WithVerifier(verifier),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create image puller: %w", err)
+	}
+
 	// Track CSI driver for graceful shutdown
 	var csiDriver *driver.Driver
 
@@ -114,7 +139,7 @@ func Run(ctx context.Context, cfg RunConfig) error {
 	}()
 
 	// Start bpfman gRPC server
-	srv := newWithStore(dirs, st, logger)
+	srv := newWithStore(dirs, st, puller, logger)
 	return srv.serve(ctx, dirs.SocketPath(), cfg.TCPAddress)
 }
 
@@ -126,12 +151,13 @@ type Server struct {
 	dirs   config.RuntimeDirs
 	kernel interpreter.KernelOperations
 	store  interpreter.Store
+	puller interpreter.ImagePuller
 	mgr    *manager.Manager
 	logger *slog.Logger
 }
 
 // newWithStore creates a new bpfman gRPC server with a pre-configured store.
-func newWithStore(dirs config.RuntimeDirs, store interpreter.Store, logger *slog.Logger) *Server {
+func newWithStore(dirs config.RuntimeDirs, store interpreter.Store, puller interpreter.ImagePuller, logger *slog.Logger) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -139,12 +165,13 @@ func newWithStore(dirs config.RuntimeDirs, store interpreter.Store, logger *slog
 		dirs:   dirs,
 		kernel: ebpf.New(),
 		store:  store,
+		puller: puller,
 		logger: logger.With("component", "server"),
 	}
 }
 
 // New creates a server with the provided dependencies.
-func New(dirs config.RuntimeDirs, store interpreter.Store, kernel interpreter.KernelOperations, logger *slog.Logger) *Server {
+func New(dirs config.RuntimeDirs, store interpreter.Store, kernel interpreter.KernelOperations, puller interpreter.ImagePuller, logger *slog.Logger) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -152,6 +179,7 @@ func New(dirs config.RuntimeDirs, store interpreter.Store, kernel interpreter.Ke
 		dirs:   dirs,
 		kernel: kernel,
 		store:  store,
+		puller: puller,
 		logger: logger.With("component", "server"),
 	}
 	s.mgr = manager.New(dirs, store, kernel, logger)
@@ -167,13 +195,43 @@ func (s *Server) Load(ctx context.Context, req *pb.LoadRequest) (*pb.LoadRespons
 		return nil, status.Error(codes.InvalidArgument, "bytecode location is required")
 	}
 
-	// Get the bytecode path
+	// Get the bytecode path and optional image source
 	var objectPath string
+	var imageSource *managed.ImageSource
 	switch loc := req.Bytecode.Location.(type) {
 	case *pb.BytecodeLocation_File:
 		objectPath = loc.File
 	case *pb.BytecodeLocation_Image:
-		return nil, status.Error(codes.Unimplemented, "OCI image bytecode not yet supported")
+		if s.puller == nil {
+			return nil, status.Error(codes.Unimplemented, "OCI image loading not configured on this server")
+		}
+
+		// Convert proto to interpreter types
+		pullPolicy := protoToPullPolicy(loc.Image.ImagePullPolicy)
+		ref := interpreter.ImageRef{
+			URL:        loc.Image.Url,
+			PullPolicy: pullPolicy,
+		}
+		if loc.Image.Username != nil && *loc.Image.Username != "" {
+			ref.Auth = &interpreter.ImageAuth{
+				Username: *loc.Image.Username,
+			}
+			if loc.Image.Password != nil {
+				ref.Auth.Password = *loc.Image.Password
+			}
+		}
+
+		// Pull the image
+		pulled, err := s.puller.Pull(ctx, ref)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "failed to pull image %s: %v", loc.Image.Url, err)
+		}
+		objectPath = pulled.ObjectPath
+		imageSource = &managed.ImageSource{
+			URL:        loc.Image.Url,
+			Digest:     pulled.Digest,
+			PullPolicy: pullPolicy,
+		}
 	default:
 		return nil, status.Error(codes.InvalidArgument, "invalid bytecode location")
 	}
@@ -200,6 +258,7 @@ func (s *Server) Load(ctx context.Context, req *pb.LoadRequest) (*pb.LoadRespons
 			ProgramType: progType,
 			PinPath:     s.dirs.FS, // bpffs root - actual paths computed from kernel ID
 			GlobalData:  req.GlobalData,
+			ImageSource: imageSource,
 		}
 
 		opts := manager.LoadOpts{
@@ -415,8 +474,38 @@ func (s *Server) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, 
 }
 
 // PullBytecode implements the PullBytecode RPC method.
+// It pre-pulls an OCI image to the local cache without loading any programs.
 func (s *Server) PullBytecode(ctx context.Context, req *pb.PullBytecodeRequest) (*pb.PullBytecodeResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "PullBytecode not yet implemented")
+	if s.puller == nil {
+		return nil, status.Error(codes.Unimplemented, "OCI image pulling not configured on this server")
+	}
+
+	if req.Image == nil {
+		return nil, status.Error(codes.InvalidArgument, "image is required")
+	}
+
+	// Convert proto to interpreter types
+	pullPolicy := protoToPullPolicy(req.Image.ImagePullPolicy)
+	ref := interpreter.ImageRef{
+		URL:        req.Image.Url,
+		PullPolicy: pullPolicy,
+	}
+	if req.Image.Username != nil && *req.Image.Username != "" {
+		ref.Auth = &interpreter.ImageAuth{
+			Username: *req.Image.Username,
+		}
+		if req.Image.Password != nil {
+			ref.Auth.Password = *req.Image.Password
+		}
+	}
+
+	// Pull the image (this caches it)
+	_, err := s.puller.Pull(ctx, ref)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to pull image %s: %v", req.Image.Url, err)
+	}
+
+	return &pb.PullBytecodeResponse{}, nil
 }
 
 // ListLinks implements the ListLinks RPC method.
@@ -740,5 +829,20 @@ func protoToBpfmanType(pt pb.BpfmanProgramType) (bpfman.ProgramType, error) {
 		return bpfman.ProgramTypeTCX, nil
 	default:
 		return bpfman.ProgramTypeUnspecified, fmt.Errorf("unknown program type: %d", pt)
+	}
+}
+
+// protoToPullPolicy converts a proto image pull policy to managed type.
+// Proto values: 0=Always, 1=IfNotPresent, 2=Never (matches managed.ImagePullPolicy iota).
+func protoToPullPolicy(policy int32) managed.ImagePullPolicy {
+	switch policy {
+	case 0:
+		return managed.PullAlways
+	case 1:
+		return managed.PullIfNotPresent
+	case 2:
+		return managed.PullNever
+	default:
+		return managed.PullIfNotPresent
 	}
 }

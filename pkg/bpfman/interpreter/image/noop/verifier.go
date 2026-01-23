@@ -3,13 +3,20 @@ package noop
 
 import (
 	"context"
+
+	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter"
 )
 
-// Verifier is a no-op signature verifier that always succeeds.
+// verifier is a no-op signature verifier that always succeeds.
 // Use this when signature verification is disabled via configuration.
-type Verifier struct{}
+type verifier struct{}
+
+// NewVerifier creates a no-op signature verifier.
+func NewVerifier() interpreter.SignatureVerifier {
+	return verifier{}
+}
 
 // Verify always returns nil, indicating success.
-func (Verifier) Verify(ctx context.Context, imageRef string) error {
+func (verifier) Verify(ctx context.Context, imageRef string) error {
 	return nil
 }

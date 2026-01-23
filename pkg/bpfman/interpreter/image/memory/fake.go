@@ -34,6 +34,7 @@ func WithLogger(logger *slog.Logger) Option {
 }
 
 // NewFakePuller creates a new in-memory fake puller.
+// Returns the concrete type to allow test access to helper methods and fields.
 func NewFakePuller(opts ...Option) *FakePuller {
 	p := &FakePuller{
 		images:    make(map[string]interpreter.PulledImage),
