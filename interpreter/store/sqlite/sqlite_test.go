@@ -353,7 +353,7 @@ func TestDispatcherStore_SaveAndGet(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a dispatcher
-	state := bpfman.DispatcherState{
+	state := dispatcher.State{
 		Type:          dispatcher.DispatcherTypeXDP,
 		Nsid:          4026531840,
 		Ifindex:       1,
@@ -390,7 +390,7 @@ func TestDispatcherStore_Update(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a dispatcher
-	state := bpfman.DispatcherState{
+	state := dispatcher.State{
 		Type:          dispatcher.DispatcherTypeXDP,
 		Nsid:          4026531840,
 		Ifindex:       1,
@@ -428,7 +428,7 @@ func TestDispatcherStore_Delete(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a dispatcher
-	state := bpfman.DispatcherState{
+	state := dispatcher.State{
 		Type:          dispatcher.DispatcherTypeXDP,
 		Nsid:          4026531840,
 		Ifindex:       1,
@@ -470,7 +470,7 @@ func TestDispatcherStore_IncrementRevision(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a dispatcher with revision 1
-	state := bpfman.DispatcherState{
+	state := dispatcher.State{
 		Type:          dispatcher.DispatcherTypeXDP,
 		Nsid:          4026531840,
 		Ifindex:       1,
@@ -508,7 +508,7 @@ func TestDispatcherStore_UniqueConstraint(t *testing.T) {
 	ctx := context.Background()
 
 	// Create an XDP dispatcher
-	xdpState := bpfman.DispatcherState{
+	xdpState := dispatcher.State{
 		Type:          dispatcher.DispatcherTypeXDP,
 		Nsid:          4026531840,
 		Ifindex:       1,
@@ -523,7 +523,7 @@ func TestDispatcherStore_UniqueConstraint(t *testing.T) {
 	require.NoError(t, store.SaveDispatcher(ctx, xdpState), "SaveDispatcher (xdp) failed")
 
 	// Create a TC-ingress dispatcher on same nsid/ifindex - should work (different type)
-	tcState := bpfman.DispatcherState{
+	tcState := dispatcher.State{
 		Type:          dispatcher.DispatcherTypeTCIngress,
 		Nsid:          4026531840,
 		Ifindex:       1,
@@ -554,7 +554,7 @@ func TestDispatcherStore_DifferentInterfaces(t *testing.T) {
 
 	// Create dispatchers for ifindex 1 and 2
 	for ifindex := uint32(1); ifindex <= 2; ifindex++ {
-		state := bpfman.DispatcherState{
+		state := dispatcher.State{
 			Type:          dispatcher.DispatcherTypeXDP,
 			Nsid:          4026531840,
 			Ifindex:       ifindex,

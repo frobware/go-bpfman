@@ -1147,19 +1147,19 @@ func (s *sqliteStore) getTCXDetails(ctx context.Context, kernelLinkID uint32) (b
 // ----------------------------------------------------------------------------
 
 // GetDispatcher retrieves a dispatcher by type, nsid, and ifindex.
-func (s *sqliteStore) GetDispatcher(ctx context.Context, dispType string, nsid uint64, ifindex uint32) (bpfman.DispatcherState, error) {
+func (s *sqliteStore) GetDispatcher(ctx context.Context, dispType string, nsid uint64, ifindex uint32) (dispatcher.State, error) {
 	row := s.stmtGetDispatcher.QueryRowContext(ctx, dispType, nsid, ifindex)
 
-	var state bpfman.DispatcherState
+	var state dispatcher.State
 	var id int64
 	var dispTypeStr string
 	err := row.Scan(&id, &dispTypeStr, &state.Nsid, &state.Ifindex, &state.Revision,
 		&state.KernelID, &state.LinkID, &state.LinkPinPath, &state.ProgPinPath, &state.NumExtensions)
 	if err == sql.ErrNoRows {
-		return bpfman.DispatcherState{}, fmt.Errorf("dispatcher (%s, %d, %d): %w", dispType, nsid, ifindex, store.ErrNotFound)
+		return dispatcher.State{}, fmt.Errorf("dispatcher (%s, %d, %d): %w", dispType, nsid, ifindex, store.ErrNotFound)
 	}
 	if err != nil {
-		return bpfman.DispatcherState{}, err
+		return dispatcher.State{}, err
 	}
 
 	state.Type = dispatcher.DispatcherType(dispTypeStr)
@@ -1167,7 +1167,7 @@ func (s *sqliteStore) GetDispatcher(ctx context.Context, dispType string, nsid u
 }
 
 // SaveDispatcher creates or updates a dispatcher.
-func (s *sqliteStore) SaveDispatcher(ctx context.Context, state bpfman.DispatcherState) error {
+func (s *sqliteStore) SaveDispatcher(ctx context.Context, state dispatcher.State) error {
 	now := time.Now().Format(time.RFC3339)
 
 	_, err := s.stmtSaveDispatcher.ExecContext(ctx,

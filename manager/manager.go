@@ -583,7 +583,7 @@ func computeAttachXDPActions(
 	ifindex uint32,
 	nsid uint64,
 	position int,
-	dispState bpfman.DispatcherState,
+	dispState dispatcher.State,
 ) []action.Action {
 	// Update dispatcher extension count
 	updatedDispState := dispState
@@ -616,7 +616,7 @@ func computeAttachXDPActions(
 // createXDPDispatcher creates a new XDP dispatcher for the given interface.
 //
 // Pattern: COMPUTE -> KERNEL I/O -> COMPUTE -> EXECUTE
-func (m *Manager) createXDPDispatcher(ctx context.Context, nsid uint64, ifindex uint32) (bpfman.DispatcherState, error) {
+func (m *Manager) createXDPDispatcher(ctx context.Context, nsid uint64, ifindex uint32) (dispatcher.State, error) {
 	// COMPUTE: Calculate paths according to Rust bpfman convention
 	revision := uint32(1)
 	linkPinPath := dispatcher.DispatcherLinkPath(m.dirs.FS, dispatcher.DispatcherTypeXDP, nsid, ifindex)
@@ -639,7 +639,7 @@ func (m *Manager) createXDPDispatcher(ctx context.Context, nsid uint64, ifindex 
 		xdpProceedOnPass,
 	)
 	if err != nil {
-		return bpfman.DispatcherState{}, err
+		return dispatcher.State{}, err
 	}
 
 	// COMPUTE: Build save action from kernel result
@@ -648,7 +648,7 @@ func (m *Manager) createXDPDispatcher(ctx context.Context, nsid uint64, ifindex 
 
 	// EXECUTE: Save through executor
 	if err := m.executor.Execute(ctx, saveAction); err != nil {
-		return bpfman.DispatcherState{}, fmt.Errorf("save dispatcher: %w", err)
+		return dispatcher.State{}, fmt.Errorf("save dispatcher: %w", err)
 	}
 
 	m.logger.Info("created XDP dispatcher",
@@ -670,8 +670,8 @@ func computeDispatcherState(
 	ifindex, revision uint32,
 	result *interpreter.XDPDispatcherResult,
 	progPinPath, linkPinPath string,
-) bpfman.DispatcherState {
-	return bpfman.DispatcherState{
+) dispatcher.State {
+	return dispatcher.State{
 		Type:          dispType,
 		Nsid:          nsid,
 		Ifindex:       ifindex,
@@ -717,7 +717,7 @@ func (m *Manager) Detach(ctx context.Context, kernelLinkID uint32) error {
 	}
 
 	// FETCH: Get dispatcher state if this is a dispatcher-based link
-	var dispState *bpfman.DispatcherState
+	var dispState *dispatcher.State
 	if summary.LinkType == bpfman.LinkTypeXDP || summary.LinkType == bpfman.LinkTypeTC {
 		dispType, nsid, ifindex, err := extractDispatcherKey(details)
 		if err != nil {
@@ -754,7 +754,7 @@ func (m *Manager) Detach(ctx context.Context, kernelLinkID uint32) error {
 
 // computeDetachActions is a pure function that computes the actions needed
 // to detach a link and optionally clean up its dispatcher.
-func computeDetachActions(summary bpfman.LinkSummary, dispState *bpfman.DispatcherState) []action.Action {
+func computeDetachActions(summary bpfman.LinkSummary, dispState *dispatcher.State) []action.Action {
 	var actions []action.Action
 
 	// Detach link from kernel if pinned
@@ -796,7 +796,7 @@ func extractDispatcherKey(details bpfman.LinkDetails) (dispType dispatcher.Dispa
 
 // computeDispatcherCleanupActions is a pure function that computes the actions
 // needed to update or remove a dispatcher after an extension is detached.
-func computeDispatcherCleanupActions(state bpfman.DispatcherState) []action.Action {
+func computeDispatcherCleanupActions(state dispatcher.State) []action.Action {
 	// Decrement extension count
 	newCount := state.NumExtensions
 	if newCount > 0 {

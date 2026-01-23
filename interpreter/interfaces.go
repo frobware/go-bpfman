@@ -8,6 +8,7 @@ import (
 	"iter"
 
 	"github.com/frobware/go-bpfman"
+	"github.com/frobware/go-bpfman/dispatcher"
 	"github.com/frobware/go-bpfman/kernel"
 )
 
@@ -49,10 +50,10 @@ type LinkStore interface {
 type DispatcherStore interface {
 	// GetDispatcher retrieves a dispatcher by type, nsid, and ifindex.
 	// Returns store.ErrNotFound if the dispatcher does not exist.
-	GetDispatcher(ctx context.Context, dispType string, nsid uint64, ifindex uint32) (bpfman.DispatcherState, error)
+	GetDispatcher(ctx context.Context, dispType string, nsid uint64, ifindex uint32) (dispatcher.State, error)
 
 	// SaveDispatcher creates or updates a dispatcher.
-	SaveDispatcher(ctx context.Context, state bpfman.DispatcherState) error
+	SaveDispatcher(ctx context.Context, state dispatcher.State) error
 
 	// DeleteDispatcher removes a dispatcher by type, nsid, and ifindex.
 	DeleteDispatcher(ctx context.Context, dispType string, nsid uint64, ifindex uint32) error

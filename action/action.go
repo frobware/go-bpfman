@@ -2,7 +2,10 @@
 // without actually doing it. These are pure data structures.
 package action
 
-import "github.com/frobware/go-bpfman"
+import (
+	"github.com/frobware/go-bpfman"
+	"github.com/frobware/go-bpfman/dispatcher"
+)
 
 // Action represents an effect to be executed.
 // Actions are data - they describe what to do, not how.
@@ -94,7 +97,7 @@ func (Sequence) isAction() {}
 
 // SaveDispatcher creates or updates a dispatcher in the store.
 type SaveDispatcher struct {
-	State bpfman.DispatcherState
+	State dispatcher.State
 }
 
 func (SaveDispatcher) isAction() {}
