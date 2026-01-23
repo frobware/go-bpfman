@@ -1,3 +1,6 @@
+// Package cli provides the command-line interface for bpfman.
+// It uses Kong for argument parsing and delegates to the client package
+// for BPF operations.
 package cli
 
 import (

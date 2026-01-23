@@ -1,3 +1,6 @@
+// Package kernel contains types representing BPF objects as observed
+// from the kernel. These are read-only data structures populated by
+// querying the BPF subsystem.
 package kernel
 
 import "time"

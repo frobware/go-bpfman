@@ -1,3 +1,6 @@
+// Package logging provides structured logging with per-component level control.
+// Log levels can be specified via CLI flags or config files using a spec format
+// like "info,manager=debug,server=warn".
 package logging
 
 import (
