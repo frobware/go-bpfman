@@ -126,10 +126,9 @@ func (c *CLI) LoggerFromConfig() (*slog.Logger, error) {
 }
 
 // Client returns a client appropriate for the configured transport.
-// If --remote is set, returns a RemoteClient connected via gRPC.
-// Otherwise, returns an EphemeralClient that spawns an in-process gRPC
-// server and connects to it, ensuring all operations use the same code
-// path as remote clients.
+// If --remote is set, returns a client connected via gRPC to the remote daemon.
+// Otherwise, returns a client that spawns an in-process gRPC server,
+// ensuring all operations use the same code path as remote clients.
 // The returned client must be closed when no longer needed.
 func (c *CLI) Client() (client.Client, error) {
 	logger, err := c.Logger()
@@ -138,7 +137,7 @@ func (c *CLI) Client() (client.Client, error) {
 	}
 
 	if c.Remote != "" {
-		return client.NewRemote(c.Remote, logger)
+		return client.Dial(c.Remote, client.WithLogger(logger))
 	}
 
 	cfg, err := c.LoadConfig()
@@ -146,5 +145,9 @@ func (c *CLI) Client() (client.Client, error) {
 		return nil, fmt.Errorf("failed to load config: %w", err)
 	}
 
-	return client.NewEphemeral(c.RuntimeDirs(), cfg, logger)
+	return client.Open(
+		client.WithLogger(logger),
+		client.WithRuntimeDir(c.RuntimeDir),
+		client.WithConfig(cfg),
+	)
 }

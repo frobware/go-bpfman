@@ -31,14 +31,9 @@ type remoteClient struct {
 	logger *slog.Logger
 }
 
-// NewRemote creates a Client connected to the specified address.
-// The address can be:
-//   - "host:port" for TCP connections
-//   - "unix:///path/to/socket" for Unix socket connections
-//
-// The returned client must be closed when no longer needed.
-func NewRemote(address string, logger *slog.Logger) (Client, error) {
-	target := ParseAddress(address)
+// newRemote creates a Client connected to the specified address.
+func newRemote(address string, logger *slog.Logger) (Client, error) {
+	target := parseAddress(address)
 
 	conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -52,10 +47,10 @@ func NewRemote(address string, logger *slog.Logger) (Client, error) {
 	}, nil
 }
 
-// ParseAddress normalises an address for gRPC.
+// parseAddress normalises an address for gRPC.
 // Handles Unix socket paths (unix:// prefix or absolute paths starting with /)
 // and TCP addresses (host:port).
-func ParseAddress(address string) string {
+func parseAddress(address string) string {
 	if strings.HasPrefix(address, "unix://") {
 		return address
 	}

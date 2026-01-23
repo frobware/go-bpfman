@@ -43,11 +43,9 @@ type ephemeralClient struct {
 	logger     *slog.Logger
 }
 
-// NewEphemeral creates a Client that spawns an in-process gRPC
+// newEphemeral creates a Client that spawns an in-process gRPC
 // server using a temporary Unix socket.
-// The server is started immediately and the client connects to it.
-// The socket file is removed when Close is called.
-func NewEphemeral(dirs config.RuntimeDirs, cfg config.Config, logger *slog.Logger) (Client, error) {
+func newEphemeral(dirs config.RuntimeDirs, cfg config.Config, logger *slog.Logger) (Client, error) {
 	// Set up runtime environment (ensures directories, opens store, creates manager)
 	env, err := manager.SetupRuntimeEnv(dirs, logger)
 	if err != nil {
@@ -119,8 +117,8 @@ func NewEphemeral(dirs config.RuntimeDirs, cfg config.Config, logger *slog.Logge
 		}
 	}()
 
-	// Connect RemoteClient to the ephemeral server
-	remote, err := NewRemote(socketPath, logger)
+	// Connect remoteClient to the ephemeral server
+	remote, err := newRemote(socketPath, logger)
 	if err != nil {
 		cancel()
 		grpcServer.GracefulStop()
