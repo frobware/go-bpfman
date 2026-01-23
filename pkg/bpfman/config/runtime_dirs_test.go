@@ -1,21 +1,23 @@
-package config
+package config_test
 
 import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/frobware/go-bpfman/pkg/bpfman/config"
 )
 
 func TestNewRuntimeDirs(t *testing.T) {
 	tests := []struct {
 		name string
 		base string
-		want RuntimeDirs
+		want config.RuntimeDirs
 	}{
 		{
 			name: "production default",
 			base: "/run/bpfman",
-			want: RuntimeDirs{
+			want: config.RuntimeDirs{
 				Base:          "/run/bpfman",
 				FS:            "/run/bpfman/fs",
 				FS_XDP:        "/run/bpfman/fs/xdp",
@@ -32,7 +34,7 @@ func TestNewRuntimeDirs(t *testing.T) {
 		{
 			name: "go variant for parallel testing",
 			base: "/run/bpfman-go",
-			want: RuntimeDirs{
+			want: config.RuntimeDirs{
 				Base:          "/run/bpfman-go",
 				FS:            "/run/bpfman-go/fs",
 				FS_XDP:        "/run/bpfman-go/fs/xdp",
@@ -49,7 +51,7 @@ func TestNewRuntimeDirs(t *testing.T) {
 		{
 			name: "temp dir for unit tests",
 			base: "/tmp/bpfman-test-12345",
-			want: RuntimeDirs{
+			want: config.RuntimeDirs{
 				Base:          "/tmp/bpfman-test-12345",
 				FS:            "/tmp/bpfman-test-12345/fs",
 				FS_XDP:        "/tmp/bpfman-test-12345/fs/xdp",
@@ -67,7 +69,7 @@ func TestNewRuntimeDirs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := NewRuntimeDirs(tt.base)
+			got := config.NewRuntimeDirs(tt.base)
 			if got != tt.want {
 				t.Errorf("NewRuntimeDirs(%q) =\n%+v\nwant\n%+v", tt.base, got, tt.want)
 			}
@@ -76,7 +78,7 @@ func TestNewRuntimeDirs(t *testing.T) {
 }
 
 func TestRuntimeDirs_Paths(t *testing.T) {
-	d := NewRuntimeDirs("/run/bpfman")
+	d := config.NewRuntimeDirs("/run/bpfman")
 
 	tests := []struct {
 		name string
@@ -102,7 +104,7 @@ func TestRuntimeDirs_Paths(t *testing.T) {
 }
 
 func TestDefaultRuntimeDirs(t *testing.T) {
-	d := DefaultRuntimeDirs()
+	d := config.DefaultRuntimeDirs()
 	if d.Base != "/run/bpfman" {
 		t.Errorf("DefaultRuntimeDirs().Base = %q, want /run/bpfman", d.Base)
 	}
@@ -110,7 +112,7 @@ func TestDefaultRuntimeDirs(t *testing.T) {
 
 func TestEnsureDirectories_CreatesDirs(t *testing.T) {
 	base := t.TempDir()
-	d := NewRuntimeDirs(base)
+	d := config.NewRuntimeDirs(base)
 
 	// EnsureDirectories will fail trying to mount bpffs (no CAP_SYS_ADMIN),
 	// but should create the regular directories first.
@@ -129,7 +131,7 @@ func TestEnsureDirectories_CreatesDirs(t *testing.T) {
 
 func TestEnsureDirectories_FailsWithoutCAP_SYS_ADMIN(t *testing.T) {
 	base := t.TempDir()
-	d := NewRuntimeDirs(base)
+	d := config.NewRuntimeDirs(base)
 
 	// Without CAP_SYS_ADMIN, mounting bpffs should fail
 	err := d.EnsureDirectories()
