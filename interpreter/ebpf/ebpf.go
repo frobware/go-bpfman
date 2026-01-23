@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"iter"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,11 +21,29 @@ import (
 )
 
 // kernelAdapter implements interpreter.KernelOperations using cilium/ebpf.
-type kernelAdapter struct{}
+type kernelAdapter struct {
+	logger *slog.Logger
+}
+
+// Option configures a kernelAdapter.
+type Option func(*kernelAdapter)
+
+// WithLogger sets the logger for kernel operations.
+func WithLogger(logger *slog.Logger) Option {
+	return func(k *kernelAdapter) {
+		k.logger = logger
+	}
+}
 
 // New creates a new kernel adapter.
-func New() interpreter.KernelOperations {
-	return &kernelAdapter{}
+func New(opts ...Option) interpreter.KernelOperations {
+	k := &kernelAdapter{
+		logger: slog.Default(),
+	}
+	for _, opt := range opts {
+		opt(k)
+	}
+	return k
 }
 
 // GetProgramByID retrieves a kernel program by its ID.
@@ -226,7 +245,9 @@ func (k *kernelAdapter) Load(ctx context.Context, spec bpfman.LoadSpec) (bpfman.
 	var pinnedPaths []string
 	cleanup := func() {
 		for i := len(pinnedPaths) - 1; i >= 0; i-- {
-			os.Remove(pinnedPaths[i])
+			if err := os.Remove(pinnedPaths[i]); err != nil && !os.IsNotExist(err) {
+				k.logger.Warn("failed to remove pin during cleanup", "path", pinnedPaths[i], "error", err)
+			}
 		}
 	}
 
@@ -252,8 +273,9 @@ func (k *kernelAdapter) Load(ctx context.Context, spec bpfman.LoadSpec) (bpfman.
 		mapPinPath := filepath.Join(mapsDir, sanitiseFilename(name))
 		if err := m.Pin(mapPinPath); err != nil {
 			cleanup()
-			// Also remove the maps directory
-			os.Remove(mapsDir)
+			if rmErr := os.Remove(mapsDir); rmErr != nil && !os.IsNotExist(rmErr) {
+				k.logger.Warn("failed to remove maps directory during cleanup", "path", mapsDir, "error", rmErr)
+			}
 			return bpfman.ManagedProgram{}, fmt.Errorf("failed to pin map %q: %w", name, err)
 		}
 		pinnedPaths = append(pinnedPaths, mapPinPath)
@@ -262,7 +284,9 @@ func (k *kernelAdapter) Load(ctx context.Context, spec bpfman.LoadSpec) (bpfman.
 	ebpfMapIDs, ok := info.MapIDs()
 	if !ok {
 		cleanup()
-		os.Remove(mapsDir)
+		if rmErr := os.Remove(mapsDir); rmErr != nil && !os.IsNotExist(rmErr) {
+			k.logger.Warn("failed to remove maps directory during cleanup", "path", mapsDir, "error", rmErr)
+		}
 		return bpfman.ManagedProgram{}, fmt.Errorf("failed to get map IDs from kernel")
 	}
 	_ = ebpfMapIDs // MapIDs now accessed via KernelProgramInfo
@@ -886,7 +910,9 @@ func (k *kernelAdapter) AttachXDPDispatcher(ifindex int, pinDir string, numProgs
 		// Pin link
 		linkPinPath := filepath.Join(pinDir, "link")
 		if err := lnk.Pin(linkPinPath); err != nil {
-			os.Remove(dispatcherPinPath)
+			if rmErr := os.Remove(dispatcherPinPath); rmErr != nil && !os.IsNotExist(rmErr) {
+				k.logger.Warn("failed to remove dispatcher pin during cleanup", "path", dispatcherPinPath, "error", rmErr)
+			}
 			lnk.Close()
 			return nil, fmt.Errorf("pin dispatcher link: %w", err)
 		}
@@ -979,7 +1005,9 @@ func (k *kernelAdapter) AttachXDPDispatcherWithPaths(ifindex int, progPinPath, l
 		linkDir := filepath.Dir(linkPinPath)
 		if err := os.MkdirAll(linkDir, 0755); err != nil {
 			if progPinPath != "" {
-				os.Remove(progPinPath)
+				if rmErr := os.Remove(progPinPath); rmErr != nil && !os.IsNotExist(rmErr) {
+					k.logger.Warn("failed to remove program pin during cleanup", "path", progPinPath, "error", rmErr)
+				}
 			}
 			lnk.Close()
 			return nil, fmt.Errorf("create link pin directory: %w", err)
@@ -987,7 +1015,9 @@ func (k *kernelAdapter) AttachXDPDispatcherWithPaths(ifindex int, progPinPath, l
 
 		if err := lnk.Pin(linkPinPath); err != nil {
 			if progPinPath != "" {
-				os.Remove(progPinPath)
+				if rmErr := os.Remove(progPinPath); rmErr != nil && !os.IsNotExist(rmErr) {
+					k.logger.Warn("failed to remove program pin during cleanup", "path", progPinPath, "error", rmErr)
+				}
 			}
 			lnk.Close()
 			return nil, fmt.Errorf("pin dispatcher link to %s: %w", linkPinPath, err)

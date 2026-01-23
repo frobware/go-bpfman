@@ -59,7 +59,7 @@ func SetupRuntimeEnv(dirs config.RuntimeDirs, logger *slog.Logger) (*RuntimeEnv,
 	}
 	setupLogger.Debug("database opened")
 
-	kernel := ebpf.New()
+	kernel := ebpf.New(ebpf.WithLogger(logger))
 	mgr := New(dirs, store, kernel, logger)
 
 	setupLogger.Debug("runtime environment ready")

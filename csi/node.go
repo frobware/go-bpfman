@@ -129,7 +129,9 @@ func (d *Driver) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolu
 
 	// 4. Mount bpffs on the per-pod directory
 	if err := mountBpffs(podBpffs); err != nil {
-		os.RemoveAll(podBpffs)
+		if rmErr := os.RemoveAll(podBpffs); rmErr != nil {
+			d.logger.Warn("failed to remove pod bpffs directory during cleanup", "path", podBpffs, "error", rmErr)
+		}
 		return nil, status.Errorf(codes.Internal, "failed to mount bpffs at %q: %v", podBpffs, err)
 	}
 
@@ -153,7 +155,9 @@ func (d *Driver) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolu
 		if err := d.kernel.RepinMap(srcPath, dstPath); err != nil {
 			// Cleanup on failure
 			unix.Unmount(podBpffs, 0)
-			os.RemoveAll(podBpffs)
+			if rmErr := os.RemoveAll(podBpffs); rmErr != nil {
+				d.logger.Warn("failed to remove pod bpffs directory during cleanup", "path", podBpffs, "error", rmErr)
+			}
 			return nil, status.Errorf(codes.Internal, "failed to re-pin map %q: %v", mapName, err)
 		}
 	}
@@ -161,7 +165,9 @@ func (d *Driver) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolu
 	// 6. Create target directory and bind-mount
 	if err := os.MkdirAll(targetPath, 0755); err != nil {
 		unix.Unmount(podBpffs, 0)
-		os.RemoveAll(podBpffs)
+		if rmErr := os.RemoveAll(podBpffs); rmErr != nil {
+			d.logger.Warn("failed to remove pod bpffs directory during cleanup", "path", podBpffs, "error", rmErr)
+		}
 		return nil, status.Errorf(codes.Internal, "failed to create target path: %v", err)
 	}
 
@@ -172,7 +178,9 @@ func (d *Driver) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolu
 
 	if err := unix.Mount(podBpffs, targetPath, "", flags, ""); err != nil {
 		unix.Unmount(podBpffs, 0)
-		os.RemoveAll(podBpffs)
+		if rmErr := os.RemoveAll(podBpffs); rmErr != nil {
+			d.logger.Warn("failed to remove pod bpffs directory during cleanup", "path", podBpffs, "error", rmErr)
+		}
 		return nil, status.Errorf(codes.Internal, "failed to bind-mount %q to %q: %v", podBpffs, targetPath, err)
 	}
 

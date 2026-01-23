@@ -120,13 +120,17 @@ func extractGzippedELF(gzPath, destDir string, logger *slog.Logger) (string, err
 	outFile.Close()
 
 	if err != nil {
-		os.Remove(destPath)
+		if rmErr := os.Remove(destPath); rmErr != nil && !os.IsNotExist(rmErr) {
+			logger.Warn("failed to remove file during cleanup", "path", destPath, "error", rmErr)
+		}
 		return "", err
 	}
 
 	// Verify it's an ELF file
 	if !isELFFile(destPath) {
-		os.Remove(destPath)
+		if rmErr := os.Remove(destPath); rmErr != nil && !os.IsNotExist(rmErr) {
+			logger.Warn("failed to remove invalid file during cleanup", "path", destPath, "error", rmErr)
+		}
 		return "", fmt.Errorf("decompressed content is not an ELF file")
 	}
 
@@ -205,7 +209,9 @@ func extractFromTarReader(tr *tar.Reader, destDir string, logger *slog.Logger) (
 		outFile.Close()
 
 		if err != nil {
-			os.Remove(destPath)
+			if rmErr := os.Remove(destPath); rmErr != nil && !os.IsNotExist(rmErr) {
+				logger.Warn("failed to remove file during cleanup", "path", destPath, "error", rmErr)
+			}
 			return "", fmt.Errorf("failed to extract file: %w", err)
 		}
 
@@ -215,7 +221,9 @@ func extractFromTarReader(tr *tar.Reader, destDir string, logger *slog.Logger) (
 		}
 
 		// Not a valid ELF, remove it
-		os.Remove(destPath)
+		if rmErr := os.Remove(destPath); rmErr != nil && !os.IsNotExist(rmErr) {
+			logger.Warn("failed to remove non-ELF file during cleanup", "path", destPath, "error", rmErr)
+		}
 	}
 
 	return "", nil

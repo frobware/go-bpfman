@@ -121,7 +121,9 @@ func newEphemeral(dirs config.RuntimeDirs, cfg config.Config, logger *slog.Logge
 		cancel()
 		grpcServer.GracefulStop()
 		env.Close()
-		os.Remove(socketPath)
+		if rmErr := os.Remove(socketPath); rmErr != nil && !os.IsNotExist(rmErr) {
+			logger.Warn("failed to remove socket during cleanup", "path", socketPath, "error", rmErr)
+		}
 		return nil, fmt.Errorf("connect to ephemeral server: %w", err)
 	}
 
@@ -141,7 +143,9 @@ func (e *ephemeralClient) Close() error {
 		e.env.Close()
 	}
 	if e.socketPath != "" {
-		os.Remove(e.socketPath)
+		if err := os.Remove(e.socketPath); err != nil && !os.IsNotExist(err) {
+			e.logger.Warn("failed to remove socket during close", "path", e.socketPath, "error", err)
+		}
 	}
 	return nil
 }

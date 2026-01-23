@@ -71,7 +71,7 @@ func Run(ctx context.Context, cfg RunConfig) error {
 	defer st.Close()
 
 	// Create kernel adapter
-	kernel := ebpf.New()
+	kernel := ebpf.New(ebpf.WithLogger(logger))
 
 	// Build signature verifier based on config
 	var verifier interpreter.SignatureVerifier
@@ -165,7 +165,7 @@ func newWithStore(dirs config.RuntimeDirs, store interpreter.Store, puller inter
 	}
 	return &Server{
 		dirs:   dirs,
-		kernel: ebpf.New(),
+		kernel: ebpf.New(ebpf.WithLogger(logger)),
 		store:  store,
 		puller: puller,
 		logger: logger.With("component", "server"),

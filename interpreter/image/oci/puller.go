@@ -299,7 +299,9 @@ func (p *puller) Pull(ctx context.Context, ref interpreter.ImageRef) (interprete
 	// Validate the ELF file
 	if err := validateELF(destPath, logger); err != nil {
 		// Clean up invalid file
-		os.RemoveAll(cacheDir)
+		if rmErr := os.RemoveAll(cacheDir); rmErr != nil {
+			logger.Warn("failed to remove cache directory during cleanup", "path", cacheDir, "error", rmErr)
+		}
 		return interpreter.PulledImage{}, err
 	}
 
