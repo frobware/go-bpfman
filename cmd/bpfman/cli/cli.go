@@ -9,8 +9,8 @@ import (
 	"github.com/alecthomas/kong"
 
 	"github.com/frobware/go-bpfman/client"
-	"github.com/frobware/go-bpfman/internal/config"
-	"github.com/frobware/go-bpfman/internal/logging"
+	"github.com/frobware/go-bpfman/config"
+	"github.com/frobware/go-bpfman/logging"
 )
 
 // CLI is the root command structure for bpfman.

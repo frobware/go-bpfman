@@ -19,7 +19,7 @@ import (
 
 	"github.com/frobware/go-bpfman"
 	"github.com/frobware/go-bpfman/csi"
-	"github.com/frobware/go-bpfman/internal/config"
+	"github.com/frobware/go-bpfman/config"
 	"github.com/frobware/go-bpfman/interpreter"
 	"github.com/frobware/go-bpfman/interpreter/ebpf"
 	"github.com/frobware/go-bpfman/interpreter/image/cosign"

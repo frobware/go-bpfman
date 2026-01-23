@@ -14,7 +14,7 @@ import (
 	"github.com/cilium/ebpf/link"
 
 	"github.com/frobware/go-bpfman"
-	"github.com/frobware/go-bpfman/internal/dispatcher"
+	"github.com/frobware/go-bpfman/dispatcher"
 	"github.com/frobware/go-bpfman/interpreter"
 	"github.com/frobware/go-bpfman/kernel"
 )

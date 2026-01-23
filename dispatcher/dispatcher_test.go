@@ -7,7 +7,7 @@ import (
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
 
-	"github.com/frobware/go-bpfman/internal/dispatcher"
+	"github.com/frobware/go-bpfman/dispatcher"
 )
 
 func TestLoadXDPDispatcher(t *testing.T) {

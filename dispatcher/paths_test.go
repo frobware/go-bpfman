@@ -3,7 +3,7 @@ package dispatcher_test
 import (
 	"testing"
 
-	"github.com/frobware/go-bpfman/internal/dispatcher"
+	"github.com/frobware/go-bpfman/dispatcher"
 )
 
 const testBpffsRoot = "/sys/fs/bpf/bpfman"

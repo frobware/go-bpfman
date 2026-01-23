@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/frobware/go-bpfman/internal/bpffs"
+	"github.com/frobware/go-bpfman/bpffs"
 )
 
 func TestBPFFSIsMounted(t *testing.T) {

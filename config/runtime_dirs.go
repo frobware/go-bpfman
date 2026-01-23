@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/frobware/go-bpfman/internal/bpffs"
+	"github.com/frobware/go-bpfman/bpffs"
 )
 
 // RuntimeDirs holds all runtime directory paths for bpfman.

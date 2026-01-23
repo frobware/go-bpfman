@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/frobware/go-bpfman/internal/logging"
+	"github.com/frobware/go-bpfman/logging"
 )
 
 func TestParseLevel(t *testing.T) {

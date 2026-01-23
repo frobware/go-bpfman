@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/frobware/go-bpfman/internal/dispatcher"
+	"github.com/frobware/go-bpfman/dispatcher"
 )
 
 // AttachType specifies the type of BPF program attachment.

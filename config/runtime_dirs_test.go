@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/frobware/go-bpfman/internal/config"
+	"github.com/frobware/go-bpfman/config"
 )
 
 func TestNewRuntimeDirs(t *testing.T) {

@@ -123,7 +123,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/frobware/go-bpfman"
-	"github.com/frobware/go-bpfman/internal/dispatcher"
+	"github.com/frobware/go-bpfman/dispatcher"
 	"github.com/frobware/go-bpfman/interpreter"
 	"github.com/frobware/go-bpfman/interpreter/store"
 )

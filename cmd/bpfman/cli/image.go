@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/frobware/go-bpfman/internal/config"
+	"github.com/frobware/go-bpfman/config"
 	"github.com/frobware/go-bpfman/interpreter/image/cosign"
 )
 

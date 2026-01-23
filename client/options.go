@@ -4,7 +4,7 @@ import (
 	"io"
 	"log/slog"
 
-	"github.com/frobware/go-bpfman/internal/config"
+	"github.com/frobware/go-bpfman/config"
 )
 
 // DefaultSocketPath returns the default Unix socket path for connecting to a bpfman daemon.

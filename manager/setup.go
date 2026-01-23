@@ -3,7 +3,7 @@ package manager
 import (
 	"log/slog"
 
-	"github.com/frobware/go-bpfman/internal/config"
+	"github.com/frobware/go-bpfman/config"
 	"github.com/frobware/go-bpfman/interpreter"
 	"github.com/frobware/go-bpfman/interpreter/ebpf"
 	"github.com/frobware/go-bpfman/interpreter/store/sqlite"
