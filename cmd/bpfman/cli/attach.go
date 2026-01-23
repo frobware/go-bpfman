@@ -36,7 +36,19 @@ func (c *TracepointCmd) Run(cli *CLI) error {
 		return err
 	}
 
-	output, err := json.MarshalIndent(result, "", "  ")
+	// Fetch full link details from the database
+	summary, details, err := b.GetLink(ctx, result.KernelLinkID)
+	if err != nil {
+		return fmt.Errorf("failed to get link details: %w", err)
+	}
+
+	output, err := json.MarshalIndent(struct {
+		Summary any `json:"summary"`
+		Details any `json:"details,omitempty"`
+	}{
+		Summary: summary,
+		Details: details,
+	}, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal result: %w", err)
 	}
@@ -93,7 +105,19 @@ func (c *XDPCmd) Run(cli *CLI) error {
 		return err
 	}
 
-	output, err := json.MarshalIndent(result, "", "  ")
+	// Fetch full link details from the database
+	summary, details, err := b.GetLink(ctx, result.KernelLinkID)
+	if err != nil {
+		return fmt.Errorf("failed to get link details: %w", err)
+	}
+
+	output, err := json.MarshalIndent(struct {
+		Summary any `json:"summary"`
+		Details any `json:"details,omitempty"`
+	}{
+		Summary: summary,
+		Details: details,
+	}, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal result: %w", err)
 	}
