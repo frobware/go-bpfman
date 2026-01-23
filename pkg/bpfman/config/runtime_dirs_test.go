@@ -115,14 +115,38 @@ func TestEnsureDirectories_CreatesDirs(t *testing.T) {
 	d := config.NewRuntimeDirs(base)
 
 	// EnsureDirectories will fail trying to mount bpffs (no CAP_SYS_ADMIN),
-	// but should create the regular directories first.
+	// but should create the core directories first.
 	err := d.EnsureDirectories()
 	if err == nil {
 		t.Fatal("expected error due to mount failure (no CAP_SYS_ADMIN)")
 	}
 
-	// Verify regular directories were created before the bpffs mount failed
-	for _, dir := range []string{d.Base, d.DB, d.CSI, d.CSI_FS, d.Sock} {
+	// Verify core directories were created before the bpffs mount failed.
+	// CSI directories are not created by EnsureDirectories.
+	for _, dir := range []string{d.Base, d.DB, d.Sock} {
+		if _, err := os.Stat(dir); os.IsNotExist(err) {
+			t.Errorf("directory %s was not created", dir)
+		}
+	}
+
+	// CSI directories should NOT be created by EnsureDirectories
+	for _, dir := range []string{d.CSI, d.CSI_FS} {
+		if _, err := os.Stat(dir); err == nil {
+			t.Errorf("CSI directory %s should not be created by EnsureDirectories", dir)
+		}
+	}
+}
+
+func TestEnsureCSIDirectories_CreatesDirs(t *testing.T) {
+	base := t.TempDir()
+	d := config.NewRuntimeDirs(base)
+
+	err := d.EnsureCSIDirectories()
+	if err != nil {
+		t.Fatalf("EnsureCSIDirectories failed: %v", err)
+	}
+
+	for _, dir := range []string{d.CSI, d.CSI_FS} {
 		if _, err := os.Stat(dir); os.IsNotExist(err) {
 			t.Errorf("directory %s was not created", dir)
 		}

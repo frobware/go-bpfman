@@ -102,6 +102,10 @@ func Run(ctx context.Context, cfg RunConfig) error {
 
 	// Start CSI driver if enabled
 	if cfg.CSISupport {
+		if err := dirs.EnsureCSIDirectories(); err != nil {
+			return fmt.Errorf("CSI directory setup failed: %w", err)
+		}
+
 		nodeID, err := os.Hostname()
 		if err != nil {
 			return fmt.Errorf("failed to get hostname for node ID: %w", err)

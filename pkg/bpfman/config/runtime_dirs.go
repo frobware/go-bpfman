@@ -128,29 +128,34 @@ func uitoa(n uint32) string {
 	return string(buf[i:])
 }
 
-// EnsureDirectories creates required directories and ensures bpffs is mounted.
+// EnsureDirectories creates core runtime directories and ensures bpffs is mounted.
 // Call this at startup to fail fast on permission or configuration issues.
 //
 // Creates these directories (on regular filesystem):
 //   - {base}/
 //   - {base}/db/
-//   - {base}/csi/
-//   - {base}/csi/fs/
 //   - {base}-sock/
 //
 // Mounts bpffs at {base}/fs/ if not already mounted. This requires
 // CAP_SYS_ADMIN; if the mount fails due to permissions, ensure bpffs
 // is pre-mounted by the container runtime or systemd unit.
+//
+// CSI directories are not created here; use EnsureCSIDirectories when
+// CSI functionality is enabled.
 func (d RuntimeDirs) EnsureDirectories() error {
-	// Create regular directories
+	// Create core directories (skip if already exists).
+	// CSI directories are created separately by EnsureCSIDirectories.
 	dirs := []string{
 		d.Base,
 		d.DB,
-		d.CSI,
-		d.CSI_FS,
 		d.Sock,
 	}
 	for _, dir := range dirs {
+		if _, err := os.Stat(dir); err == nil {
+			continue
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("failed to stat directory %s: %w", dir, err)
+		}
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}
@@ -161,5 +166,29 @@ func (d RuntimeDirs) EnsureDirectories() error {
 		return fmt.Errorf("failed to ensure bpffs at %s: %w", d.FS, err)
 	}
 
+	return nil
+}
+
+// EnsureCSIDirectories creates CSI-specific directories.
+// Call this only when CSI functionality is enabled.
+//
+// Creates these directories:
+//   - {base}/csi/
+//   - {base}/csi/fs/
+func (d RuntimeDirs) EnsureCSIDirectories() error {
+	dirs := []string{
+		d.CSI,
+		d.CSI_FS,
+	}
+	for _, dir := range dirs {
+		if _, err := os.Stat(dir); err == nil {
+			continue
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("failed to stat directory %s: %w", dir, err)
+		}
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("failed to create directory %s: %w", dir, err)
+		}
+	}
 	return nil
 }
