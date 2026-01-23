@@ -31,6 +31,10 @@ help:
 	@echo "  kind-create                 Create KIND cluster with bpffs mounted"
 	@echo "  kind-delete                 Delete KIND cluster"
 	@echo ""
+	@echo "Documentation:"
+	@echo "  doc                         Start pkgsite documentation server"
+	@echo "  doc-text                    Print API documentation to stdout"
+	@echo ""
 	@echo "Dispatchers:"
 	@echo "  dispatchers-build           Build XDP/TC dispatcher BPF programs"
 	@echo "  dispatchers-clean           Remove dispatcher build artifacts"
@@ -56,6 +60,21 @@ clean: bpfman-clean dispatchers-clean
 
 test:
 	go test -v ./...
+
+# Documentation
+DOC_PORT ?= 6060
+
+doc:
+	@echo "Starting pkgsite documentation server..."
+	@echo "Open http://localhost:$(DOC_PORT)/github.com/frobware/go-bpfman"
+	@echo "Press Ctrl+C to stop"
+	@go run golang.org/x/pkgsite/cmd/pkgsite@latest -http=localhost:$(DOC_PORT) .
+
+doc-text:
+	@echo "=== Public API ===" && echo
+	@for pkg in ./pkg/bpfman ./pkg/bpfman/config ./pkg/bpfman/client ./pkg/csi/driver; do \
+		echo "--- $$pkg ---" && go doc -all $$pkg 2>/dev/null && echo; \
+	done
 
 # bpfman targets
 # Note: bpfman-proto is not a dependency here since pb files are committed.
@@ -185,6 +204,8 @@ kind-undeploy-all: stats-reader-delete bpfman-delete
 	clean \
 	dispatchers-build \
 	dispatchers-clean \
+	doc \
+	doc-text \
 	docker-build-all \
 	docker-build-bpfman \
 	docker-build-bpfman-builder \
