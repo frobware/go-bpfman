@@ -1,4 +1,4 @@
-// Package server tests use Behaviour-Driven Development (BDD) style.
+// Package server_test uses Behaviour-Driven Development (BDD) style.
 //
 // Each test follows the Given/When/Then structure:
 //   - Given: Initial state and context (the fixture)
@@ -12,7 +12,7 @@
 // The tests use a fake kernel implementation that simulates BPF operations
 // without syscalls, combined with a real in-memory SQLite database. This
 // enables fast, reliable testing of the full request path through gRPC.
-package server
+package server_test
 
 import (
 	"context"
@@ -36,6 +36,7 @@ import (
 	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/store/sqlite"
 	"github.com/frobware/go-bpfman/pkg/bpfman/kernel"
 	"github.com/frobware/go-bpfman/pkg/bpfman/managed"
+	"github.com/frobware/go-bpfman/pkg/bpfman/server"
 	pb "github.com/frobware/go-bpfman/pkg/bpfman/server/pb"
 )
 
@@ -312,13 +313,13 @@ func (f *fakeKernel) RepinMap(srcPath, dstPath string) error {
 }
 
 // newTestServer creates a server with fake kernel and real in-memory SQLite.
-func newTestServer(t *testing.T) *Server {
+func newTestServer(t *testing.T) *server.Server {
 	t.Helper()
 	store, err := sqlite.NewInMemory(testLogger())
 	require.NoError(t, err, "failed to create store")
 	t.Cleanup(func() { store.Close() })
 	dirs := config.NewRuntimeDirs(t.TempDir())
-	return New(dirs, store, newFakeKernel(), nil, testLogger())
+	return server.New(dirs, store, newFakeKernel(), nil, testLogger())
 }
 
 // TestLoadProgram_WithValidRequest_Succeeds verifies that:
