@@ -1,8 +1,8 @@
 package compute
 
 import (
+	"github.com/frobware/go-bpfman"
 	"github.com/frobware/go-bpfman/kernel"
-	"github.com/frobware/go-bpfman/managed"
 )
 
 // FilterPrograms returns programs matching the predicate.
@@ -39,10 +39,10 @@ func FilterByName(programs []kernel.Program, name string) []kernel.Program {
 // FilterMetadata returns metadata matching the predicate.
 // Pure function.
 func FilterMetadata(
-	metadata map[uint32]managed.Program,
-	predicate func(uint32, managed.Program) bool,
-) map[uint32]managed.Program {
-	result := make(map[uint32]managed.Program)
+	metadata map[uint32]bpfman.Program,
+	predicate func(uint32, bpfman.Program) bool,
+) map[uint32]bpfman.Program {
+	result := make(map[uint32]bpfman.Program)
 	for id, m := range metadata {
 		if predicate(id, m) {
 			result[id] = m
@@ -53,8 +53,8 @@ func FilterMetadata(
 
 // FilterByTag returns metadata containing the specified tag.
 // Pure function.
-func FilterByTag(metadata map[uint32]managed.Program, tag string) map[uint32]managed.Program {
-	return FilterMetadata(metadata, func(_ uint32, m managed.Program) bool {
+func FilterByTag(metadata map[uint32]bpfman.Program, tag string) map[uint32]bpfman.Program {
+	return FilterMetadata(metadata, func(_ uint32, m bpfman.Program) bool {
 		for _, t := range m.Tags {
 			if t == tag {
 				return true
@@ -66,8 +66,8 @@ func FilterByTag(metadata map[uint32]managed.Program, tag string) map[uint32]man
 
 // FilterByOwner returns metadata for the specified owner.
 // Pure function.
-func FilterByOwner(metadata map[uint32]managed.Program, owner string) map[uint32]managed.Program {
-	return FilterMetadata(metadata, func(_ uint32, m managed.Program) bool {
+func FilterByOwner(metadata map[uint32]bpfman.Program, owner string) map[uint32]bpfman.Program {
+	return FilterMetadata(metadata, func(_ uint32, m bpfman.Program) bool {
 		return m.Owner == owner
 	})
 }

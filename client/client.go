@@ -18,9 +18,8 @@ import (
 	"errors"
 	"io"
 
-	"github.com/frobware/go-bpfman/bpfman"
+	"github.com/frobware/go-bpfman"
 	"github.com/frobware/go-bpfman/interpreter"
-	"github.com/frobware/go-bpfman/managed"
 	"github.com/frobware/go-bpfman/manager"
 )
 
@@ -41,20 +40,20 @@ type Client interface {
 	io.Closer
 
 	// Program operations
-	Load(ctx context.Context, spec managed.LoadSpec, opts manager.LoadOpts) (bpfman.ManagedProgram, error)
+	Load(ctx context.Context, spec bpfman.LoadSpec, opts manager.LoadOpts) (bpfman.ManagedProgram, error)
 	Unload(ctx context.Context, kernelID uint32) error
 	List(ctx context.Context) ([]manager.ManagedProgram, error)
 	Get(ctx context.Context, kernelID uint32) (manager.ProgramInfo, error)
 
 	// Attach/detach operations
-	AttachTracepoint(ctx context.Context, programKernelID uint32, group, name, linkPinPath string) (managed.LinkSummary, error)
-	AttachXDP(ctx context.Context, programKernelID uint32, ifindex int, ifname, linkPinPath string) (managed.LinkSummary, error)
+	AttachTracepoint(ctx context.Context, programKernelID uint32, group, name, linkPinPath string) (bpfman.LinkSummary, error)
+	AttachXDP(ctx context.Context, programKernelID uint32, ifindex int, ifname, linkPinPath string) (bpfman.LinkSummary, error)
 	Detach(ctx context.Context, kernelLinkID uint32) error
 
 	// Link operations
-	ListLinks(ctx context.Context) ([]managed.LinkSummary, error)
-	ListLinksByProgram(ctx context.Context, programKernelID uint32) ([]managed.LinkSummary, error)
-	GetLink(ctx context.Context, kernelLinkID uint32) (managed.LinkSummary, managed.LinkDetails, error)
+	ListLinks(ctx context.Context) ([]bpfman.LinkSummary, error)
+	ListLinksByProgram(ctx context.Context, programKernelID uint32) ([]bpfman.LinkSummary, error)
+	GetLink(ctx context.Context, kernelLinkID uint32) (bpfman.LinkSummary, bpfman.LinkDetails, error)
 
 	// Host-only operations (local execution required)
 	PlanGC(ctx context.Context, cfg manager.GCConfig) (manager.GCPlan, error)
@@ -63,5 +62,5 @@ type Client interface {
 
 	// Image operations
 	PullImage(ctx context.Context, ref interpreter.ImageRef) (interpreter.PulledImage, error)
-	LoadImage(ctx context.Context, ref interpreter.ImageRef, programs []managed.LoadSpec, opts LoadImageOpts) ([]bpfman.ManagedProgram, error)
+	LoadImage(ctx context.Context, ref interpreter.ImageRef, programs []bpfman.LoadSpec, opts LoadImageOpts) ([]bpfman.ManagedProgram, error)
 }

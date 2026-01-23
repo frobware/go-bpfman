@@ -9,8 +9,7 @@ import (
 
 	"k8s.io/client-go/util/jsonpath"
 
-	"github.com/frobware/go-bpfman/bpfman"
-	"github.com/frobware/go-bpfman/managed"
+	"github.com/frobware/go-bpfman"
 	"github.com/frobware/go-bpfman/manager"
 )
 
@@ -268,32 +267,32 @@ func formatProgramListTable(programs []manager.ManagedProgram) string {
 }
 
 // formatAttachDetails formats type-specific link details for display.
-func formatAttachDetails(details managed.LinkDetails) string {
+func formatAttachDetails(details bpfman.LinkDetails) string {
 	if details == nil {
 		return ""
 	}
 	switch d := details.(type) {
-	case managed.TracepointDetails:
+	case bpfman.TracepointDetails:
 		return d.Group + "/" + d.Name
-	case managed.KprobeDetails:
+	case bpfman.KprobeDetails:
 		if d.Retprobe {
 			return "kretprobe:" + d.FnName
 		}
 		return d.FnName
-	case managed.UprobeDetails:
+	case bpfman.UprobeDetails:
 		if d.Retprobe {
 			return fmt.Sprintf("uretprobe:%s:%s", d.Target, d.FnName)
 		}
 		return fmt.Sprintf("%s:%s", d.Target, d.FnName)
-	case managed.FentryDetails:
+	case bpfman.FentryDetails:
 		return d.FnName
-	case managed.FexitDetails:
+	case bpfman.FexitDetails:
 		return d.FnName
-	case managed.XDPDetails:
+	case bpfman.XDPDetails:
 		return fmt.Sprintf("%s (ifindex=%d, pos=%d)", d.Interface, d.Ifindex, d.Position)
-	case managed.TCDetails:
+	case bpfman.TCDetails:
 		return fmt.Sprintf("%s/%s (ifindex=%d, pos=%d)", d.Interface, d.Direction, d.Ifindex, d.Position)
-	case managed.TCXDetails:
+	case bpfman.TCXDetails:
 		return fmt.Sprintf("%s/%s (ifindex=%d)", d.Interface, d.Direction, d.Ifindex)
 	default:
 		return ""

@@ -6,15 +6,15 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/frobware/go-bpfman"
 	"github.com/frobware/go-bpfman/action"
 	"github.com/frobware/go-bpfman/compute"
 	"github.com/frobware/go-bpfman/kernel"
-	"github.com/frobware/go-bpfman/managed"
 )
 
 func TestReconcileActions_OrphanedPrograms(t *testing.T) {
 	// Programs in store but not in kernel should be deleted
-	stored := map[uint32]managed.Program{
+	stored := map[uint32]bpfman.Program{
 		1: {Owner: "bpfman"},
 		2: {Owner: "bpfman"},
 		3: {Owner: "bpfman"},
@@ -42,7 +42,7 @@ func TestReconcileActions_OrphanedPrograms(t *testing.T) {
 }
 
 func TestReconcileActions_NoOrphans(t *testing.T) {
-	stored := map[uint32]managed.Program{
+	stored := map[uint32]bpfman.Program{
 		1: {Owner: "bpfman"},
 	}
 
@@ -57,7 +57,7 @@ func TestReconcileActions_NoOrphans(t *testing.T) {
 }
 
 func TestReconcileActions_EmptyStore(t *testing.T) {
-	stored := map[uint32]managed.Program{}
+	stored := map[uint32]bpfman.Program{}
 
 	kps := []kernel.Program{
 		{ID: 1, Name: "prog1"},
@@ -69,7 +69,7 @@ func TestReconcileActions_EmptyStore(t *testing.T) {
 }
 
 func TestOrphanedPrograms(t *testing.T) {
-	stored := map[uint32]managed.Program{
+	stored := map[uint32]bpfman.Program{
 		1: {Owner: "bpfman"},
 		2: {Owner: "bpfman"},
 	}
@@ -85,7 +85,7 @@ func TestOrphanedPrograms(t *testing.T) {
 }
 
 func TestUnmanagedPrograms(t *testing.T) {
-	stored := map[uint32]managed.Program{
+	stored := map[uint32]bpfman.Program{
 		1: {Owner: "bpfman"},
 	}
 

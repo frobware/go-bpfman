@@ -3,9 +3,8 @@ package client
 import (
 	"time"
 
-	"github.com/frobware/go-bpfman/bpfman"
+	"github.com/frobware/go-bpfman"
 	"github.com/frobware/go-bpfman/kernel"
-	"github.com/frobware/go-bpfman/managed"
 	"github.com/frobware/go-bpfman/manager"
 	pb "github.com/frobware/go-bpfman/server/pb"
 )
@@ -110,7 +109,7 @@ func protoLoadResponseToManagedProgram(resp *pb.LoadResponseInfo) bpfman.Managed
 		}
 	}
 
-	managedInfo := managed.NewProgramInfo(name, progType, objectPath, pinPath, pinDir)
+	managedInfo := bpfman.NewProgramInfo(name, progType, objectPath, pinPath, pinDir)
 
 	kernelInfo := &remoteKernelInfo{
 		programType:   progType,
@@ -165,8 +164,8 @@ func protoListResponseToPrograms(resp *pb.ListResponse) []manager.ManagedProgram
 				}
 			}
 
-			mp.Metadata = &managed.Program{
-				LoadSpec: managed.LoadSpec{
+			mp.Metadata = &bpfman.Program{
+				LoadSpec: bpfman.LoadSpec{
 					ObjectPath:  objectPath,
 					ProgramName: r.Info.Name,
 					ProgramType: progType,
@@ -208,8 +207,8 @@ func protoGetResponseToInfo(resp *pb.GetResponse, kernelID uint32) manager.Progr
 			}
 		}
 
-		prog := &managed.Program{
-			LoadSpec: managed.LoadSpec{
+		prog := &bpfman.Program{
+			LoadSpec: bpfman.LoadSpec{
 				ObjectPath:  objectPath,
 				ProgramName: resp.Info.Name,
 				ProgramType: progType,
@@ -226,43 +225,43 @@ func protoGetResponseToInfo(resp *pb.GetResponse, kernelID uint32) manager.Progr
 	return info
 }
 
-// protoLinkTypeToManaged converts a protobuf link type to managed.LinkType.
-func protoLinkTypeToManaged(t pb.BpfmanLinkType) managed.LinkType {
+// protoLinkTypeToManaged converts a protobuf link type to bpfman.LinkType.
+func protoLinkTypeToManaged(t pb.BpfmanLinkType) bpfman.LinkType {
 	switch t {
 	case pb.BpfmanLinkType_LINK_TYPE_TRACEPOINT:
-		return managed.LinkTypeTracepoint
+		return bpfman.LinkTypeTracepoint
 	case pb.BpfmanLinkType_LINK_TYPE_KPROBE:
-		return managed.LinkTypeKprobe
+		return bpfman.LinkTypeKprobe
 	case pb.BpfmanLinkType_LINK_TYPE_KRETPROBE:
-		return managed.LinkTypeKretprobe
+		return bpfman.LinkTypeKretprobe
 	case pb.BpfmanLinkType_LINK_TYPE_UPROBE:
-		return managed.LinkTypeUprobe
+		return bpfman.LinkTypeUprobe
 	case pb.BpfmanLinkType_LINK_TYPE_URETPROBE:
-		return managed.LinkTypeUretprobe
+		return bpfman.LinkTypeUretprobe
 	case pb.BpfmanLinkType_LINK_TYPE_FENTRY:
-		return managed.LinkTypeFentry
+		return bpfman.LinkTypeFentry
 	case pb.BpfmanLinkType_LINK_TYPE_FEXIT:
-		return managed.LinkTypeFexit
+		return bpfman.LinkTypeFexit
 	case pb.BpfmanLinkType_LINK_TYPE_XDP:
-		return managed.LinkTypeXDP
+		return bpfman.LinkTypeXDP
 	case pb.BpfmanLinkType_LINK_TYPE_TC:
-		return managed.LinkTypeTC
+		return bpfman.LinkTypeTC
 	case pb.BpfmanLinkType_LINK_TYPE_TCX:
-		return managed.LinkTypeTCX
+		return bpfman.LinkTypeTCX
 	default:
 		return ""
 	}
 }
 
-// protoLinkSummaryToManaged converts a protobuf LinkSummary to managed.LinkSummary.
-func protoLinkSummaryToManaged(s *pb.LinkSummary) managed.LinkSummary {
+// protoLinkSummaryToManaged converts a protobuf LinkSummary to bpfman.LinkSummary.
+func protoLinkSummaryToManaged(s *pb.LinkSummary) bpfman.LinkSummary {
 	if s == nil {
-		return managed.LinkSummary{}
+		return bpfman.LinkSummary{}
 	}
 
 	createdAt, _ := time.Parse(time.RFC3339, s.CreatedAt)
 
-	return managed.LinkSummary{
+	return bpfman.LinkSummary{
 		KernelLinkID:    s.KernelLinkId,
 		LinkType:        protoLinkTypeToManaged(s.LinkType),
 		KernelProgramID: s.KernelProgramId,
@@ -271,26 +270,26 @@ func protoLinkSummaryToManaged(s *pb.LinkSummary) managed.LinkSummary {
 	}
 }
 
-// protoLinkDetailsToManaged converts a protobuf LinkDetails to managed.LinkDetails.
-func protoLinkDetailsToManaged(d *pb.LinkDetails) managed.LinkDetails {
+// protoLinkDetailsToManaged converts a protobuf LinkDetails to bpfman.LinkDetails.
+func protoLinkDetailsToManaged(d *pb.LinkDetails) bpfman.LinkDetails {
 	if d == nil {
 		return nil
 	}
 
 	switch details := d.Details.(type) {
 	case *pb.LinkDetails_Tracepoint:
-		return managed.TracepointDetails{
+		return bpfman.TracepointDetails{
 			Group: details.Tracepoint.Group,
 			Name:  details.Tracepoint.Name,
 		}
 	case *pb.LinkDetails_Kprobe:
-		return managed.KprobeDetails{
+		return bpfman.KprobeDetails{
 			FnName:   details.Kprobe.FnName,
 			Offset:   details.Kprobe.Offset,
 			Retprobe: details.Kprobe.Retprobe,
 		}
 	case *pb.LinkDetails_Uprobe:
-		return managed.UprobeDetails{
+		return bpfman.UprobeDetails{
 			Target:   details.Uprobe.Target,
 			FnName:   details.Uprobe.FnName,
 			Offset:   details.Uprobe.Offset,
@@ -298,15 +297,15 @@ func protoLinkDetailsToManaged(d *pb.LinkDetails) managed.LinkDetails {
 			Retprobe: details.Uprobe.Retprobe,
 		}
 	case *pb.LinkDetails_Fentry:
-		return managed.FentryDetails{
+		return bpfman.FentryDetails{
 			FnName: details.Fentry.FnName,
 		}
 	case *pb.LinkDetails_Fexit:
-		return managed.FexitDetails{
+		return bpfman.FexitDetails{
 			FnName: details.Fexit.FnName,
 		}
 	case *pb.LinkDetails_Xdp:
-		return managed.XDPDetails{
+		return bpfman.XDPDetails{
 			Interface:    details.Xdp.Interface,
 			Ifindex:      details.Xdp.Ifindex,
 			Priority:     details.Xdp.Priority,
@@ -318,7 +317,7 @@ func protoLinkDetailsToManaged(d *pb.LinkDetails) managed.LinkDetails {
 			Revision:     details.Xdp.Revision,
 		}
 	case *pb.LinkDetails_Tc:
-		return managed.TCDetails{
+		return bpfman.TCDetails{
 			Interface:    details.Tc.Interface,
 			Ifindex:      details.Tc.Ifindex,
 			Direction:    details.Tc.Direction,
@@ -331,7 +330,7 @@ func protoLinkDetailsToManaged(d *pb.LinkDetails) managed.LinkDetails {
 			Revision:     details.Tc.Revision,
 		}
 	case *pb.LinkDetails_Tcx:
-		return managed.TCXDetails{
+		return bpfman.TCXDetails{
 			Interface: details.Tcx.Interface,
 			Ifindex:   details.Tcx.Ifindex,
 			Direction: details.Tcx.Direction,
@@ -344,13 +343,13 @@ func protoLinkDetailsToManaged(d *pb.LinkDetails) managed.LinkDetails {
 	}
 }
 
-// protoListLinksResponseToSummaries converts a ListLinksResponse to []managed.LinkSummary.
-func protoListLinksResponseToSummaries(resp *pb.ListLinksResponse) []managed.LinkSummary {
+// protoListLinksResponseToSummaries converts a ListLinksResponse to []bpfman.LinkSummary.
+func protoListLinksResponseToSummaries(resp *pb.ListLinksResponse) []bpfman.LinkSummary {
 	if resp == nil || len(resp.Links) == 0 {
 		return nil
 	}
 
-	result := make([]managed.LinkSummary, 0, len(resp.Links))
+	result := make([]bpfman.LinkSummary, 0, len(resp.Links))
 	for _, link := range resp.Links {
 		if link.Summary != nil {
 			result = append(result, protoLinkSummaryToManaged(link.Summary))

@@ -17,7 +17,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/frobware/go-bpfman/bpfman"
+	"github.com/frobware/go-bpfman"
 	"github.com/frobware/go-bpfman/csi"
 	"github.com/frobware/go-bpfman/internal/config"
 	"github.com/frobware/go-bpfman/interpreter"
@@ -27,7 +27,6 @@ import (
 	"github.com/frobware/go-bpfman/interpreter/image/oci"
 	"github.com/frobware/go-bpfman/interpreter/store"
 	"github.com/frobware/go-bpfman/interpreter/store/sqlite"
-	"github.com/frobware/go-bpfman/managed"
 	"github.com/frobware/go-bpfman/manager"
 	pb "github.com/frobware/go-bpfman/server/pb"
 )
@@ -201,7 +200,7 @@ func (s *Server) Load(ctx context.Context, req *pb.LoadRequest) (*pb.LoadRespons
 
 	// Get the bytecode path and optional image source
 	var objectPath string
-	var imageSource *managed.ImageSource
+	var imageSource *bpfman.ImageSource
 	switch loc := req.Bytecode.Location.(type) {
 	case *pb.BytecodeLocation_File:
 		objectPath = loc.File
@@ -231,7 +230,7 @@ func (s *Server) Load(ctx context.Context, req *pb.LoadRequest) (*pb.LoadRespons
 			return nil, status.Errorf(codes.Internal, "failed to pull image %s: %v", loc.Image.Url, err)
 		}
 		objectPath = pulled.ObjectPath
-		imageSource = &managed.ImageSource{
+		imageSource = &bpfman.ImageSource{
 			URL:        loc.Image.Url,
 			Digest:     pulled.Digest,
 			PullPolicy: pullPolicy,
@@ -256,7 +255,7 @@ func (s *Server) Load(ctx context.Context, req *pb.LoadRequest) (*pb.LoadRespons
 			return nil, status.Errorf(codes.InvalidArgument, "invalid program type for %s: %v", info.Name, err)
 		}
 
-		spec := managed.LoadSpec{
+		spec := bpfman.LoadSpec{
 			ObjectPath:  objectPath,
 			ProgramName: info.Name,
 			ProgramType: progType,
@@ -517,7 +516,7 @@ func (s *Server) ListLinks(ctx context.Context, req *pb.ListLinksRequest) (*pb.L
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	var links []managed.LinkSummary
+	var links []bpfman.LinkSummary
 	var err error
 
 	if req.ProgramId != nil {
@@ -562,8 +561,8 @@ func (s *Server) GetLink(ctx context.Context, req *pb.GetLinkRequest) (*pb.GetLi
 	}, nil
 }
 
-// linkSummaryToProto converts a managed.LinkSummary to protobuf.
-func linkSummaryToProto(s managed.LinkSummary) *pb.LinkSummary {
+// linkSummaryToProto converts a bpfman.LinkSummary to protobuf.
+func linkSummaryToProto(s bpfman.LinkSummary) *pb.LinkSummary {
 	return &pb.LinkSummary{
 		KernelLinkId:    s.KernelLinkID,
 		LinkType:        linkTypeToProto(s.LinkType),
@@ -573,42 +572,42 @@ func linkSummaryToProto(s managed.LinkSummary) *pb.LinkSummary {
 	}
 }
 
-// linkTypeToProto converts a managed.LinkType to protobuf.
-func linkTypeToProto(t managed.LinkType) pb.BpfmanLinkType {
+// linkTypeToProto converts a bpfman.LinkType to protobuf.
+func linkTypeToProto(t bpfman.LinkType) pb.BpfmanLinkType {
 	switch t {
-	case managed.LinkTypeTracepoint:
+	case bpfman.LinkTypeTracepoint:
 		return pb.BpfmanLinkType_LINK_TYPE_TRACEPOINT
-	case managed.LinkTypeKprobe:
+	case bpfman.LinkTypeKprobe:
 		return pb.BpfmanLinkType_LINK_TYPE_KPROBE
-	case managed.LinkTypeKretprobe:
+	case bpfman.LinkTypeKretprobe:
 		return pb.BpfmanLinkType_LINK_TYPE_KRETPROBE
-	case managed.LinkTypeUprobe:
+	case bpfman.LinkTypeUprobe:
 		return pb.BpfmanLinkType_LINK_TYPE_UPROBE
-	case managed.LinkTypeUretprobe:
+	case bpfman.LinkTypeUretprobe:
 		return pb.BpfmanLinkType_LINK_TYPE_URETPROBE
-	case managed.LinkTypeFentry:
+	case bpfman.LinkTypeFentry:
 		return pb.BpfmanLinkType_LINK_TYPE_FENTRY
-	case managed.LinkTypeFexit:
+	case bpfman.LinkTypeFexit:
 		return pb.BpfmanLinkType_LINK_TYPE_FEXIT
-	case managed.LinkTypeXDP:
+	case bpfman.LinkTypeXDP:
 		return pb.BpfmanLinkType_LINK_TYPE_XDP
-	case managed.LinkTypeTC:
+	case bpfman.LinkTypeTC:
 		return pb.BpfmanLinkType_LINK_TYPE_TC
-	case managed.LinkTypeTCX:
+	case bpfman.LinkTypeTCX:
 		return pb.BpfmanLinkType_LINK_TYPE_TCX
 	default:
 		return pb.BpfmanLinkType_LINK_TYPE_UNSPECIFIED
 	}
 }
 
-// linkDetailsToProto converts managed.LinkDetails to protobuf.
-func linkDetailsToProto(d managed.LinkDetails) *pb.LinkDetails {
+// linkDetailsToProto converts bpfman.LinkDetails to protobuf.
+func linkDetailsToProto(d bpfman.LinkDetails) *pb.LinkDetails {
 	if d == nil {
 		return nil
 	}
 
 	switch details := d.(type) {
-	case managed.TracepointDetails:
+	case bpfman.TracepointDetails:
 		return &pb.LinkDetails{
 			Details: &pb.LinkDetails_Tracepoint{
 				Tracepoint: &pb.TracepointLinkDetails{
@@ -617,7 +616,7 @@ func linkDetailsToProto(d managed.LinkDetails) *pb.LinkDetails {
 				},
 			},
 		}
-	case managed.KprobeDetails:
+	case bpfman.KprobeDetails:
 		return &pb.LinkDetails{
 			Details: &pb.LinkDetails_Kprobe{
 				Kprobe: &pb.KprobeLinkDetails{
@@ -627,7 +626,7 @@ func linkDetailsToProto(d managed.LinkDetails) *pb.LinkDetails {
 				},
 			},
 		}
-	case managed.UprobeDetails:
+	case bpfman.UprobeDetails:
 		return &pb.LinkDetails{
 			Details: &pb.LinkDetails_Uprobe{
 				Uprobe: &pb.UprobeLinkDetails{
@@ -639,7 +638,7 @@ func linkDetailsToProto(d managed.LinkDetails) *pb.LinkDetails {
 				},
 			},
 		}
-	case managed.FentryDetails:
+	case bpfman.FentryDetails:
 		return &pb.LinkDetails{
 			Details: &pb.LinkDetails_Fentry{
 				Fentry: &pb.FentryLinkDetails{
@@ -647,7 +646,7 @@ func linkDetailsToProto(d managed.LinkDetails) *pb.LinkDetails {
 				},
 			},
 		}
-	case managed.FexitDetails:
+	case bpfman.FexitDetails:
 		return &pb.LinkDetails{
 			Details: &pb.LinkDetails_Fexit{
 				Fexit: &pb.FexitLinkDetails{
@@ -655,7 +654,7 @@ func linkDetailsToProto(d managed.LinkDetails) *pb.LinkDetails {
 				},
 			},
 		}
-	case managed.XDPDetails:
+	case bpfman.XDPDetails:
 		return &pb.LinkDetails{
 			Details: &pb.LinkDetails_Xdp{
 				Xdp: &pb.XDPLinkDetails{
@@ -671,7 +670,7 @@ func linkDetailsToProto(d managed.LinkDetails) *pb.LinkDetails {
 				},
 			},
 		}
-	case managed.TCDetails:
+	case bpfman.TCDetails:
 		return &pb.LinkDetails{
 			Details: &pb.LinkDetails_Tc{
 				Tc: &pb.TCLinkDetails{
@@ -688,7 +687,7 @@ func linkDetailsToProto(d managed.LinkDetails) *pb.LinkDetails {
 				},
 			},
 		}
-	case managed.TCXDetails:
+	case bpfman.TCXDetails:
 		return &pb.LinkDetails{
 			Details: &pb.LinkDetails_Tcx{
 				Tcx: &pb.TCXLinkDetails{
@@ -837,16 +836,16 @@ func protoToBpfmanType(pt pb.BpfmanProgramType) (bpfman.ProgramType, error) {
 }
 
 // protoToPullPolicy converts a proto image pull policy to managed type.
-// Proto values: 0=Always, 1=IfNotPresent, 2=Never (matches managed.ImagePullPolicy iota).
-func protoToPullPolicy(policy int32) managed.ImagePullPolicy {
+// Proto values: 0=Always, 1=IfNotPresent, 2=Never (matches bpfman.ImagePullPolicy iota).
+func protoToPullPolicy(policy int32) bpfman.ImagePullPolicy {
 	switch policy {
 	case 0:
-		return managed.PullAlways
+		return bpfman.PullAlways
 	case 1:
-		return managed.PullIfNotPresent
+		return bpfman.PullIfNotPresent
 	case 2:
-		return managed.PullNever
+		return bpfman.PullNever
 	default:
-		return managed.PullIfNotPresent
+		return bpfman.PullIfNotPresent
 	}
 }

@@ -30,12 +30,11 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/frobware/go-bpfman/bpfman"
+	"github.com/frobware/go-bpfman"
 	"github.com/frobware/go-bpfman/internal/config"
 	"github.com/frobware/go-bpfman/interpreter"
 	"github.com/frobware/go-bpfman/interpreter/store/sqlite"
 	"github.com/frobware/go-bpfman/kernel"
-	"github.com/frobware/go-bpfman/managed"
 	"github.com/frobware/go-bpfman/server"
 	pb "github.com/frobware/go-bpfman/server/pb"
 )
@@ -124,7 +123,7 @@ func newFakeKernel() *fakeKernel {
 	return fk
 }
 
-func (f *fakeKernel) Load(_ context.Context, spec managed.LoadSpec) (bpfman.ManagedProgram, error) {
+func (f *fakeKernel) Load(_ context.Context, spec bpfman.LoadSpec) (bpfman.ManagedProgram, error) {
 	id := f.nextID.Add(1)
 	fp := fakeProgram{
 		id:          id,
@@ -239,7 +238,7 @@ func (f *fakeKernel) AttachTracepoint(progPinPath, group, name, linkPinPath stri
 		Type:    bpfman.AttachTracepoint,
 	}
 	return bpfman.ManagedLink{
-		Managed: managed.NewLinkInfo(id, 0, managed.LinkTypeTracepoint, linkPinPath, time.Now(), managed.TracepointDetails{Group: group, Name: name}),
+		Managed: bpfman.NewLinkInfo(id, 0, bpfman.LinkTypeTracepoint, linkPinPath, time.Now(), bpfman.TracepointDetails{Group: group, Name: name}),
 		Kernel:  &fakeKernelLinkInfo{id: id, programID: 0, linkType: "tracepoint"},
 	}, nil
 }
@@ -253,7 +252,7 @@ func (f *fakeKernel) AttachXDP(progPinPath string, ifindex int, linkPinPath stri
 		Type:    bpfman.AttachXDP,
 	}
 	return bpfman.ManagedLink{
-		Managed: managed.NewLinkInfo(id, 0, managed.LinkTypeXDP, linkPinPath, time.Now(), managed.XDPDetails{Ifindex: uint32(ifindex)}),
+		Managed: bpfman.NewLinkInfo(id, 0, bpfman.LinkTypeXDP, linkPinPath, time.Now(), bpfman.XDPDetails{Ifindex: uint32(ifindex)}),
 		Kernel:  &fakeKernelLinkInfo{id: id, programID: 0, linkType: "xdp"},
 	}, nil
 }
@@ -299,7 +298,7 @@ func (f *fakeKernel) AttachXDPExtension(dispatcherPinPath, objectPath, programNa
 		Type:    bpfman.AttachXDP,
 	}
 	return bpfman.ManagedLink{
-		Managed: managed.NewLinkInfo(id, 0, managed.LinkTypeXDP, linkPinPath, time.Now(), managed.XDPDetails{Position: int32(position)}),
+		Managed: bpfman.NewLinkInfo(id, 0, bpfman.LinkTypeXDP, linkPinPath, time.Now(), bpfman.XDPDetails{Position: int32(position)}),
 		Kernel:  &fakeKernelLinkInfo{id: id, programID: 0, linkType: "xdp"},
 	}, nil
 }

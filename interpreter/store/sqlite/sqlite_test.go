@@ -12,10 +12,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/frobware/go-bpfman/bpfman"
+	"github.com/frobware/go-bpfman"
 	"github.com/frobware/go-bpfman/internal/dispatcher"
 	"github.com/frobware/go-bpfman/interpreter/store/sqlite"
-	"github.com/frobware/go-bpfman/managed"
 )
 
 // testLogger returns a logger for tests. By default it discards all output.
@@ -35,13 +34,13 @@ func TestForeignKey_LinkRequiresProgram(t *testing.T) {
 	ctx := context.Background()
 
 	// Attempt to create a link referencing a non-existent program.
-	summary := managed.LinkSummary{
-		LinkType:        managed.LinkTypeTracepoint,
+	summary := bpfman.LinkSummary{
+		LinkType:        bpfman.LinkTypeTracepoint,
 		KernelProgramID: 999, // does not exist
 		KernelLinkID:    1,
 		CreatedAt:       time.Now(),
 	}
-	details := managed.TracepointDetails{
+	details := bpfman.TracepointDetails{
 		Group: "syscalls",
 		Name:  "sys_enter_openat",
 	}
@@ -60,8 +59,8 @@ func TestForeignKey_CascadeDeleteRemovesLinks(t *testing.T) {
 
 	// Create a program directly.
 	kernelID := uint32(42)
-	prog := managed.Program{
-		LoadSpec:  managed.LoadSpec{ProgramType: bpfman.ProgramTypeTracepoint},
+	prog := bpfman.Program{
+		LoadSpec:  bpfman.LoadSpec{ProgramType: bpfman.ProgramTypeTracepoint},
 		CreatedAt: time.Now(),
 	}
 
@@ -69,13 +68,13 @@ func TestForeignKey_CascadeDeleteRemovesLinks(t *testing.T) {
 
 	// Create two links for that program.
 	for i := 0; i < 2; i++ {
-		summary := managed.LinkSummary{
-			LinkType:        managed.LinkTypeKprobe,
+		summary := bpfman.LinkSummary{
+			LinkType:        bpfman.LinkTypeKprobe,
 			KernelProgramID: kernelID,
 			KernelLinkID:    uint32(100 + i),
 			CreatedAt:       time.Now(),
 		}
-		details := managed.KprobeDetails{
+		details := bpfman.KprobeDetails{
 			FnName:   "test_fn",
 			Offset:   0,
 			Retprobe: false,
@@ -106,8 +105,8 @@ func TestForeignKey_CascadeDeleteRemovesMetadataIndex(t *testing.T) {
 
 	// Create a program with metadata.
 	kernelID := uint32(42)
-	prog := managed.Program{
-		LoadSpec:  managed.LoadSpec{ProgramType: bpfman.ProgramTypeTracepoint},
+	prog := bpfman.Program{
+		LoadSpec:  bpfman.LoadSpec{ProgramType: bpfman.ProgramTypeTracepoint},
 		CreatedAt: time.Now(),
 		UserMetadata: map[string]string{
 			"app":     "test",
@@ -139,8 +138,8 @@ func TestUniqueIndex_ProgramNameEnforcesUniqueness(t *testing.T) {
 	ctx := context.Background()
 
 	// Create first program with a name.
-	prog1 := managed.Program{
-		LoadSpec:  managed.LoadSpec{ProgramType: bpfman.ProgramTypeTracepoint},
+	prog1 := bpfman.Program{
+		LoadSpec:  bpfman.LoadSpec{ProgramType: bpfman.ProgramTypeTracepoint},
 		CreatedAt: time.Now(),
 		UserMetadata: map[string]string{
 			"bpfman.io/ProgramName": "my-program",
@@ -150,8 +149,8 @@ func TestUniqueIndex_ProgramNameEnforcesUniqueness(t *testing.T) {
 	require.NoError(t, store.Save(ctx, 100, prog1), "Save prog1 failed")
 
 	// Attempt to create second program with the same name.
-	prog2 := managed.Program{
-		LoadSpec:  managed.LoadSpec{ProgramType: bpfman.ProgramTypeTracepoint},
+	prog2 := bpfman.Program{
+		LoadSpec:  bpfman.LoadSpec{ProgramType: bpfman.ProgramTypeTracepoint},
 		CreatedAt: time.Now(),
 		UserMetadata: map[string]string{
 			"bpfman.io/ProgramName": "my-program", // duplicate
@@ -172,8 +171,8 @@ func TestUniqueIndex_DifferentNamesAllowed(t *testing.T) {
 
 	// Create two programs with different names.
 	for i, name := range []string{"program-a", "program-b"} {
-		prog := managed.Program{
-			LoadSpec:  managed.LoadSpec{ProgramType: bpfman.ProgramTypeTracepoint},
+		prog := bpfman.Program{
+			LoadSpec:  bpfman.LoadSpec{ProgramType: bpfman.ProgramTypeTracepoint},
 			CreatedAt: time.Now(),
 			UserMetadata: map[string]string{
 				"bpfman.io/ProgramName": name,
@@ -197,8 +196,8 @@ func TestUniqueIndex_NameCanBeReusedAfterDelete(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a program with a name.
-	prog := managed.Program{
-		LoadSpec:  managed.LoadSpec{ProgramType: bpfman.ProgramTypeTracepoint},
+	prog := bpfman.Program{
+		LoadSpec:  bpfman.LoadSpec{ProgramType: bpfman.ProgramTypeTracepoint},
 		CreatedAt: time.Now(),
 		UserMetadata: map[string]string{
 			"bpfman.io/ProgramName": "reusable-name",
@@ -211,8 +210,8 @@ func TestUniqueIndex_NameCanBeReusedAfterDelete(t *testing.T) {
 	require.NoError(t, store.Delete(ctx, 100), "Delete failed")
 
 	// Create a new program with the same name.
-	prog2 := managed.Program{
-		LoadSpec:  managed.LoadSpec{ProgramType: bpfman.ProgramTypeTracepoint},
+	prog2 := bpfman.Program{
+		LoadSpec:  bpfman.LoadSpec{ProgramType: bpfman.ProgramTypeTracepoint},
 		CreatedAt: time.Now(),
 		UserMetadata: map[string]string{
 			"bpfman.io/ProgramName": "reusable-name", // same name, should work
@@ -236,22 +235,22 @@ func TestLinkRegistry_TracepointRoundTrip(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a program first
-	prog := managed.Program{
-		LoadSpec:  managed.LoadSpec{ProgramType: bpfman.ProgramTypeTracepoint},
+	prog := bpfman.Program{
+		LoadSpec:  bpfman.LoadSpec{ProgramType: bpfman.ProgramTypeTracepoint},
 		CreatedAt: time.Now(),
 	}
 	require.NoError(t, store.Save(ctx, 42, prog), "Save failed")
 
 	// Create a tracepoint link
 	kernelLinkID := uint32(100)
-	summary := managed.LinkSummary{
-		LinkType:        managed.LinkTypeTracepoint,
+	summary := bpfman.LinkSummary{
+		LinkType:        bpfman.LinkTypeTracepoint,
 		KernelProgramID: 42,
 		KernelLinkID:    kernelLinkID,
 		PinPath:         "/sys/fs/bpf/bpfman/test/link",
 		CreatedAt:       time.Now(),
 	}
-	details := managed.TracepointDetails{
+	details := bpfman.TracepointDetails{
 		Group: "syscalls",
 		Name:  "sys_enter_openat",
 	}
@@ -267,7 +266,7 @@ func TestLinkRegistry_TracepointRoundTrip(t *testing.T) {
 	assert.Equal(t, summary.KernelLinkID, gotSummary.KernelLinkID)
 	assert.Equal(t, summary.PinPath, gotSummary.PinPath)
 
-	tpDetails, ok := gotDetails.(managed.TracepointDetails)
+	tpDetails, ok := gotDetails.(bpfman.TracepointDetails)
 	require.True(t, ok, "expected TracepointDetails")
 	assert.Equal(t, details.Group, tpDetails.Group)
 	assert.Equal(t, details.Name, tpDetails.Name)
@@ -281,29 +280,29 @@ func TestLinkRegistry_KernelLinkIDUniqueness(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a program first
-	prog := managed.Program{LoadSpec: managed.LoadSpec{ProgramType: bpfman.ProgramTypeTracepoint}, CreatedAt: time.Now()}
+	prog := bpfman.Program{LoadSpec: bpfman.LoadSpec{ProgramType: bpfman.ProgramTypeTracepoint}, CreatedAt: time.Now()}
 	require.NoError(t, store.Save(ctx, 42, prog), "Save failed")
 
 	// Create first link
 	kernelLinkID := uint32(100)
-	summary := managed.LinkSummary{
-		LinkType:        managed.LinkTypeTracepoint,
+	summary := bpfman.LinkSummary{
+		LinkType:        bpfman.LinkTypeTracepoint,
 		KernelProgramID: 42,
 		KernelLinkID:    kernelLinkID,
 		CreatedAt:       time.Now(),
 	}
-	details := managed.TracepointDetails{Group: "syscalls", Name: "sys_enter_openat"}
+	details := bpfman.TracepointDetails{Group: "syscalls", Name: "sys_enter_openat"}
 
 	require.NoError(t, store.SaveTracepointLink(ctx, summary, details), "first SaveTracepointLink failed")
 
 	// Try to create another link with same kernel_link_id
-	summary2 := managed.LinkSummary{
-		LinkType:        managed.LinkTypeKprobe,
+	summary2 := bpfman.LinkSummary{
+		LinkType:        bpfman.LinkTypeKprobe,
 		KernelProgramID: 42,
 		KernelLinkID:    kernelLinkID, // same kernel_link_id
 		CreatedAt:       time.Now(),
 	}
-	kprobeDetails := managed.KprobeDetails{FnName: "test_fn"}
+	kprobeDetails := bpfman.KprobeDetails{FnName: "test_fn"}
 
 	err = store.SaveKprobeLink(ctx, summary2, kprobeDetails)
 	require.Error(t, err, "expected kernel_link_id uniqueness violation")
@@ -319,18 +318,18 @@ func TestLinkRegistry_CascadeDeleteFromRegistry(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a program first
-	prog := managed.Program{LoadSpec: managed.LoadSpec{ProgramType: bpfman.ProgramTypeTracepoint}, CreatedAt: time.Now()}
+	prog := bpfman.Program{LoadSpec: bpfman.LoadSpec{ProgramType: bpfman.ProgramTypeTracepoint}, CreatedAt: time.Now()}
 	require.NoError(t, store.Save(ctx, 42, prog), "Save failed")
 
 	// Create a tracepoint link
 	kernelLinkID := uint32(100)
-	summary := managed.LinkSummary{
-		LinkType:        managed.LinkTypeTracepoint,
+	summary := bpfman.LinkSummary{
+		LinkType:        bpfman.LinkTypeTracepoint,
 		KernelProgramID: 42,
 		KernelLinkID:    kernelLinkID,
 		CreatedAt:       time.Now(),
 	}
-	details := managed.TracepointDetails{Group: "syscalls", Name: "sys_enter_openat"}
+	details := bpfman.TracepointDetails{Group: "syscalls", Name: "sys_enter_openat"}
 
 	require.NoError(t, store.SaveTracepointLink(ctx, summary, details), "SaveTracepointLink failed")
 
@@ -354,7 +353,7 @@ func TestDispatcherStore_SaveAndGet(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a dispatcher
-	state := managed.DispatcherState{
+	state := bpfman.DispatcherState{
 		Type:          dispatcher.DispatcherTypeXDP,
 		Nsid:          4026531840,
 		Ifindex:       1,
@@ -391,7 +390,7 @@ func TestDispatcherStore_Update(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a dispatcher
-	state := managed.DispatcherState{
+	state := bpfman.DispatcherState{
 		Type:          dispatcher.DispatcherTypeXDP,
 		Nsid:          4026531840,
 		Ifindex:       1,
@@ -429,7 +428,7 @@ func TestDispatcherStore_Delete(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a dispatcher
-	state := managed.DispatcherState{
+	state := bpfman.DispatcherState{
 		Type:          dispatcher.DispatcherTypeXDP,
 		Nsid:          4026531840,
 		Ifindex:       1,
@@ -471,7 +470,7 @@ func TestDispatcherStore_IncrementRevision(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a dispatcher with revision 1
-	state := managed.DispatcherState{
+	state := bpfman.DispatcherState{
 		Type:          dispatcher.DispatcherTypeXDP,
 		Nsid:          4026531840,
 		Ifindex:       1,
@@ -509,7 +508,7 @@ func TestDispatcherStore_UniqueConstraint(t *testing.T) {
 	ctx := context.Background()
 
 	// Create an XDP dispatcher
-	xdpState := managed.DispatcherState{
+	xdpState := bpfman.DispatcherState{
 		Type:          dispatcher.DispatcherTypeXDP,
 		Nsid:          4026531840,
 		Ifindex:       1,
@@ -524,7 +523,7 @@ func TestDispatcherStore_UniqueConstraint(t *testing.T) {
 	require.NoError(t, store.SaveDispatcher(ctx, xdpState), "SaveDispatcher (xdp) failed")
 
 	// Create a TC-ingress dispatcher on same nsid/ifindex - should work (different type)
-	tcState := managed.DispatcherState{
+	tcState := bpfman.DispatcherState{
 		Type:          dispatcher.DispatcherTypeTCIngress,
 		Nsid:          4026531840,
 		Ifindex:       1,
@@ -555,7 +554,7 @@ func TestDispatcherStore_DifferentInterfaces(t *testing.T) {
 
 	// Create dispatchers for ifindex 1 and 2
 	for ifindex := uint32(1); ifindex <= 2; ifindex++ {
-		state := managed.DispatcherState{
+		state := bpfman.DispatcherState{
 			Type:          dispatcher.DispatcherTypeXDP,
 			Nsid:          4026531840,
 			Ifindex:       ifindex,

@@ -2,7 +2,7 @@
 // without actually doing it. These are pure data structures.
 package action
 
-import "github.com/frobware/go-bpfman/managed"
+import "github.com/frobware/go-bpfman"
 
 // Action represents an effect to be executed.
 // Actions are data - they describe what to do, not how.
@@ -15,7 +15,7 @@ type Action interface {
 // SaveProgram saves program metadata to the store.
 type SaveProgram struct {
 	KernelID uint32
-	Metadata managed.Program
+	Metadata bpfman.Program
 }
 
 func (SaveProgram) isAction() {}
@@ -38,24 +38,24 @@ func (DeleteLink) isAction() {}
 
 // SaveTracepointLink saves a tracepoint link to the store.
 type SaveTracepointLink struct {
-	Summary managed.LinkSummary
-	Details managed.TracepointDetails
+	Summary bpfman.LinkSummary
+	Details bpfman.TracepointDetails
 }
 
 func (SaveTracepointLink) isAction() {}
 
 // SaveXDPLink saves an XDP link to the store.
 type SaveXDPLink struct {
-	Summary managed.LinkSummary
-	Details managed.XDPDetails
+	Summary bpfman.LinkSummary
+	Details bpfman.XDPDetails
 }
 
 func (SaveXDPLink) isAction() {}
 
 // SaveTCLink saves a TC link to the store.
 type SaveTCLink struct {
-	Summary managed.LinkSummary
-	Details managed.TCDetails
+	Summary bpfman.LinkSummary
+	Details bpfman.TCDetails
 }
 
 func (SaveTCLink) isAction() {}
@@ -64,7 +64,7 @@ func (SaveTCLink) isAction() {}
 
 // LoadProgram loads a BPF program into the kernel.
 type LoadProgram struct {
-	Spec managed.LoadSpec
+	Spec bpfman.LoadSpec
 }
 
 func (LoadProgram) isAction() {}
@@ -94,7 +94,7 @@ func (Sequence) isAction() {}
 
 // SaveDispatcher creates or updates a dispatcher in the store.
 type SaveDispatcher struct {
-	State managed.DispatcherState
+	State bpfman.DispatcherState
 }
 
 func (SaveDispatcher) isAction() {}

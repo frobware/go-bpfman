@@ -7,36 +7,35 @@ import (
 	"io"
 	"iter"
 
-	"github.com/frobware/go-bpfman/bpfman"
+	"github.com/frobware/go-bpfman"
 	"github.com/frobware/go-bpfman/kernel"
-	"github.com/frobware/go-bpfman/managed"
 )
 
 // LinkWriter writes link metadata to the store.
 // Each link type has its own save method to enforce type safety.
 type LinkWriter interface {
-	SaveTracepointLink(ctx context.Context, summary managed.LinkSummary, details managed.TracepointDetails) error
-	SaveKprobeLink(ctx context.Context, summary managed.LinkSummary, details managed.KprobeDetails) error
-	SaveUprobeLink(ctx context.Context, summary managed.LinkSummary, details managed.UprobeDetails) error
-	SaveFentryLink(ctx context.Context, summary managed.LinkSummary, details managed.FentryDetails) error
-	SaveFexitLink(ctx context.Context, summary managed.LinkSummary, details managed.FexitDetails) error
-	SaveXDPLink(ctx context.Context, summary managed.LinkSummary, details managed.XDPDetails) error
-	SaveTCLink(ctx context.Context, summary managed.LinkSummary, details managed.TCDetails) error
-	SaveTCXLink(ctx context.Context, summary managed.LinkSummary, details managed.TCXDetails) error
+	SaveTracepointLink(ctx context.Context, summary bpfman.LinkSummary, details bpfman.TracepointDetails) error
+	SaveKprobeLink(ctx context.Context, summary bpfman.LinkSummary, details bpfman.KprobeDetails) error
+	SaveUprobeLink(ctx context.Context, summary bpfman.LinkSummary, details bpfman.UprobeDetails) error
+	SaveFentryLink(ctx context.Context, summary bpfman.LinkSummary, details bpfman.FentryDetails) error
+	SaveFexitLink(ctx context.Context, summary bpfman.LinkSummary, details bpfman.FexitDetails) error
+	SaveXDPLink(ctx context.Context, summary bpfman.LinkSummary, details bpfman.XDPDetails) error
+	SaveTCLink(ctx context.Context, summary bpfman.LinkSummary, details bpfman.TCDetails) error
+	SaveTCXLink(ctx context.Context, summary bpfman.LinkSummary, details bpfman.TCXDetails) error
 	DeleteLink(ctx context.Context, kernelLinkID uint32) error
 }
 
 // LinkReader reads link metadata from the store.
 // GetLink performs a two-phase lookup: registry then type-specific details.
 type LinkReader interface {
-	GetLink(ctx context.Context, kernelLinkID uint32) (managed.LinkSummary, managed.LinkDetails, error)
+	GetLink(ctx context.Context, kernelLinkID uint32) (bpfman.LinkSummary, bpfman.LinkDetails, error)
 }
 
 // LinkLister lists links from the store.
 // Returns only LinkSummary for efficiency; use GetLink for full details.
 type LinkLister interface {
-	ListLinks(ctx context.Context) ([]managed.LinkSummary, error)
-	ListLinksByProgram(ctx context.Context, programKernelID uint32) ([]managed.LinkSummary, error)
+	ListLinks(ctx context.Context) ([]bpfman.LinkSummary, error)
+	ListLinksByProgram(ctx context.Context, programKernelID uint32) ([]bpfman.LinkSummary, error)
 }
 
 // LinkStore combines all link store operations.
@@ -50,10 +49,10 @@ type LinkStore interface {
 type DispatcherStore interface {
 	// GetDispatcher retrieves a dispatcher by type, nsid, and ifindex.
 	// Returns store.ErrNotFound if the dispatcher does not exist.
-	GetDispatcher(ctx context.Context, dispType string, nsid uint64, ifindex uint32) (managed.DispatcherState, error)
+	GetDispatcher(ctx context.Context, dispType string, nsid uint64, ifindex uint32) (bpfman.DispatcherState, error)
 
 	// SaveDispatcher creates or updates a dispatcher.
-	SaveDispatcher(ctx context.Context, state managed.DispatcherState) error
+	SaveDispatcher(ctx context.Context, state bpfman.DispatcherState) error
 
 	// DeleteDispatcher removes a dispatcher by type, nsid, and ifindex.
 	DeleteDispatcher(ctx context.Context, dispType string, nsid uint64, ifindex uint32) error
@@ -83,25 +82,25 @@ type Transactional interface {
 // ProgramReader reads program metadata from the store.
 // Get returns store.ErrNotFound if the program does not exist.
 type ProgramReader interface {
-	Get(ctx context.Context, kernelID uint32) (managed.Program, error)
+	Get(ctx context.Context, kernelID uint32) (bpfman.Program, error)
 }
 
 // ProgramWriter writes program metadata to the store.
 type ProgramWriter interface {
-	Save(ctx context.Context, kernelID uint32, metadata managed.Program) error
+	Save(ctx context.Context, kernelID uint32, metadata bpfman.Program) error
 	Delete(ctx context.Context, kernelID uint32) error
 }
 
 // ProgramLister lists all program metadata from the store.
 type ProgramLister interface {
-	List(ctx context.Context) (map[uint32]managed.Program, error)
+	List(ctx context.Context) (map[uint32]bpfman.Program, error)
 }
 
 // ProgramFinder finds programs by criteria.
 type ProgramFinder interface {
 	// FindProgramByMetadata finds a program by a metadata key/value pair.
 	// Returns store.ErrNotFound if no matching program exists.
-	FindProgramByMetadata(ctx context.Context, key, value string) (managed.Program, uint32, error)
+	FindProgramByMetadata(ctx context.Context, key, value string) (bpfman.Program, uint32, error)
 }
 
 // ProgramStore combines all store operations.
@@ -124,7 +123,7 @@ type KernelSource interface {
 
 // ProgramLoader loads BPF programs into the kernel.
 type ProgramLoader interface {
-	Load(ctx context.Context, spec managed.LoadSpec) (bpfman.ManagedProgram, error)
+	Load(ctx context.Context, spec bpfman.LoadSpec) (bpfman.ManagedProgram, error)
 }
 
 // ProgramUnloader removes BPF programs from the kernel.
@@ -222,7 +221,7 @@ type ImageRef struct {
 	// URL is the OCI image reference (e.g., "quay.io/bpfman-bytecode/xdp_pass:latest").
 	URL string
 	// PullPolicy specifies when to pull the image.
-	PullPolicy managed.ImagePullPolicy
+	PullPolicy bpfman.ImagePullPolicy
 	// Auth contains optional authentication credentials. Nil for anonymous access.
 	Auth *ImageAuth
 }

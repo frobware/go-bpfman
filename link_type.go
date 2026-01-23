@@ -1,8 +1,4 @@
-package managed
-
-import (
-	"github.com/frobware/go-bpfman/bpfman"
-)
+package bpfman
 
 // LinkType represents the type of BPF link/attachment.
 type LinkType string
@@ -49,16 +45,16 @@ func ParseLinkType(s string) (LinkType, bool) {
 	}
 }
 
-// ToAttachType converts LinkType to bpfman.AttachType for backward compatibility.
-func (t LinkType) ToAttachType() bpfman.AttachType {
+// ToAttachType converts LinkType to AttachType for backward compatibility.
+func (t LinkType) ToAttachType() AttachType {
 	switch t {
 	case LinkTypeTracepoint:
-		return bpfman.AttachTracepoint
+		return AttachTracepoint
 	case LinkTypeKprobe:
-		return bpfman.AttachKprobe
+		return AttachKprobe
 	case LinkTypeKretprobe:
-		return bpfman.AttachKretprobe
+		return AttachKretprobe
 	default:
-		return bpfman.AttachType(t)
+		return AttachType(t)
 	}
 }

@@ -5,7 +5,7 @@ import (
 
 	"github.com/cilium/ebpf"
 
-	"github.com/frobware/go-bpfman/bpfman"
+	"github.com/frobware/go-bpfman"
 )
 
 // programInfo wraps cilium/ebpf's ProgramInfo to implement bpfman.KernelProgramInfo.

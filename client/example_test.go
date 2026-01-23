@@ -5,9 +5,8 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/frobware/go-bpfman/bpfman"
+	"github.com/frobware/go-bpfman"
 	"github.com/frobware/go-bpfman/client"
-	"github.com/frobware/go-bpfman/managed"
 	"github.com/frobware/go-bpfman/manager"
 )
 
@@ -50,7 +49,7 @@ func ExampleClient_Load() {
 	}
 	defer c.Close()
 
-	spec := managed.LoadSpec{
+	spec := bpfman.LoadSpec{
 		ObjectPath:  "/path/to/program.o",
 		ProgramName: "my_xdp_prog",
 		ProgramType: bpfman.ProgramTypeXDP,

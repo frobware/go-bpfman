@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/frobware/go-bpfman"
 	"github.com/frobware/go-bpfman/client"
 	"github.com/frobware/go-bpfman/interpreter"
-	"github.com/frobware/go-bpfman/managed"
 )
 
 // LoadImageCmd loads BPF programs from an OCI container image.
@@ -36,7 +36,7 @@ func (c *LoadImageCmd) Run(cli *CLI) error {
 	)
 
 	// Parse pull policy
-	pullPolicy, ok := managed.ParseImagePullPolicy(c.PullPolicy.Value)
+	pullPolicy, ok := bpfman.ParseImagePullPolicy(c.PullPolicy.Value)
 	if !ok {
 		return fmt.Errorf("invalid pull policy %q", c.PullPolicy.Value)
 	}
@@ -72,9 +72,9 @@ func (c *LoadImageCmd) Run(cli *CLI) error {
 	}
 
 	// Build LoadSpecs for each program
-	programs := make([]managed.LoadSpec, 0, len(c.Programs))
+	programs := make([]bpfman.LoadSpec, 0, len(c.Programs))
 	for _, spec := range c.Programs {
-		programs = append(programs, managed.LoadSpec{
+		programs = append(programs, bpfman.LoadSpec{
 			ProgramName: spec.Name,
 			ProgramType: spec.Type,
 			GlobalData:  globalData,

@@ -1,12 +1,10 @@
-package managed
+package bpfman
 
 import (
 	"time"
-
-	"github.com/frobware/go-bpfman/bpfman"
 )
 
-// LinkInfo is the concrete implementation of bpfman.ManagedLinkInfo.
+// LinkInfo is the concrete implementation of ManagedLinkInfo.
 // It holds what bpfman tracks about a link.
 type LinkInfo struct {
 	kernelLinkID    uint32
@@ -51,4 +49,4 @@ func (l *LinkInfo) Details() any {
 }
 
 // Verify interface compliance at compile time.
-var _ bpfman.ManagedLinkInfo = (*LinkInfo)(nil)
+var _ ManagedLinkInfo = (*LinkInfo)(nil)

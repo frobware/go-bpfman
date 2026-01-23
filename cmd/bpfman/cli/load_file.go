@@ -4,8 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/frobware/go-bpfman/bpfman"
-	"github.com/frobware/go-bpfman/managed"
+	"github.com/frobware/go-bpfman"
 	"github.com/frobware/go-bpfman/manager"
 )
 
@@ -51,7 +50,7 @@ func (c *LoadFileCmd) Run(cli *CLI) error {
 	for _, prog := range c.Programs {
 		// Build load spec and options
 		// PinPath is the bpffs root; actual paths are computed from kernel ID
-		spec := managed.LoadSpec{
+		spec := bpfman.LoadSpec{
 			ObjectPath:  objPath.Path,
 			ProgramName: prog.Name,
 			ProgramType: prog.Type, // Already validated at parse time

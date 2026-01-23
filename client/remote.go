@@ -11,9 +11,8 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 
-	"github.com/frobware/go-bpfman/bpfman"
+	"github.com/frobware/go-bpfman"
 	"github.com/frobware/go-bpfman/interpreter"
-	"github.com/frobware/go-bpfman/managed"
 	"github.com/frobware/go-bpfman/manager"
 	pb "github.com/frobware/go-bpfman/server/pb"
 )
@@ -66,7 +65,7 @@ func (c *remoteClient) Close() error {
 }
 
 // Load loads a BPF program via gRPC.
-func (c *remoteClient) Load(ctx context.Context, spec managed.LoadSpec, opts manager.LoadOpts) (bpfman.ManagedProgram, error) {
+func (c *remoteClient) Load(ctx context.Context, spec bpfman.LoadSpec, opts manager.LoadOpts) (bpfman.ManagedProgram, error) {
 	req := &pb.LoadRequest{
 		Bytecode: &pb.BytecodeLocation{
 			Location: &pb.BytecodeLocation_File{File: spec.ObjectPath},
@@ -118,7 +117,7 @@ func (c *remoteClient) Get(ctx context.Context, kernelID uint32) (manager.Progra
 }
 
 // AttachTracepoint attaches a program to a tracepoint via gRPC.
-func (c *remoteClient) AttachTracepoint(ctx context.Context, programKernelID uint32, group, name, linkPinPath string) (managed.LinkSummary, error) {
+func (c *remoteClient) AttachTracepoint(ctx context.Context, programKernelID uint32, group, name, linkPinPath string) (bpfman.LinkSummary, error) {
 	req := &pb.AttachRequest{
 		Id: programKernelID,
 		Attach: &pb.AttachInfo{
@@ -132,11 +131,11 @@ func (c *remoteClient) AttachTracepoint(ctx context.Context, programKernelID uin
 
 	resp, err := c.client.Attach(ctx, req)
 	if err != nil {
-		return managed.LinkSummary{}, translateGRPCError(err)
+		return bpfman.LinkSummary{}, translateGRPCError(err)
 	}
 
-	return managed.LinkSummary{
-		LinkType:        managed.LinkTypeTracepoint,
+	return bpfman.LinkSummary{
+		LinkType:        bpfman.LinkTypeTracepoint,
 		KernelProgramID: programKernelID,
 		KernelLinkID:    resp.LinkId,
 		PinPath:         linkPinPath,
@@ -145,7 +144,7 @@ func (c *remoteClient) AttachTracepoint(ctx context.Context, programKernelID uin
 
 // AttachXDP is not fully supported via gRPC.
 // The proto exists but the server returns Unimplemented.
-func (c *remoteClient) AttachXDP(ctx context.Context, programKernelID uint32, ifindex int, ifname, linkPinPath string) (managed.LinkSummary, error) {
+func (c *remoteClient) AttachXDP(ctx context.Context, programKernelID uint32, ifindex int, ifname, linkPinPath string) (bpfman.LinkSummary, error) {
 	req := &pb.AttachRequest{
 		Id: programKernelID,
 		Attach: &pb.AttachInfo{
@@ -160,11 +159,11 @@ func (c *remoteClient) AttachXDP(ctx context.Context, programKernelID uint32, if
 
 	resp, err := c.client.Attach(ctx, req)
 	if err != nil {
-		return managed.LinkSummary{}, translateGRPCError(err)
+		return bpfman.LinkSummary{}, translateGRPCError(err)
 	}
 
-	return managed.LinkSummary{
-		LinkType:        managed.LinkTypeXDP,
+	return bpfman.LinkSummary{
+		LinkType:        bpfman.LinkTypeXDP,
 		KernelProgramID: programKernelID,
 		KernelLinkID:    resp.LinkId,
 		PinPath:         linkPinPath,
@@ -179,7 +178,7 @@ func (c *remoteClient) Detach(ctx context.Context, kernelLinkID uint32) error {
 }
 
 // ListLinks returns all managed links via gRPC.
-func (c *remoteClient) ListLinks(ctx context.Context) ([]managed.LinkSummary, error) {
+func (c *remoteClient) ListLinks(ctx context.Context) ([]bpfman.LinkSummary, error) {
 	resp, err := c.client.ListLinks(ctx, &pb.ListLinksRequest{})
 	if err != nil {
 		return nil, translateGRPCError(err)
@@ -188,7 +187,7 @@ func (c *remoteClient) ListLinks(ctx context.Context) ([]managed.LinkSummary, er
 }
 
 // ListLinksByProgram returns all links for a given program via gRPC.
-func (c *remoteClient) ListLinksByProgram(ctx context.Context, programKernelID uint32) ([]managed.LinkSummary, error) {
+func (c *remoteClient) ListLinksByProgram(ctx context.Context, programKernelID uint32) ([]bpfman.LinkSummary, error) {
 	resp, err := c.client.ListLinks(ctx, &pb.ListLinksRequest{ProgramId: &programKernelID})
 	if err != nil {
 		return nil, translateGRPCError(err)
@@ -197,10 +196,10 @@ func (c *remoteClient) ListLinksByProgram(ctx context.Context, programKernelID u
 }
 
 // GetLink retrieves a link by kernel link ID via gRPC.
-func (c *remoteClient) GetLink(ctx context.Context, kernelLinkID uint32) (managed.LinkSummary, managed.LinkDetails, error) {
+func (c *remoteClient) GetLink(ctx context.Context, kernelLinkID uint32) (bpfman.LinkSummary, bpfman.LinkDetails, error) {
 	resp, err := c.client.GetLink(ctx, &pb.GetLinkRequest{KernelLinkId: kernelLinkID})
 	if err != nil {
-		return managed.LinkSummary{}, nil, translateGRPCError(err)
+		return bpfman.LinkSummary{}, nil, translateGRPCError(err)
 	}
 	summary := protoLinkSummaryToManaged(resp.Link.Summary)
 	details := protoLinkDetailsToManaged(resp.Link.Details)
@@ -238,7 +237,7 @@ func (c *remoteClient) PullImage(ctx context.Context, ref interpreter.ImageRef) 
 
 // LoadImage loads programs from an OCI image via gRPC.
 // The server handles pulling and caching the image.
-func (c *remoteClient) LoadImage(ctx context.Context, ref interpreter.ImageRef, programs []managed.LoadSpec, opts LoadImageOpts) ([]bpfman.ManagedProgram, error) {
+func (c *remoteClient) LoadImage(ctx context.Context, ref interpreter.ImageRef, programs []bpfman.LoadSpec, opts LoadImageOpts) ([]bpfman.ManagedProgram, error) {
 	// Build LoadInfo for each program
 	loadInfo := make([]*pb.LoadInfo, 0, len(programs))
 	var globalData map[string][]byte

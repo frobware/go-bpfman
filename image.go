@@ -1,4 +1,4 @@
-package managed
+package bpfman
 
 import "fmt"
 

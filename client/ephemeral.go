@@ -11,13 +11,12 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/frobware/go-bpfman/bpfman"
+	"github.com/frobware/go-bpfman"
 	"github.com/frobware/go-bpfman/internal/config"
 	"github.com/frobware/go-bpfman/interpreter"
 	"github.com/frobware/go-bpfman/interpreter/image/cosign"
 	"github.com/frobware/go-bpfman/interpreter/image/noop"
 	"github.com/frobware/go-bpfman/interpreter/image/oci"
-	"github.com/frobware/go-bpfman/managed"
 	"github.com/frobware/go-bpfman/manager"
 	"github.com/frobware/go-bpfman/server"
 	pb "github.com/frobware/go-bpfman/server/pb"
@@ -149,7 +148,7 @@ func (e *ephemeralClient) Close() error {
 }
 
 // Load loads a BPF program via the ephemeral gRPC server.
-func (e *ephemeralClient) Load(ctx context.Context, spec managed.LoadSpec, opts manager.LoadOpts) (bpfman.ManagedProgram, error) {
+func (e *ephemeralClient) Load(ctx context.Context, spec bpfman.LoadSpec, opts manager.LoadOpts) (bpfman.ManagedProgram, error) {
 	return e.remote.Load(ctx, spec, opts)
 }
 
@@ -169,12 +168,12 @@ func (e *ephemeralClient) Get(ctx context.Context, kernelID uint32) (manager.Pro
 }
 
 // AttachTracepoint attaches a program to a tracepoint via the ephemeral gRPC server.
-func (e *ephemeralClient) AttachTracepoint(ctx context.Context, programKernelID uint32, group, name, linkPinPath string) (managed.LinkSummary, error) {
+func (e *ephemeralClient) AttachTracepoint(ctx context.Context, programKernelID uint32, group, name, linkPinPath string) (bpfman.LinkSummary, error) {
 	return e.remote.AttachTracepoint(ctx, programKernelID, group, name, linkPinPath)
 }
 
 // AttachXDP attaches an XDP program to a network interface via the ephemeral gRPC server.
-func (e *ephemeralClient) AttachXDP(ctx context.Context, programKernelID uint32, ifindex int, ifname, linkPinPath string) (managed.LinkSummary, error) {
+func (e *ephemeralClient) AttachXDP(ctx context.Context, programKernelID uint32, ifindex int, ifname, linkPinPath string) (bpfman.LinkSummary, error) {
 	return e.remote.AttachXDP(ctx, programKernelID, ifindex, ifname, linkPinPath)
 }
 
@@ -184,17 +183,17 @@ func (e *ephemeralClient) Detach(ctx context.Context, kernelLinkID uint32) error
 }
 
 // ListLinks returns all managed links via the ephemeral gRPC server.
-func (e *ephemeralClient) ListLinks(ctx context.Context) ([]managed.LinkSummary, error) {
+func (e *ephemeralClient) ListLinks(ctx context.Context) ([]bpfman.LinkSummary, error) {
 	return e.remote.ListLinks(ctx)
 }
 
 // ListLinksByProgram returns all links for a given program via the ephemeral gRPC server.
-func (e *ephemeralClient) ListLinksByProgram(ctx context.Context, programKernelID uint32) ([]managed.LinkSummary, error) {
+func (e *ephemeralClient) ListLinksByProgram(ctx context.Context, programKernelID uint32) ([]bpfman.LinkSummary, error) {
 	return e.remote.ListLinksByProgram(ctx, programKernelID)
 }
 
 // GetLink retrieves a link by kernel link ID via the ephemeral gRPC server.
-func (e *ephemeralClient) GetLink(ctx context.Context, kernelLinkID uint32) (managed.LinkSummary, managed.LinkDetails, error) {
+func (e *ephemeralClient) GetLink(ctx context.Context, kernelLinkID uint32) (bpfman.LinkSummary, bpfman.LinkDetails, error) {
 	return e.remote.GetLink(ctx, kernelLinkID)
 }
 
@@ -234,7 +233,7 @@ func (e *ephemeralClient) PullImage(ctx context.Context, ref interpreter.ImageRe
 // Pull happens locally, load goes through the gRPC server.
 // LoadImage loads programs from an OCI image via the ephemeral gRPC server.
 // The server handles pulling and caching the image.
-func (e *ephemeralClient) LoadImage(ctx context.Context, ref interpreter.ImageRef, programs []managed.LoadSpec, opts LoadImageOpts) ([]bpfman.ManagedProgram, error) {
+func (e *ephemeralClient) LoadImage(ctx context.Context, ref interpreter.ImageRef, programs []bpfman.LoadSpec, opts LoadImageOpts) ([]bpfman.ManagedProgram, error) {
 	return e.remote.LoadImage(ctx, ref, programs, opts)
 }
 

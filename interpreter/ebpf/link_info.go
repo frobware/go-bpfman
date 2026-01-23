@@ -5,7 +5,7 @@ import (
 
 	"github.com/cilium/ebpf/link"
 
-	"github.com/frobware/go-bpfman/bpfman"
+	"github.com/frobware/go-bpfman"
 )
 
 // linkInfo wraps cilium/ebpf's link.Info to implement bpfman.KernelLinkInfo.

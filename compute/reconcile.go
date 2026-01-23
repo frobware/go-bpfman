@@ -3,15 +3,15 @@
 package compute
 
 import (
+	"github.com/frobware/go-bpfman"
 	"github.com/frobware/go-bpfman/action"
 	"github.com/frobware/go-bpfman/kernel"
-	"github.com/frobware/go-bpfman/managed"
 )
 
 // ReconcileActions computes the actions needed to reconcile store state
 // with kernel state. This is a pure function - no I/O.
 func ReconcileActions(
-	stored map[uint32]managed.Program,
+	stored map[uint32]bpfman.Program,
 	kps []kernel.Program,
 ) []action.Action {
 	var actions []action.Action
@@ -35,7 +35,7 @@ func ReconcileActions(
 // OrphanedPrograms returns IDs of programs in store that no longer exist in kernel.
 // Pure function.
 func OrphanedPrograms(
-	stored map[uint32]managed.Program,
+	stored map[uint32]bpfman.Program,
 	kps []kernel.Program,
 ) []uint32 {
 	kernelIDs := make(map[uint32]bool, len(kps))
@@ -55,7 +55,7 @@ func OrphanedPrograms(
 // UnmanagedPrograms returns kernel programs not tracked in the store.
 // Pure function.
 func UnmanagedPrograms(
-	stored map[uint32]managed.Program,
+	stored map[uint32]bpfman.Program,
 	kps []kernel.Program,
 ) []kernel.Program {
 	var unmanaged []kernel.Program

@@ -1,4 +1,4 @@
-package managed
+package bpfman
 
 // LinkDetails is a marker interface for type-specific link details.
 // Use type assertion or type switch to access the concrete type.

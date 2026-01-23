@@ -13,11 +13,10 @@ import (
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
 
-	"github.com/frobware/go-bpfman/bpfman"
+	"github.com/frobware/go-bpfman"
 	"github.com/frobware/go-bpfman/internal/dispatcher"
 	"github.com/frobware/go-bpfman/interpreter"
 	"github.com/frobware/go-bpfman/kernel"
-	"github.com/frobware/go-bpfman/managed"
 )
 
 // kernelAdapter implements interpreter.KernelOperations using cilium/ebpf.
@@ -185,7 +184,7 @@ func (k *kernelAdapter) Links(ctx context.Context) iter.Seq2[kernel.Link, error]
 //
 // spec.PinPath is the bpffs root (e.g., /run/bpfman/fs/).
 // On failure, all successfully pinned objects are cleaned up.
-func (k *kernelAdapter) Load(ctx context.Context, spec managed.LoadSpec) (bpfman.ManagedProgram, error) {
+func (k *kernelAdapter) Load(ctx context.Context, spec bpfman.LoadSpec) (bpfman.ManagedProgram, error) {
 	// Load the collection from the object file
 	collSpec, err := ebpf.LoadCollectionSpec(spec.ObjectPath)
 	if err != nil {
@@ -269,7 +268,7 @@ func (k *kernelAdapter) Load(ctx context.Context, spec managed.LoadSpec) (bpfman
 	_ = ebpfMapIDs // MapIDs now accessed via KernelProgramInfo
 
 	return bpfman.ManagedProgram{
-		Managed: managed.NewProgramInfo(spec.ProgramName, spec.ProgramType, spec.ObjectPath, progPinPath, mapsDir),
+		Managed: bpfman.NewProgramInfo(spec.ProgramName, spec.ProgramType, spec.ObjectPath, progPinPath, mapsDir),
 		Kernel:  NewProgramInfo(info),
 	}, nil
 }
@@ -564,7 +563,7 @@ func (k *kernelAdapter) LoadSingle(ctx context.Context, objectPath, programName,
 		return nil, fmt.Errorf("failed to create pin directory: %w", err)
 	}
 
-	spec := managed.LoadSpec{
+	spec := bpfman.LoadSpec{
 		ObjectPath:  objectPath,
 		ProgramName: programName,
 		PinPath:     pinDir,
@@ -735,13 +734,13 @@ func (k *kernelAdapter) AttachTracepoint(progPinPath, group, name, linkPinPath s
 	}
 
 	return bpfman.ManagedLink{
-		Managed: managed.NewLinkInfo(
+		Managed: bpfman.NewLinkInfo(
 			uint32(linkInfo.ID),
 			uint32(progID),
-			managed.LinkTypeTracepoint,
+			bpfman.LinkTypeTracepoint,
 			linkPinPath,
 			time.Now(),
-			managed.TracepointDetails{Group: group, Name: name},
+			bpfman.TracepointDetails{Group: group, Name: name},
 		),
 		Kernel: NewLinkInfo(linkInfo),
 	}, nil
@@ -791,13 +790,13 @@ func (k *kernelAdapter) AttachXDP(progPinPath string, ifindex int, linkPinPath s
 	}
 
 	return bpfman.ManagedLink{
-		Managed: managed.NewLinkInfo(
+		Managed: bpfman.NewLinkInfo(
 			uint32(linkInfo.ID),
 			uint32(progID),
-			managed.LinkTypeXDP,
+			bpfman.LinkTypeXDP,
 			linkPinPath,
 			time.Now(),
-			managed.XDPDetails{Ifindex: uint32(ifindex)},
+			bpfman.XDPDetails{Ifindex: uint32(ifindex)},
 		),
 		Kernel: NewLinkInfo(linkInfo),
 	}, nil
@@ -1073,13 +1072,13 @@ func (k *kernelAdapter) AttachXDPExtension(dispatcherPinPath, objectPath, progra
 	}
 
 	return bpfman.ManagedLink{
-		Managed: managed.NewLinkInfo(
+		Managed: bpfman.NewLinkInfo(
 			uint32(linkInfo.ID),
 			uint32(progID),
-			managed.LinkTypeXDP, // XDP extension
+			bpfman.LinkTypeXDP, // XDP extension
 			linkPinPath,
 			time.Now(),
-			managed.XDPDetails{Position: int32(position)},
+			bpfman.XDPDetails{Position: int32(position)},
 		),
 		Kernel: NewLinkInfo(linkInfo),
 	}, nil

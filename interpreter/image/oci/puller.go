@@ -21,8 +21,8 @@ import (
 	"oras.land/oras-go/v2/registry/remote/credentials"
 	"oras.land/oras-go/v2/registry/remote/retry"
 
+	"github.com/frobware/go-bpfman"
 	"github.com/frobware/go-bpfman/interpreter"
-	"github.com/frobware/go-bpfman/managed"
 )
 
 const (
@@ -130,13 +130,13 @@ func (p *puller) Pull(ctx context.Context, ref interpreter.ImageRef) (interprete
 	logger = logger.With("cache_key", cacheKey)
 
 	// Check cache based on pull policy
-	if ref.PullPolicy != managed.PullAlways {
+	if ref.PullPolicy != bpfman.PullAlways {
 		if cached, ok := p.checkCache(cacheDir, logger); ok {
 			logger.Info("using cached image", "digest", cached.Digest)
 			return cached, nil
 		}
 
-		if ref.PullPolicy == managed.PullNever {
+		if ref.PullPolicy == bpfman.PullNever {
 			logger.Error("image not in cache and pull policy is Never")
 			return interpreter.PulledImage{}, fmt.Errorf("image %s not in cache and pull policy is Never", ref.URL)
 		}

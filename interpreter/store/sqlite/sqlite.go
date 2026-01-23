@@ -122,10 +122,10 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"github.com/frobware/go-bpfman"
 	"github.com/frobware/go-bpfman/internal/dispatcher"
 	"github.com/frobware/go-bpfman/interpreter"
 	"github.com/frobware/go-bpfman/interpreter/store"
-	"github.com/frobware/go-bpfman/managed"
 )
 
 //go:embed schema.sql
@@ -526,21 +526,21 @@ func (s *sqliteStore) prepareDispatcherStatements() error {
 
 // Get retrieves program metadata by kernel ID.
 // Returns store.ErrNotFound if the program does not exist.
-func (s *sqliteStore) Get(ctx context.Context, kernelID uint32) (managed.Program, error) {
+func (s *sqliteStore) Get(ctx context.Context, kernelID uint32) (bpfman.Program, error) {
 	row := s.stmtGetProgram.QueryRowContext(ctx, kernelID)
 
 	var metadataJSON string
 	err := row.Scan(&metadataJSON)
 	if err == sql.ErrNoRows {
-		return managed.Program{}, fmt.Errorf("program %d: %w", kernelID, store.ErrNotFound)
+		return bpfman.Program{}, fmt.Errorf("program %d: %w", kernelID, store.ErrNotFound)
 	}
 	if err != nil {
-		return managed.Program{}, err
+		return bpfman.Program{}, err
 	}
 
-	var metadata managed.Program
+	var metadata bpfman.Program
 	if err := json.Unmarshal([]byte(metadataJSON), &metadata); err != nil {
-		return managed.Program{}, fmt.Errorf("failed to unmarshal metadata: %w", err)
+		return bpfman.Program{}, fmt.Errorf("failed to unmarshal metadata: %w", err)
 	}
 
 	return metadata, nil
@@ -548,7 +548,7 @@ func (s *sqliteStore) Get(ctx context.Context, kernelID uint32) (managed.Program
 
 // Save stores program metadata.
 // For atomicity with other operations, wrap in RunInTransaction.
-func (s *sqliteStore) Save(ctx context.Context, kernelID uint32, metadata managed.Program) error {
+func (s *sqliteStore) Save(ctx context.Context, kernelID uint32, metadata bpfman.Program) error {
 	metadataJSON, err := json.Marshal(metadata)
 	if err != nil {
 		return fmt.Errorf("failed to marshal metadata: %w", err)
@@ -588,14 +588,14 @@ func (s *sqliteStore) Delete(ctx context.Context, kernelID uint32) error {
 }
 
 // List returns all program metadata.
-func (s *sqliteStore) List(ctx context.Context) (map[uint32]managed.Program, error) {
+func (s *sqliteStore) List(ctx context.Context) (map[uint32]bpfman.Program, error) {
 	rows, err := s.stmtListPrograms.QueryContext(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	result := make(map[uint32]managed.Program)
+	result := make(map[uint32]bpfman.Program)
 	for rows.Next() {
 		var kernelID uint32
 		var metadataJSON string
@@ -603,7 +603,7 @@ func (s *sqliteStore) List(ctx context.Context) (map[uint32]managed.Program, err
 			return nil, err
 		}
 
-		var metadata managed.Program
+		var metadata bpfman.Program
 		if err := json.Unmarshal([]byte(metadataJSON), &metadata); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal metadata for %d: %w", kernelID, err)
 		}
@@ -616,22 +616,22 @@ func (s *sqliteStore) List(ctx context.Context) (map[uint32]managed.Program, err
 
 // FindProgramByMetadata finds a program by a specific metadata key/value pair.
 // Returns store.ErrNotFound if no program matches.
-func (s *sqliteStore) FindProgramByMetadata(ctx context.Context, key, value string) (managed.Program, uint32, error) {
+func (s *sqliteStore) FindProgramByMetadata(ctx context.Context, key, value string) (bpfman.Program, uint32, error) {
 	row := s.stmtFindProgramByMetadata.QueryRowContext(ctx, key, value)
 
 	var kernelID uint32
 	var metadataJSON string
 	err := row.Scan(&kernelID, &metadataJSON)
 	if err == sql.ErrNoRows {
-		return managed.Program{}, 0, fmt.Errorf("program with %s=%s: %w", key, value, store.ErrNotFound)
+		return bpfman.Program{}, 0, fmt.Errorf("program with %s=%s: %w", key, value, store.ErrNotFound)
 	}
 	if err != nil {
-		return managed.Program{}, 0, err
+		return bpfman.Program{}, 0, err
 	}
 
-	var metadata managed.Program
+	var metadata bpfman.Program
 	if err := json.Unmarshal([]byte(metadataJSON), &metadata); err != nil {
-		return managed.Program{}, 0, fmt.Errorf("failed to unmarshal metadata: %w", err)
+		return bpfman.Program{}, 0, fmt.Errorf("failed to unmarshal metadata: %w", err)
 	}
 
 	return metadata, kernelID, nil
@@ -640,7 +640,7 @@ func (s *sqliteStore) FindProgramByMetadata(ctx context.Context, key, value stri
 // FindAllProgramsByMetadata finds all programs with a specific metadata key/value pair.
 func (s *sqliteStore) FindAllProgramsByMetadata(ctx context.Context, key, value string) ([]struct {
 	KernelID uint32
-	Metadata managed.Program
+	Metadata bpfman.Program
 }, error) {
 	rows, err := s.stmtFindAllProgramsByMetadata.QueryContext(ctx, key, value)
 	if err != nil {
@@ -650,7 +650,7 @@ func (s *sqliteStore) FindAllProgramsByMetadata(ctx context.Context, key, value 
 
 	var result []struct {
 		KernelID uint32
-		Metadata managed.Program
+		Metadata bpfman.Program
 	}
 
 	for rows.Next() {
@@ -660,14 +660,14 @@ func (s *sqliteStore) FindAllProgramsByMetadata(ctx context.Context, key, value 
 			return nil, err
 		}
 
-		var metadata managed.Program
+		var metadata bpfman.Program
 		if err := json.Unmarshal([]byte(metadataJSON), &metadata); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal metadata for %d: %w", kernelID, err)
 		}
 
 		result = append(result, struct {
 			KernelID uint32
-			Metadata managed.Program
+			Metadata bpfman.Program
 		}{KernelID: kernelID, Metadata: metadata})
 	}
 
@@ -699,26 +699,26 @@ func (s *sqliteStore) DeleteLink(ctx context.Context, kernelLinkID uint32) error
 }
 
 // GetLink retrieves link metadata by kernel link ID using two-phase lookup.
-func (s *sqliteStore) GetLink(ctx context.Context, kernelLinkID uint32) (managed.LinkSummary, managed.LinkDetails, error) {
+func (s *sqliteStore) GetLink(ctx context.Context, kernelLinkID uint32) (bpfman.LinkSummary, bpfman.LinkDetails, error) {
 	// Phase 1: Get summary from registry
 	row := s.stmtGetLinkRegistry.QueryRowContext(ctx, kernelLinkID)
 
 	summary, err := s.scanLinkSummary(row)
 	if err != nil {
-		return managed.LinkSummary{}, nil, err
+		return bpfman.LinkSummary{}, nil, err
 	}
 
 	// Phase 2: Get details based on link type
 	details, err := s.getLinkDetails(ctx, summary.LinkType, kernelLinkID)
 	if err != nil {
-		return managed.LinkSummary{}, nil, err
+		return bpfman.LinkSummary{}, nil, err
 	}
 
 	return summary, details, nil
 }
 
 // ListLinks returns all links (summary only).
-func (s *sqliteStore) ListLinks(ctx context.Context) ([]managed.LinkSummary, error) {
+func (s *sqliteStore) ListLinks(ctx context.Context) ([]bpfman.LinkSummary, error) {
 	rows, err := s.stmtListLinks.QueryContext(ctx)
 	if err != nil {
 		return nil, err
@@ -729,7 +729,7 @@ func (s *sqliteStore) ListLinks(ctx context.Context) ([]managed.LinkSummary, err
 }
 
 // ListLinksByProgram returns all links for a given program kernel ID.
-func (s *sqliteStore) ListLinksByProgram(ctx context.Context, programKernelID uint32) ([]managed.LinkSummary, error) {
+func (s *sqliteStore) ListLinksByProgram(ctx context.Context, programKernelID uint32) ([]bpfman.LinkSummary, error) {
 	rows, err := s.stmtListLinksByProgram.QueryContext(ctx, programKernelID)
 	if err != nil {
 		return nil, err
@@ -745,7 +745,7 @@ func (s *sqliteStore) ListLinksByProgram(ctx context.Context, programKernelID ui
 
 // SaveTracepointLink saves a tracepoint link.
 // For atomicity with other operations, wrap in RunInTransaction.
-func (s *sqliteStore) SaveTracepointLink(ctx context.Context, summary managed.LinkSummary, details managed.TracepointDetails) error {
+func (s *sqliteStore) SaveTracepointLink(ctx context.Context, summary bpfman.LinkSummary, details bpfman.TracepointDetails) error {
 	if err := s.insertLinkRegistry(ctx, summary); err != nil {
 		return err
 	}
@@ -762,7 +762,7 @@ func (s *sqliteStore) SaveTracepointLink(ctx context.Context, summary managed.Li
 
 // SaveKprobeLink saves a kprobe/kretprobe link.
 // For atomicity with other operations, wrap in RunInTransaction.
-func (s *sqliteStore) SaveKprobeLink(ctx context.Context, summary managed.LinkSummary, details managed.KprobeDetails) error {
+func (s *sqliteStore) SaveKprobeLink(ctx context.Context, summary bpfman.LinkSummary, details bpfman.KprobeDetails) error {
 	if err := s.insertLinkRegistry(ctx, summary); err != nil {
 		return err
 	}
@@ -784,7 +784,7 @@ func (s *sqliteStore) SaveKprobeLink(ctx context.Context, summary managed.LinkSu
 
 // SaveUprobeLink saves a uprobe/uretprobe link.
 // For atomicity with other operations, wrap in RunInTransaction.
-func (s *sqliteStore) SaveUprobeLink(ctx context.Context, summary managed.LinkSummary, details managed.UprobeDetails) error {
+func (s *sqliteStore) SaveUprobeLink(ctx context.Context, summary bpfman.LinkSummary, details bpfman.UprobeDetails) error {
 	if err := s.insertLinkRegistry(ctx, summary); err != nil {
 		return err
 	}
@@ -806,7 +806,7 @@ func (s *sqliteStore) SaveUprobeLink(ctx context.Context, summary managed.LinkSu
 
 // SaveFentryLink saves a fentry link.
 // For atomicity with other operations, wrap in RunInTransaction.
-func (s *sqliteStore) SaveFentryLink(ctx context.Context, summary managed.LinkSummary, details managed.FentryDetails) error {
+func (s *sqliteStore) SaveFentryLink(ctx context.Context, summary bpfman.LinkSummary, details bpfman.FentryDetails) error {
 	if err := s.insertLinkRegistry(ctx, summary); err != nil {
 		return err
 	}
@@ -822,7 +822,7 @@ func (s *sqliteStore) SaveFentryLink(ctx context.Context, summary managed.LinkSu
 
 // SaveFexitLink saves a fexit link.
 // For atomicity with other operations, wrap in RunInTransaction.
-func (s *sqliteStore) SaveFexitLink(ctx context.Context, summary managed.LinkSummary, details managed.FexitDetails) error {
+func (s *sqliteStore) SaveFexitLink(ctx context.Context, summary bpfman.LinkSummary, details bpfman.FexitDetails) error {
 	if err := s.insertLinkRegistry(ctx, summary); err != nil {
 		return err
 	}
@@ -838,7 +838,7 @@ func (s *sqliteStore) SaveFexitLink(ctx context.Context, summary managed.LinkSum
 
 // SaveXDPLink saves an XDP link.
 // For atomicity with other operations, wrap in RunInTransaction.
-func (s *sqliteStore) SaveXDPLink(ctx context.Context, summary managed.LinkSummary, details managed.XDPDetails) error {
+func (s *sqliteStore) SaveXDPLink(ctx context.Context, summary bpfman.LinkSummary, details bpfman.XDPDetails) error {
 	if err := s.insertLinkRegistry(ctx, summary); err != nil {
 		return err
 	}
@@ -861,7 +861,7 @@ func (s *sqliteStore) SaveXDPLink(ctx context.Context, summary managed.LinkSumma
 
 // SaveTCLink saves a TC link.
 // For atomicity with other operations, wrap in RunInTransaction.
-func (s *sqliteStore) SaveTCLink(ctx context.Context, summary managed.LinkSummary, details managed.TCDetails) error {
+func (s *sqliteStore) SaveTCLink(ctx context.Context, summary bpfman.LinkSummary, details bpfman.TCDetails) error {
 	if err := s.insertLinkRegistry(ctx, summary); err != nil {
 		return err
 	}
@@ -884,7 +884,7 @@ func (s *sqliteStore) SaveTCLink(ctx context.Context, summary managed.LinkSummar
 
 // SaveTCXLink saves a TCX link.
 // For atomicity with other operations, wrap in RunInTransaction.
-func (s *sqliteStore) SaveTCXLink(ctx context.Context, summary managed.LinkSummary, details managed.TCXDetails) error {
+func (s *sqliteStore) SaveTCXLink(ctx context.Context, summary bpfman.LinkSummary, details bpfman.TCXDetails) error {
 	if err := s.insertLinkRegistry(ctx, summary); err != nil {
 		return err
 	}
@@ -904,7 +904,7 @@ func (s *sqliteStore) SaveTCXLink(ctx context.Context, summary managed.LinkSumma
 // ----------------------------------------------------------------------------
 
 // insertLinkRegistry inserts a record into the link_registry table.
-func (s *sqliteStore) insertLinkRegistry(ctx context.Context, summary managed.LinkSummary) error {
+func (s *sqliteStore) insertLinkRegistry(ctx context.Context, summary bpfman.LinkSummary) error {
 	_, err := s.stmtInsertLinkRegistry.ExecContext(ctx,
 		summary.KernelLinkID, string(summary.LinkType), summary.KernelProgramID,
 		summary.PinPath, summary.CreatedAt.Format(time.RFC3339))
@@ -915,21 +915,21 @@ func (s *sqliteStore) insertLinkRegistry(ctx context.Context, summary managed.Li
 }
 
 // scanLinkSummary scans a single row into a LinkSummary.
-func (s *sqliteStore) scanLinkSummary(row *sql.Row) (managed.LinkSummary, error) {
-	var summary managed.LinkSummary
+func (s *sqliteStore) scanLinkSummary(row *sql.Row) (bpfman.LinkSummary, error) {
+	var summary bpfman.LinkSummary
 	var linkType string
 	var pinPath sql.NullString
 	var createdAtStr string
 
 	err := row.Scan(&summary.KernelLinkID, &linkType, &summary.KernelProgramID, &pinPath, &createdAtStr)
 	if err == sql.ErrNoRows {
-		return managed.LinkSummary{}, fmt.Errorf("link: %w", store.ErrNotFound)
+		return bpfman.LinkSummary{}, fmt.Errorf("link: %w", store.ErrNotFound)
 	}
 	if err != nil {
-		return managed.LinkSummary{}, err
+		return bpfman.LinkSummary{}, err
 	}
 
-	summary.LinkType = managed.LinkType(linkType)
+	summary.LinkType = bpfman.LinkType(linkType)
 	if pinPath.Valid {
 		summary.PinPath = pinPath.String
 	}
@@ -939,11 +939,11 @@ func (s *sqliteStore) scanLinkSummary(row *sql.Row) (managed.LinkSummary, error)
 }
 
 // scanLinkSummaries scans multiple rows into a slice of LinkSummary.
-func (s *sqliteStore) scanLinkSummaries(rows *sql.Rows) ([]managed.LinkSummary, error) {
-	var result []managed.LinkSummary
+func (s *sqliteStore) scanLinkSummaries(rows *sql.Rows) ([]bpfman.LinkSummary, error) {
+	var result []bpfman.LinkSummary
 
 	for rows.Next() {
-		var summary managed.LinkSummary
+		var summary bpfman.LinkSummary
 		var linkType string
 		var pinPath sql.NullString
 		var createdAtStr string
@@ -953,7 +953,7 @@ func (s *sqliteStore) scanLinkSummaries(rows *sql.Rows) ([]managed.LinkSummary, 
 			return nil, err
 		}
 
-		summary.LinkType = managed.LinkType(linkType)
+		summary.LinkType = bpfman.LinkType(linkType)
 		if pinPath.Valid {
 			summary.PinPath = pinPath.String
 		}
@@ -966,72 +966,72 @@ func (s *sqliteStore) scanLinkSummaries(rows *sql.Rows) ([]managed.LinkSummary, 
 }
 
 // getLinkDetails retrieves the type-specific details for a link.
-func (s *sqliteStore) getLinkDetails(ctx context.Context, linkType managed.LinkType, kernelLinkID uint32) (managed.LinkDetails, error) {
+func (s *sqliteStore) getLinkDetails(ctx context.Context, linkType bpfman.LinkType, kernelLinkID uint32) (bpfman.LinkDetails, error) {
 	switch linkType {
-	case managed.LinkTypeTracepoint:
+	case bpfman.LinkTypeTracepoint:
 		return s.getTracepointDetails(ctx, kernelLinkID)
-	case managed.LinkTypeKprobe, managed.LinkTypeKretprobe:
+	case bpfman.LinkTypeKprobe, bpfman.LinkTypeKretprobe:
 		return s.getKprobeDetails(ctx, kernelLinkID)
-	case managed.LinkTypeUprobe, managed.LinkTypeUretprobe:
+	case bpfman.LinkTypeUprobe, bpfman.LinkTypeUretprobe:
 		return s.getUprobeDetails(ctx, kernelLinkID)
-	case managed.LinkTypeFentry:
+	case bpfman.LinkTypeFentry:
 		return s.getFentryDetails(ctx, kernelLinkID)
-	case managed.LinkTypeFexit:
+	case bpfman.LinkTypeFexit:
 		return s.getFexitDetails(ctx, kernelLinkID)
-	case managed.LinkTypeXDP:
+	case bpfman.LinkTypeXDP:
 		return s.getXDPDetails(ctx, kernelLinkID)
-	case managed.LinkTypeTC:
+	case bpfman.LinkTypeTC:
 		return s.getTCDetails(ctx, kernelLinkID)
-	case managed.LinkTypeTCX:
+	case bpfman.LinkTypeTCX:
 		return s.getTCXDetails(ctx, kernelLinkID)
 	default:
 		return nil, fmt.Errorf("unknown link type: %s", linkType)
 	}
 }
 
-func (s *sqliteStore) getTracepointDetails(ctx context.Context, kernelLinkID uint32) (managed.TracepointDetails, error) {
+func (s *sqliteStore) getTracepointDetails(ctx context.Context, kernelLinkID uint32) (bpfman.TracepointDetails, error) {
 	row := s.stmtGetTracepointDetails.QueryRowContext(ctx, kernelLinkID)
 
-	var details managed.TracepointDetails
+	var details bpfman.TracepointDetails
 	err := row.Scan(&details.Group, &details.Name)
 	if err == sql.ErrNoRows {
-		return managed.TracepointDetails{}, fmt.Errorf("tracepoint details for %d: %w", kernelLinkID, store.ErrNotFound)
+		return bpfman.TracepointDetails{}, fmt.Errorf("tracepoint details for %d: %w", kernelLinkID, store.ErrNotFound)
 	}
 	if err != nil {
-		return managed.TracepointDetails{}, err
+		return bpfman.TracepointDetails{}, err
 	}
 	return details, nil
 }
 
-func (s *sqliteStore) getKprobeDetails(ctx context.Context, kernelLinkID uint32) (managed.KprobeDetails, error) {
+func (s *sqliteStore) getKprobeDetails(ctx context.Context, kernelLinkID uint32) (bpfman.KprobeDetails, error) {
 	row := s.stmtGetKprobeDetails.QueryRowContext(ctx, kernelLinkID)
 
-	var details managed.KprobeDetails
+	var details bpfman.KprobeDetails
 	var retprobe int
 	err := row.Scan(&details.FnName, &details.Offset, &retprobe)
 	if err == sql.ErrNoRows {
-		return managed.KprobeDetails{}, fmt.Errorf("kprobe details for %d: %w", kernelLinkID, store.ErrNotFound)
+		return bpfman.KprobeDetails{}, fmt.Errorf("kprobe details for %d: %w", kernelLinkID, store.ErrNotFound)
 	}
 	if err != nil {
-		return managed.KprobeDetails{}, err
+		return bpfman.KprobeDetails{}, err
 	}
 	details.Retprobe = retprobe == 1
 	return details, nil
 }
 
-func (s *sqliteStore) getUprobeDetails(ctx context.Context, kernelLinkID uint32) (managed.UprobeDetails, error) {
+func (s *sqliteStore) getUprobeDetails(ctx context.Context, kernelLinkID uint32) (bpfman.UprobeDetails, error) {
 	row := s.stmtGetUprobeDetails.QueryRowContext(ctx, kernelLinkID)
 
-	var details managed.UprobeDetails
+	var details bpfman.UprobeDetails
 	var fnName sql.NullString
 	var pid sql.NullInt64
 	var retprobe int
 	err := row.Scan(&details.Target, &fnName, &details.Offset, &pid, &retprobe)
 	if err == sql.ErrNoRows {
-		return managed.UprobeDetails{}, fmt.Errorf("uprobe details for %d: %w", kernelLinkID, store.ErrNotFound)
+		return bpfman.UprobeDetails{}, fmt.Errorf("uprobe details for %d: %w", kernelLinkID, store.ErrNotFound)
 	}
 	if err != nil {
-		return managed.UprobeDetails{}, err
+		return bpfman.UprobeDetails{}, err
 	}
 	if fnName.Valid {
 		details.FnName = fnName.String
@@ -1043,51 +1043,51 @@ func (s *sqliteStore) getUprobeDetails(ctx context.Context, kernelLinkID uint32)
 	return details, nil
 }
 
-func (s *sqliteStore) getFentryDetails(ctx context.Context, kernelLinkID uint32) (managed.FentryDetails, error) {
+func (s *sqliteStore) getFentryDetails(ctx context.Context, kernelLinkID uint32) (bpfman.FentryDetails, error) {
 	row := s.stmtGetFentryDetails.QueryRowContext(ctx, kernelLinkID)
 
-	var details managed.FentryDetails
+	var details bpfman.FentryDetails
 	err := row.Scan(&details.FnName)
 	if err == sql.ErrNoRows {
-		return managed.FentryDetails{}, fmt.Errorf("fentry details for %d: %w", kernelLinkID, store.ErrNotFound)
+		return bpfman.FentryDetails{}, fmt.Errorf("fentry details for %d: %w", kernelLinkID, store.ErrNotFound)
 	}
 	if err != nil {
-		return managed.FentryDetails{}, err
+		return bpfman.FentryDetails{}, err
 	}
 	return details, nil
 }
 
-func (s *sqliteStore) getFexitDetails(ctx context.Context, kernelLinkID uint32) (managed.FexitDetails, error) {
+func (s *sqliteStore) getFexitDetails(ctx context.Context, kernelLinkID uint32) (bpfman.FexitDetails, error) {
 	row := s.stmtGetFexitDetails.QueryRowContext(ctx, kernelLinkID)
 
-	var details managed.FexitDetails
+	var details bpfman.FexitDetails
 	err := row.Scan(&details.FnName)
 	if err == sql.ErrNoRows {
-		return managed.FexitDetails{}, fmt.Errorf("fexit details for %d: %w", kernelLinkID, store.ErrNotFound)
+		return bpfman.FexitDetails{}, fmt.Errorf("fexit details for %d: %w", kernelLinkID, store.ErrNotFound)
 	}
 	if err != nil {
-		return managed.FexitDetails{}, err
+		return bpfman.FexitDetails{}, err
 	}
 	return details, nil
 }
 
-func (s *sqliteStore) getXDPDetails(ctx context.Context, kernelLinkID uint32) (managed.XDPDetails, error) {
+func (s *sqliteStore) getXDPDetails(ctx context.Context, kernelLinkID uint32) (bpfman.XDPDetails, error) {
 	row := s.stmtGetXDPDetails.QueryRowContext(ctx, kernelLinkID)
 
-	var details managed.XDPDetails
+	var details bpfman.XDPDetails
 	var proceedOnJSON string
 	var netns sql.NullString
 	err := row.Scan(&details.Interface, &details.Ifindex, &details.Priority, &details.Position,
 		&proceedOnJSON, &netns, &details.Nsid, &details.DispatcherID, &details.Revision)
 	if err == sql.ErrNoRows {
-		return managed.XDPDetails{}, fmt.Errorf("xdp details for %d: %w", kernelLinkID, store.ErrNotFound)
+		return bpfman.XDPDetails{}, fmt.Errorf("xdp details for %d: %w", kernelLinkID, store.ErrNotFound)
 	}
 	if err != nil {
-		return managed.XDPDetails{}, err
+		return bpfman.XDPDetails{}, err
 	}
 
 	if err := json.Unmarshal([]byte(proceedOnJSON), &details.ProceedOn); err != nil {
-		return managed.XDPDetails{}, fmt.Errorf("failed to unmarshal proceed_on: %w", err)
+		return bpfman.XDPDetails{}, fmt.Errorf("failed to unmarshal proceed_on: %w", err)
 	}
 	if netns.Valid {
 		details.Netns = netns.String
@@ -1095,23 +1095,23 @@ func (s *sqliteStore) getXDPDetails(ctx context.Context, kernelLinkID uint32) (m
 	return details, nil
 }
 
-func (s *sqliteStore) getTCDetails(ctx context.Context, kernelLinkID uint32) (managed.TCDetails, error) {
+func (s *sqliteStore) getTCDetails(ctx context.Context, kernelLinkID uint32) (bpfman.TCDetails, error) {
 	row := s.stmtGetTCDetails.QueryRowContext(ctx, kernelLinkID)
 
-	var details managed.TCDetails
+	var details bpfman.TCDetails
 	var proceedOnJSON string
 	var netns sql.NullString
 	err := row.Scan(&details.Interface, &details.Ifindex, &details.Direction, &details.Priority, &details.Position,
 		&proceedOnJSON, &netns, &details.Nsid, &details.DispatcherID, &details.Revision)
 	if err == sql.ErrNoRows {
-		return managed.TCDetails{}, fmt.Errorf("tc details for %d: %w", kernelLinkID, store.ErrNotFound)
+		return bpfman.TCDetails{}, fmt.Errorf("tc details for %d: %w", kernelLinkID, store.ErrNotFound)
 	}
 	if err != nil {
-		return managed.TCDetails{}, err
+		return bpfman.TCDetails{}, err
 	}
 
 	if err := json.Unmarshal([]byte(proceedOnJSON), &details.ProceedOn); err != nil {
-		return managed.TCDetails{}, fmt.Errorf("failed to unmarshal proceed_on: %w", err)
+		return bpfman.TCDetails{}, fmt.Errorf("failed to unmarshal proceed_on: %w", err)
 	}
 	if netns.Valid {
 		details.Netns = netns.String
@@ -1119,18 +1119,18 @@ func (s *sqliteStore) getTCDetails(ctx context.Context, kernelLinkID uint32) (ma
 	return details, nil
 }
 
-func (s *sqliteStore) getTCXDetails(ctx context.Context, kernelLinkID uint32) (managed.TCXDetails, error) {
+func (s *sqliteStore) getTCXDetails(ctx context.Context, kernelLinkID uint32) (bpfman.TCXDetails, error) {
 	row := s.stmtGetTCXDetails.QueryRowContext(ctx, kernelLinkID)
 
-	var details managed.TCXDetails
+	var details bpfman.TCXDetails
 	var netns sql.NullString
 	var nsid sql.NullInt64
 	err := row.Scan(&details.Interface, &details.Ifindex, &details.Direction, &details.Priority, &netns, &nsid)
 	if err == sql.ErrNoRows {
-		return managed.TCXDetails{}, fmt.Errorf("tcx details for %d: %w", kernelLinkID, store.ErrNotFound)
+		return bpfman.TCXDetails{}, fmt.Errorf("tcx details for %d: %w", kernelLinkID, store.ErrNotFound)
 	}
 	if err != nil {
-		return managed.TCXDetails{}, err
+		return bpfman.TCXDetails{}, err
 	}
 
 	if netns.Valid {
@@ -1147,19 +1147,19 @@ func (s *sqliteStore) getTCXDetails(ctx context.Context, kernelLinkID uint32) (m
 // ----------------------------------------------------------------------------
 
 // GetDispatcher retrieves a dispatcher by type, nsid, and ifindex.
-func (s *sqliteStore) GetDispatcher(ctx context.Context, dispType string, nsid uint64, ifindex uint32) (managed.DispatcherState, error) {
+func (s *sqliteStore) GetDispatcher(ctx context.Context, dispType string, nsid uint64, ifindex uint32) (bpfman.DispatcherState, error) {
 	row := s.stmtGetDispatcher.QueryRowContext(ctx, dispType, nsid, ifindex)
 
-	var state managed.DispatcherState
+	var state bpfman.DispatcherState
 	var id int64
 	var dispTypeStr string
 	err := row.Scan(&id, &dispTypeStr, &state.Nsid, &state.Ifindex, &state.Revision,
 		&state.KernelID, &state.LinkID, &state.LinkPinPath, &state.ProgPinPath, &state.NumExtensions)
 	if err == sql.ErrNoRows {
-		return managed.DispatcherState{}, fmt.Errorf("dispatcher (%s, %d, %d): %w", dispType, nsid, ifindex, store.ErrNotFound)
+		return bpfman.DispatcherState{}, fmt.Errorf("dispatcher (%s, %d, %d): %w", dispType, nsid, ifindex, store.ErrNotFound)
 	}
 	if err != nil {
-		return managed.DispatcherState{}, err
+		return bpfman.DispatcherState{}, err
 	}
 
 	state.Type = dispatcher.DispatcherType(dispTypeStr)
@@ -1167,7 +1167,7 @@ func (s *sqliteStore) GetDispatcher(ctx context.Context, dispType string, nsid u
 }
 
 // SaveDispatcher creates or updates a dispatcher.
-func (s *sqliteStore) SaveDispatcher(ctx context.Context, state managed.DispatcherState) error {
+func (s *sqliteStore) SaveDispatcher(ctx context.Context, state bpfman.DispatcherState) error {
 	now := time.Now().Format(time.RFC3339)
 
 	_, err := s.stmtSaveDispatcher.ExecContext(ctx,
