@@ -1,4 +1,4 @@
-package compute
+package compute_test
 
 import (
 	"testing"
@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/frobware/go-bpfman/pkg/bpfman/action"
+	"github.com/frobware/go-bpfman/pkg/bpfman/compute"
 	"github.com/frobware/go-bpfman/pkg/bpfman/kernel"
 	"github.com/frobware/go-bpfman/pkg/bpfman/managed"
 )
@@ -24,7 +25,7 @@ func TestReconcileActions_OrphanedPrograms(t *testing.T) {
 		// ID 2 and 3 are gone from kernel
 	}
 
-	actions := ReconcileActions(stored, kps)
+	actions := compute.ReconcileActions(stored, kps)
 
 	// Should have 2 delete actions for IDs 2 and 3
 	require.Len(t, actions, 2, "expected 2 actions")
@@ -50,7 +51,7 @@ func TestReconcileActions_NoOrphans(t *testing.T) {
 		{ID: 2, Name: "prog2"}, // Unmanaged, not in store
 	}
 
-	actions := ReconcileActions(stored, kps)
+	actions := compute.ReconcileActions(stored, kps)
 
 	assert.Empty(t, actions, "expected 0 actions")
 }
@@ -62,7 +63,7 @@ func TestReconcileActions_EmptyStore(t *testing.T) {
 		{ID: 1, Name: "prog1"},
 	}
 
-	actions := ReconcileActions(stored, kps)
+	actions := compute.ReconcileActions(stored, kps)
 
 	assert.Empty(t, actions, "expected 0 actions")
 }
@@ -77,7 +78,7 @@ func TestOrphanedPrograms(t *testing.T) {
 		{ID: 1, Name: "prog1"},
 	}
 
-	orphaned := OrphanedPrograms(stored, kps)
+	orphaned := compute.OrphanedPrograms(stored, kps)
 
 	require.Len(t, orphaned, 1, "expected 1 orphaned")
 	assert.Equal(t, uint32(2), orphaned[0], "expected orphaned ID 2")
@@ -94,7 +95,7 @@ func TestUnmanagedPrograms(t *testing.T) {
 		{ID: 3, Name: "prog3"},
 	}
 
-	unmanaged := UnmanagedPrograms(stored, kps)
+	unmanaged := compute.UnmanagedPrograms(stored, kps)
 
 	assert.Len(t, unmanaged, 2, "expected 2 unmanaged")
 }

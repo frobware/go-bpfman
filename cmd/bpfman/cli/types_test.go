@@ -1,4 +1,4 @@
-package cli
+package cli_test
 
 import (
 	"testing"
@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/frobware/go-bpfman/cmd/bpfman/cli"
 	"github.com/frobware/go-bpfman/pkg/bpfman"
 )
 
@@ -33,7 +34,7 @@ func TestParseProgramSpec_ValidInputs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			spec, err := ParseProgramSpec(tt.input)
+			spec, err := cli.ParseProgramSpec(tt.input)
 			require.NoError(t, err)
 			assert.Equal(t, tt.expectedType, spec.Type)
 			assert.Equal(t, tt.expectedName, spec.Name)
@@ -60,7 +61,7 @@ func TestParseProgramSpec_InvalidInputs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			_, err := ParseProgramSpec(tt.input)
+			_, err := cli.ParseProgramSpec(tt.input)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tt.errContains)
 		})

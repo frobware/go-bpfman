@@ -1,4 +1,4 @@
-package sqlite
+package sqlite_test
 
 import (
 	"context"
@@ -14,6 +14,7 @@ import (
 
 	"github.com/frobware/go-bpfman/pkg/bpfman"
 	"github.com/frobware/go-bpfman/pkg/bpfman/dispatcher"
+	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter/store/sqlite"
 	"github.com/frobware/go-bpfman/pkg/bpfman/managed"
 )
 
@@ -27,7 +28,7 @@ func testLogger() *slog.Logger {
 }
 
 func TestForeignKey_LinkRequiresProgram(t *testing.T) {
-	store, err := NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(testLogger())
 	require.NoError(t, err, "failed to create store")
 	defer store.Close()
 
@@ -51,7 +52,7 @@ func TestForeignKey_LinkRequiresProgram(t *testing.T) {
 }
 
 func TestForeignKey_CascadeDeleteRemovesLinks(t *testing.T) {
-	store, err := NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(testLogger())
 	require.NoError(t, err, "failed to create store")
 	defer store.Close()
 
@@ -97,7 +98,7 @@ func TestForeignKey_CascadeDeleteRemovesLinks(t *testing.T) {
 }
 
 func TestForeignKey_CascadeDeleteRemovesMetadataIndex(t *testing.T) {
-	store, err := NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(testLogger())
 	require.NoError(t, err, "failed to create store")
 	defer store.Close()
 
@@ -131,7 +132,7 @@ func TestForeignKey_CascadeDeleteRemovesMetadataIndex(t *testing.T) {
 }
 
 func TestUniqueIndex_ProgramNameEnforcesUniqueness(t *testing.T) {
-	store, err := NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(testLogger())
 	require.NoError(t, err, "failed to create store")
 	defer store.Close()
 
@@ -163,7 +164,7 @@ func TestUniqueIndex_ProgramNameEnforcesUniqueness(t *testing.T) {
 }
 
 func TestUniqueIndex_DifferentNamesAllowed(t *testing.T) {
-	store, err := NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(testLogger())
 	require.NoError(t, err, "failed to create store")
 	defer store.Close()
 
@@ -189,7 +190,7 @@ func TestUniqueIndex_DifferentNamesAllowed(t *testing.T) {
 }
 
 func TestUniqueIndex_NameCanBeReusedAfterDelete(t *testing.T) {
-	store, err := NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(testLogger())
 	require.NoError(t, err, "failed to create store")
 	defer store.Close()
 
@@ -228,7 +229,7 @@ func TestUniqueIndex_NameCanBeReusedAfterDelete(t *testing.T) {
 }
 
 func TestLinkRegistry_TracepointRoundTrip(t *testing.T) {
-	store, err := NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(testLogger())
 	require.NoError(t, err, "failed to create store")
 	defer store.Close()
 
@@ -273,7 +274,7 @@ func TestLinkRegistry_TracepointRoundTrip(t *testing.T) {
 }
 
 func TestLinkRegistry_KernelLinkIDUniqueness(t *testing.T) {
-	store, err := NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(testLogger())
 	require.NoError(t, err, "failed to create store")
 	defer store.Close()
 
@@ -311,7 +312,7 @@ func TestLinkRegistry_KernelLinkIDUniqueness(t *testing.T) {
 }
 
 func TestLinkRegistry_CascadeDeleteFromRegistry(t *testing.T) {
-	store, err := NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(testLogger())
 	require.NoError(t, err, "failed to create store")
 	defer store.Close()
 
@@ -346,7 +347,7 @@ func TestLinkRegistry_CascadeDeleteFromRegistry(t *testing.T) {
 // ----------------------------------------------------------------------------
 
 func TestDispatcherStore_SaveAndGet(t *testing.T) {
-	store, err := NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(testLogger())
 	require.NoError(t, err, "failed to create store")
 	defer store.Close()
 
@@ -383,7 +384,7 @@ func TestDispatcherStore_SaveAndGet(t *testing.T) {
 }
 
 func TestDispatcherStore_Update(t *testing.T) {
-	store, err := NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(testLogger())
 	require.NoError(t, err, "failed to create store")
 	defer store.Close()
 
@@ -421,7 +422,7 @@ func TestDispatcherStore_Update(t *testing.T) {
 }
 
 func TestDispatcherStore_Delete(t *testing.T) {
-	store, err := NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(testLogger())
 	require.NoError(t, err, "failed to create store")
 	defer store.Close()
 
@@ -451,7 +452,7 @@ func TestDispatcherStore_Delete(t *testing.T) {
 }
 
 func TestDispatcherStore_DeleteNonExistent(t *testing.T) {
-	store, err := NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(testLogger())
 	require.NoError(t, err, "failed to create store")
 	defer store.Close()
 
@@ -463,7 +464,7 @@ func TestDispatcherStore_DeleteNonExistent(t *testing.T) {
 }
 
 func TestDispatcherStore_IncrementRevision(t *testing.T) {
-	store, err := NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(testLogger())
 	require.NoError(t, err, "failed to create store")
 	defer store.Close()
 
@@ -501,7 +502,7 @@ func TestDispatcherStore_IncrementRevision(t *testing.T) {
 }
 
 func TestDispatcherStore_UniqueConstraint(t *testing.T) {
-	store, err := NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(testLogger())
 	require.NoError(t, err, "failed to create store")
 	defer store.Close()
 
@@ -546,7 +547,7 @@ func TestDispatcherStore_UniqueConstraint(t *testing.T) {
 }
 
 func TestDispatcherStore_DifferentInterfaces(t *testing.T) {
-	store, err := NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(testLogger())
 	require.NoError(t, err, "failed to create store")
 	defer store.Close()
 
