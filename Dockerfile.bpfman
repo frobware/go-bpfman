@@ -7,14 +7,28 @@ WORKDIR /build
 
 COPY go.mod go.sum Makefile ./
 COPY vendor/ vendor/
+
+# Copy root-level Go files (package bpfman)
+COPY *.go ./
+
+# Copy all packages
+COPY action/ action/
+COPY bpffs/ bpffs/
+COPY client/ client/
 COPY cmd/ cmd/
-COPY pkg/ pkg/
+COPY compute/ compute/
+COPY config/ config/
+COPY csi/ csi/
+COPY dispatcher/ dispatcher/
+COPY interpreter/ interpreter/
+COPY kernel/ kernel/
+COPY logging/ logging/
+COPY manager/ manager/
+COPY netns/ netns/
+COPY server/ server/
 
-RUN  mkdir -p pkg/bpfman/dispatcher
-
-# TODO - build in-situ.
-COPY dispatchers/tc_dispatcher.bpf.o pkg/bpfman/dispatcher/
-COPY dispatchers/xdp_dispatcher_v2.bpf.o pkg/bpfman/dispatcher/
+# Copy dispatcher bytecode
+COPY dispatchers/ dispatchers/
 
 RUN --mount=type=cache,target=/root/.cache/go-build \
     make bpfman-build
