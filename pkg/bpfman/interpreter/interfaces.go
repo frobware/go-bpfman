@@ -197,6 +197,13 @@ type PinRemover interface {
 	RemovePin(path string) error
 }
 
+// MapRepinner re-pins maps to new locations.
+type MapRepinner interface {
+	// RepinMap loads a pinned map and re-pins it to a new path.
+	// Used by CSI to expose maps to per-pod bpffs.
+	RepinMap(srcPath, dstPath string) error
+}
+
 // KernelOperations combines all kernel operations.
 type KernelOperations interface {
 	KernelSource
@@ -207,6 +214,7 @@ type KernelOperations interface {
 	DispatcherAttacher
 	LinkDetacher
 	PinRemover
+	MapRepinner
 }
 
 // ImageRef describes an OCI image to pull.

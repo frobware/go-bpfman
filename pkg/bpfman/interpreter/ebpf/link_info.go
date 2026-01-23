@@ -8,29 +8,29 @@ import (
 	"github.com/frobware/go-bpfman/pkg/bpfman"
 )
 
-// LinkInfo wraps cilium/ebpf's link.Info to implement bpfman.KernelLinkInfo.
-type LinkInfo struct {
+// linkInfo wraps cilium/ebpf's link.Info to implement bpfman.KernelLinkInfo.
+type linkInfo struct {
 	raw *link.Info
 }
 
 // NewLinkInfo creates a KernelLinkInfo from a cilium/ebpf link.Info.
-func NewLinkInfo(info *link.Info) *LinkInfo {
-	return &LinkInfo{raw: info}
+func NewLinkInfo(info *link.Info) bpfman.KernelLinkInfo {
+	return &linkInfo{raw: info}
 }
 
-func (l *LinkInfo) ID() uint32 {
+func (l *linkInfo) ID() uint32 {
 	return uint32(l.raw.ID)
 }
 
-func (l *LinkInfo) ProgramID() uint32 {
+func (l *linkInfo) ProgramID() uint32 {
 	return uint32(l.raw.Program)
 }
 
-func (l *LinkInfo) LinkType() string {
+func (l *linkInfo) LinkType() string {
 	return linkTypeString(l.raw.Type)
 }
 
-func (l *LinkInfo) AttachType() string {
+func (l *linkInfo) AttachType() string {
 	// Extract attach type from type-specific info
 	if tracing := l.raw.Tracing(); tracing != nil {
 		return fmt.Sprintf("%d", tracing.AttachType)
@@ -50,7 +50,7 @@ func (l *LinkInfo) AttachType() string {
 	return ""
 }
 
-func (l *LinkInfo) TargetObjID() uint32 {
+func (l *linkInfo) TargetObjID() uint32 {
 	// Return the target object ID based on link type
 	if xdp := l.raw.XDP(); xdp != nil {
 		return xdp.Ifindex
@@ -70,7 +70,7 @@ func (l *LinkInfo) TargetObjID() uint32 {
 	return 0
 }
 
-func (l *LinkInfo) TargetBTFId() uint32 {
+func (l *linkInfo) TargetBTFId() uint32 {
 	if tracing := l.raw.Tracing(); tracing != nil {
 		return uint32(tracing.TargetBtfId)
 	}
@@ -78,4 +78,4 @@ func (l *LinkInfo) TargetBTFId() uint32 {
 }
 
 // Verify interface compliance at compile time.
-var _ bpfman.KernelLinkInfo = (*LinkInfo)(nil)
+var _ bpfman.KernelLinkInfo = (*linkInfo)(nil)

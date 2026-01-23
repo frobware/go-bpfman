@@ -20,16 +20,16 @@ import (
 	"github.com/frobware/go-bpfman/pkg/bpfman/managed"
 )
 
-// Kernel implements interpreter.KernelOperations using cilium/ebpf.
-type Kernel struct{}
+// kernelAdapter implements interpreter.KernelOperations using cilium/ebpf.
+type kernelAdapter struct{}
 
 // New creates a new kernel adapter.
-func New() *Kernel {
-	return &Kernel{}
+func New() interpreter.KernelOperations {
+	return &kernelAdapter{}
 }
 
 // GetProgramByID retrieves a kernel program by its ID.
-func (k *Kernel) GetProgramByID(ctx context.Context, id uint32) (kernel.Program, error) {
+func (k *kernelAdapter) GetProgramByID(ctx context.Context, id uint32) (kernel.Program, error) {
 	prog, err := ebpf.NewProgramFromID(ebpf.ProgramID(id))
 	if err != nil {
 		return kernel.Program{}, fmt.Errorf("program %d: %w", id, err)
@@ -45,7 +45,7 @@ func (k *Kernel) GetProgramByID(ctx context.Context, id uint32) (kernel.Program,
 }
 
 // GetLinkByID retrieves a kernel link by its ID.
-func (k *Kernel) GetLinkByID(ctx context.Context, id uint32) (kernel.Link, error) {
+func (k *kernelAdapter) GetLinkByID(ctx context.Context, id uint32) (kernel.Link, error) {
 	lnk, err := link.NewFromID(link.ID(id))
 	if err != nil {
 		return kernel.Link{}, fmt.Errorf("link %d: %w", id, err)
@@ -61,7 +61,7 @@ func (k *Kernel) GetLinkByID(ctx context.Context, id uint32) (kernel.Link, error
 }
 
 // GetMapByID retrieves a kernel map by its ID.
-func (k *Kernel) GetMapByID(ctx context.Context, id uint32) (kernel.Map, error) {
+func (k *kernelAdapter) GetMapByID(ctx context.Context, id uint32) (kernel.Map, error) {
 	m, err := ebpf.NewMapFromID(ebpf.MapID(id))
 	if err != nil {
 		return kernel.Map{}, fmt.Errorf("map %d: %w", id, err)
@@ -77,7 +77,7 @@ func (k *Kernel) GetMapByID(ctx context.Context, id uint32) (kernel.Map, error) 
 }
 
 // Programs returns an iterator over kernel BPF programs.
-func (k *Kernel) Programs(ctx context.Context) iter.Seq2[kernel.Program, error] {
+func (k *kernelAdapter) Programs(ctx context.Context) iter.Seq2[kernel.Program, error] {
 	return func(yield func(kernel.Program, error) bool) {
 		var id ebpf.ProgramID
 		for {
@@ -113,7 +113,7 @@ func (k *Kernel) Programs(ctx context.Context) iter.Seq2[kernel.Program, error] 
 }
 
 // Maps returns an iterator over kernel BPF maps.
-func (k *Kernel) Maps(ctx context.Context) iter.Seq2[kernel.Map, error] {
+func (k *kernelAdapter) Maps(ctx context.Context) iter.Seq2[kernel.Map, error] {
 	return func(yield func(kernel.Map, error) bool) {
 		var id ebpf.MapID
 		for {
@@ -149,7 +149,7 @@ func (k *Kernel) Maps(ctx context.Context) iter.Seq2[kernel.Map, error] {
 }
 
 // Links returns an iterator over kernel BPF links.
-func (k *Kernel) Links(ctx context.Context) iter.Seq2[kernel.Link, error] {
+func (k *kernelAdapter) Links(ctx context.Context) iter.Seq2[kernel.Link, error] {
 	return func(yield func(kernel.Link, error) bool) {
 		it := new(link.Iterator)
 		defer it.Close()
@@ -185,7 +185,7 @@ func (k *Kernel) Links(ctx context.Context) iter.Seq2[kernel.Link, error] {
 //
 // spec.PinPath is the bpffs root (e.g., /run/bpfman/fs/).
 // On failure, all successfully pinned objects are cleaned up.
-func (k *Kernel) Load(ctx context.Context, spec managed.LoadSpec) (bpfman.ManagedProgram, error) {
+func (k *kernelAdapter) Load(ctx context.Context, spec managed.LoadSpec) (bpfman.ManagedProgram, error) {
 	// Load the collection from the object file
 	collSpec, err := ebpf.LoadCollectionSpec(spec.ObjectPath)
 	if err != nil {
@@ -277,7 +277,7 @@ func (k *Kernel) Load(ctx context.Context, spec managed.LoadSpec) (bpfman.Manage
 // Unload removes a BPF program from the kernel by unpinning.
 // Handles both old-style (directory containing everything) and new-style
 // (separate program pin and maps directory) layouts.
-func (k *Kernel) Unload(ctx context.Context, pinPath string) error {
+func (k *kernelAdapter) Unload(ctx context.Context, pinPath string) error {
 	info, err := os.Stat(pinPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -317,7 +317,7 @@ func (k *Kernel) Unload(ctx context.Context, pinPath string) error {
 // UnloadProgram removes a program and its maps using the upstream pin layout.
 // progPinPath is the program pin (e.g., /run/bpfman/fs/prog_123)
 // mapsDir is the maps directory (e.g., /run/bpfman/fs/maps/123)
-func (k *Kernel) UnloadProgram(ctx context.Context, progPinPath, mapsDir string) error {
+func (k *kernelAdapter) UnloadProgram(ctx context.Context, progPinPath, mapsDir string) error {
 	// Remove program pin
 	if err := os.Remove(progPinPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to unpin program %s: %w", progPinPath, err)
@@ -458,7 +458,7 @@ func linkTypeString(t link.Type) string {
 // ============================================================================
 
 // ListPinDir scans a bpffs directory and returns its contents.
-func (k *Kernel) ListPinDir(pinDir string, includeMaps bool) (*kernel.PinDirContents, error) {
+func (k *kernelAdapter) ListPinDir(pinDir string, includeMaps bool) (*kernel.PinDirContents, error) {
 	entries, err := os.ReadDir(pinDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read pin directory: %w", err)
@@ -523,7 +523,7 @@ func (k *Kernel) ListPinDir(pinDir string, includeMaps bool) (*kernel.PinDirCont
 }
 
 // GetPinned loads and returns info about a pinned program.
-func (k *Kernel) GetPinned(pinPath string) (*kernel.PinnedProgram, error) {
+func (k *kernelAdapter) GetPinned(pinPath string) (*kernel.PinnedProgram, error) {
 	prog, err := ebpf.LoadPinnedProgram(pinPath, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load pinned program: %w", err)
@@ -558,7 +558,7 @@ func (k *Kernel) GetPinned(pinPath string) (*kernel.PinnedProgram, error) {
 // LoadSingle loads a single program and returns CLI-friendly output.
 // This is a convenience method for CLI usage that creates the pin directory
 // if it doesn't exist. For transactional loads, use Manager.Load instead.
-func (k *Kernel) LoadSingle(ctx context.Context, objectPath, programName, pinDir string) (*kernel.LoadResult, error) {
+func (k *kernelAdapter) LoadSingle(ctx context.Context, objectPath, programName, pinDir string) (*kernel.LoadResult, error) {
 	// Create pin directory for CLI convenience
 	if err := os.MkdirAll(pinDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create pin directory: %w", err)
@@ -620,7 +620,7 @@ func (k *Kernel) LoadSingle(ctx context.Context, objectPath, programName, pinDir
 
 // RepinMap loads a pinned map and re-pins it to a new path.
 // This is used by CSI to expose maps to per-pod bpffs.
-func (k *Kernel) RepinMap(srcPath, dstPath string) error {
+func (k *kernelAdapter) RepinMap(srcPath, dstPath string) error {
 	m, err := ebpf.LoadPinnedMap(srcPath, nil)
 	if err != nil {
 		return fmt.Errorf("load pinned map %s: %w", srcPath, err)
@@ -644,7 +644,7 @@ func (k *Kernel) RepinMap(srcPath, dstPath string) error {
 }
 
 // Unpin removes all pins from a directory.
-func (k *Kernel) Unpin(pinDir string) (int, error) {
+func (k *kernelAdapter) Unpin(pinDir string) (int, error) {
 	entries, err := os.ReadDir(pinDir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -671,7 +671,7 @@ func (k *Kernel) Unpin(pinDir string) (int, error) {
 
 // DetachLink removes a pinned link by deleting its pin from bpffs.
 // This releases the kernel link if it was the last reference.
-func (k *Kernel) DetachLink(linkPinPath string) error {
+func (k *kernelAdapter) DetachLink(linkPinPath string) error {
 	if err := os.Remove(linkPinPath); err != nil {
 		if os.IsNotExist(err) {
 			return nil // Already gone
@@ -683,7 +683,7 @@ func (k *Kernel) DetachLink(linkPinPath string) error {
 
 // RemovePin removes a pin or empty directory from bpffs.
 // Returns nil if the path does not exist.
-func (k *Kernel) RemovePin(path string) error {
+func (k *kernelAdapter) RemovePin(path string) error {
 	if err := os.Remove(path); err != nil {
 		if os.IsNotExist(err) {
 			return nil // Already gone
@@ -694,7 +694,7 @@ func (k *Kernel) RemovePin(path string) error {
 }
 
 // AttachTracepoint attaches a pinned program to a tracepoint.
-func (k *Kernel) AttachTracepoint(progPinPath, group, name, linkPinPath string) (bpfman.ManagedLink, error) {
+func (k *kernelAdapter) AttachTracepoint(progPinPath, group, name, linkPinPath string) (bpfman.ManagedLink, error) {
 	prog, err := ebpf.LoadPinnedProgram(progPinPath, nil)
 	if err != nil {
 		return bpfman.ManagedLink{}, fmt.Errorf("load pinned program %s: %w", progPinPath, err)
@@ -748,7 +748,7 @@ func (k *Kernel) AttachTracepoint(progPinPath, group, name, linkPinPath string) 
 }
 
 // AttachXDP attaches a pinned XDP program to a network interface.
-func (k *Kernel) AttachXDP(progPinPath string, ifindex int, linkPinPath string) (bpfman.ManagedLink, error) {
+func (k *kernelAdapter) AttachXDP(progPinPath string, ifindex int, linkPinPath string) (bpfman.ManagedLink, error) {
 	prog, err := ebpf.LoadPinnedProgram(progPinPath, nil)
 	if err != nil {
 		return bpfman.ManagedLink{}, fmt.Errorf("load pinned program %s: %w", progPinPath, err)
@@ -805,7 +805,7 @@ func (k *Kernel) AttachXDP(progPinPath string, ifindex int, linkPinPath string) 
 
 // AttachXDPDispatcher loads and attaches an XDP dispatcher to an interface.
 // The dispatcher allows multiple XDP programs to be chained together.
-func (k *Kernel) AttachXDPDispatcher(ifindex int, pinDir string, numProgs int, proceedOn uint32) (*interpreter.XDPDispatcherResult, error) {
+func (k *kernelAdapter) AttachXDPDispatcher(ifindex int, pinDir string, numProgs int, proceedOn uint32) (*interpreter.XDPDispatcherResult, error) {
 	// Configure the dispatcher
 	cfg := dispatcher.NewXDPConfig(numProgs)
 	for i := 0; i < dispatcher.MaxPrograms; i++ {
@@ -896,7 +896,7 @@ func (k *Kernel) AttachXDPDispatcher(ifindex int, pinDir string, numProgs int, p
 // This follows the Rust bpfman convention where:
 //   - progPinPath: revision-specific path for the dispatcher program
 //   - linkPinPath: stable path for the XDP link (outside revision directory)
-func (k *Kernel) AttachXDPDispatcherWithPaths(ifindex int, progPinPath, linkPinPath string, numProgs int, proceedOn uint32) (*interpreter.XDPDispatcherResult, error) {
+func (k *kernelAdapter) AttachXDPDispatcherWithPaths(ifindex int, progPinPath, linkPinPath string, numProgs int, proceedOn uint32) (*interpreter.XDPDispatcherResult, error) {
 	// Configure the dispatcher
 	cfg := dispatcher.NewXDPConfig(numProgs)
 	for i := 0; i < dispatcher.MaxPrograms; i++ {
@@ -1000,7 +1000,7 @@ func (k *Kernel) AttachXDPDispatcherWithPaths(ifindex int, progPinPath, linkPinP
 // specifically as BPF_PROG_TYPE_EXT with the dispatcher as the attach target.
 // The same ELF bytecode used for direct XDP attachment is reloaded with
 // different type settings.
-func (k *Kernel) AttachXDPExtension(dispatcherPinPath, objectPath, programName string, position int, linkPinPath string) (bpfman.ManagedLink, error) {
+func (k *kernelAdapter) AttachXDPExtension(dispatcherPinPath, objectPath, programName string, position int, linkPinPath string) (bpfman.ManagedLink, error) {
 	// Load the pinned dispatcher to use as attach target
 	dispatcherProg, err := ebpf.LoadPinnedProgram(dispatcherPinPath, nil)
 	if err != nil {

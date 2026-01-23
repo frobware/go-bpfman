@@ -307,6 +307,10 @@ func (f *fakeKernel) RemovePin(path string) error {
 	return nil // Fake implementation - no-op
 }
 
+func (f *fakeKernel) RepinMap(srcPath, dstPath string) error {
+	return nil // Fake implementation - no-op
+}
+
 // newTestServer creates a server with fake kernel and real in-memory SQLite.
 func newTestServer(t *testing.T) *Server {
 	t.Helper()
@@ -314,7 +318,7 @@ func newTestServer(t *testing.T) *Server {
 	require.NoError(t, err, "failed to create store")
 	t.Cleanup(func() { store.Close() })
 	dirs := config.NewRuntimeDirs(t.TempDir())
-	return New(dirs, store, newFakeKernel(), testLogger())
+	return New(dirs, store, newFakeKernel(), nil, testLogger())
 }
 
 // TestLoadProgram_WithValidRequest_Succeeds verifies that:

@@ -8,26 +8,26 @@ import (
 	"github.com/frobware/go-bpfman/pkg/bpfman"
 )
 
-// ProgramInfo wraps cilium/ebpf's ProgramInfo to implement bpfman.KernelProgramInfo.
-type ProgramInfo struct {
+// programInfo wraps cilium/ebpf's ProgramInfo to implement bpfman.KernelProgramInfo.
+type programInfo struct {
 	raw *ebpf.ProgramInfo
 }
 
 // NewProgramInfo creates a KernelProgramInfo from a cilium/ebpf ProgramInfo.
-func NewProgramInfo(info *ebpf.ProgramInfo) *ProgramInfo {
-	return &ProgramInfo{raw: info}
+func NewProgramInfo(info *ebpf.ProgramInfo) bpfman.KernelProgramInfo {
+	return &programInfo{raw: info}
 }
 
-func (p *ProgramInfo) ID() uint32 {
+func (p *programInfo) ID() uint32 {
 	id, _ := p.raw.ID()
 	return uint32(id)
 }
 
-func (p *ProgramInfo) Name() string {
+func (p *programInfo) Name() string {
 	return p.raw.Name
 }
 
-func (p *ProgramInfo) Type() bpfman.ProgramType {
+func (p *programInfo) Type() bpfman.ProgramType {
 	// Map cilium/ebpf ProgramType to our ProgramType
 	switch p.raw.Type {
 	case ebpf.XDP:
@@ -46,11 +46,11 @@ func (p *ProgramInfo) Type() bpfman.ProgramType {
 	}
 }
 
-func (p *ProgramInfo) Tag() string {
+func (p *programInfo) Tag() string {
 	return p.raw.Tag
 }
 
-func (p *ProgramInfo) MapIDs() []uint32 {
+func (p *programInfo) MapIDs() []uint32 {
 	ids, ok := p.raw.MapIDs()
 	if !ok {
 		return nil
@@ -62,27 +62,27 @@ func (p *ProgramInfo) MapIDs() []uint32 {
 	return result
 }
 
-func (p *ProgramInfo) BTFId() uint32 {
+func (p *programInfo) BTFId() uint32 {
 	id, _ := p.raw.BTFID()
 	return uint32(id)
 }
 
-func (p *ProgramInfo) BytesXlated() uint32 {
+func (p *programInfo) BytesXlated() uint32 {
 	size, _ := p.raw.TranslatedSize()
 	return uint32(size)
 }
 
-func (p *ProgramInfo) BytesJited() uint32 {
+func (p *programInfo) BytesJited() uint32 {
 	size, _ := p.raw.JitedSize()
 	return size
 }
 
-func (p *ProgramInfo) VerifiedInstructions() uint32 {
+func (p *programInfo) VerifiedInstructions() uint32 {
 	insns, _ := p.raw.VerifiedInstructions()
 	return insns
 }
 
-func (p *ProgramInfo) LoadedAt() time.Time {
+func (p *programInfo) LoadedAt() time.Time {
 	// LoadTime returns duration since boot
 	loadTime, ok := p.raw.LoadTime()
 	if !ok {
@@ -98,12 +98,12 @@ func (p *ProgramInfo) LoadedAt() time.Time {
 	return bootTime().Add(loadTime)
 }
 
-func (p *ProgramInfo) MemoryLocked() uint64 {
+func (p *programInfo) MemoryLocked() uint64 {
 	mem, _ := p.raw.Memlock()
 	return mem
 }
 
-func (p *ProgramInfo) GPLCompatible() bool {
+func (p *programInfo) GPLCompatible() bool {
 	// cilium/ebpf doesn't directly expose GPL compatibility
 	// We'll return true as a default since most BPF programs are GPL
 	// TODO: investigate if there's a way to get this from cilium/ebpf
@@ -111,4 +111,4 @@ func (p *ProgramInfo) GPLCompatible() bool {
 }
 
 // Verify interface compliance at compile time.
-var _ bpfman.KernelProgramInfo = (*ProgramInfo)(nil)
+var _ bpfman.KernelProgramInfo = (*programInfo)(nil)
