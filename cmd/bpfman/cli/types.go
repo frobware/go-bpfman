@@ -1,4 +1,3 @@
-// Package cli provides the Kong-based command-line interface for bpfman.
 package cli
 
 import (
