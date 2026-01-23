@@ -138,8 +138,8 @@ type dbConn interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
-// Store implements interpreter.ProgramStore using SQLite.
-type Store struct {
+// sqliteStore implements interpreter.Store using SQLite.
+type sqliteStore struct {
 	db     *sql.DB // original connection, used for BeginTx
 	conn   dbConn  // active connection (db or tx)
 	logger *slog.Logger
@@ -206,7 +206,7 @@ func New(dbPath string, logger *slog.Logger) (interpreter.Store, error) {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
-	s := &Store{db: db, conn: db, logger: logger}
+	s := &sqliteStore{db: db, conn: db, logger: logger}
 	if err := s.migrate(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
@@ -232,7 +232,7 @@ func NewInMemory(logger *slog.Logger) (interpreter.Store, error) {
 		return nil, fmt.Errorf("failed to open in-memory database: %w", err)
 	}
 
-	s := &Store{db: db, conn: db, logger: logger}
+	s := &sqliteStore{db: db, conn: db, logger: logger}
 	if err := s.migrate(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
@@ -247,11 +247,11 @@ func NewInMemory(logger *slog.Logger) (interpreter.Store, error) {
 }
 
 // Close closes the database connection.
-func (s *Store) Close() error {
+func (s *sqliteStore) Close() error {
 	return s.db.Close()
 }
 
-func (s *Store) migrate() error {
+func (s *sqliteStore) migrate() error {
 	// Execute the embedded schema
 	if _, err := s.db.Exec(schemaSQL); err != nil {
 		return fmt.Errorf("failed to execute schema: %w", err)
@@ -260,7 +260,7 @@ func (s *Store) migrate() error {
 }
 
 // prepareStatements prepares all SQL statements for reuse.
-func (s *Store) prepareStatements() error {
+func (s *sqliteStore) prepareStatements() error {
 	if err := s.prepareProgramStatements(); err != nil {
 		return err
 	}
@@ -273,7 +273,7 @@ func (s *Store) prepareStatements() error {
 	return s.prepareDispatcherStatements()
 }
 
-func (s *Store) prepareProgramStatements() error {
+func (s *sqliteStore) prepareProgramStatements() error {
 	var err error
 
 	const sqlGetProgram = "SELECT metadata FROM managed_programs WHERE kernel_id = ?"
@@ -328,7 +328,7 @@ func (s *Store) prepareProgramStatements() error {
 	return nil
 }
 
-func (s *Store) prepareLinkRegistryStatements() error {
+func (s *sqliteStore) prepareLinkRegistryStatements() error {
 	var err error
 
 	const sqlDeleteLink = "DELETE FROM link_registry WHERE kernel_link_id = ?"
@@ -367,7 +367,7 @@ func (s *Store) prepareLinkRegistryStatements() error {
 	return nil
 }
 
-func (s *Store) prepareLinkDetailStatements() error {
+func (s *sqliteStore) prepareLinkDetailStatements() error {
 	var err error
 
 	// Get statements
@@ -477,7 +477,7 @@ func (s *Store) prepareLinkDetailStatements() error {
 	return nil
 }
 
-func (s *Store) prepareDispatcherStatements() error {
+func (s *sqliteStore) prepareDispatcherStatements() error {
 	var err error
 
 	const sqlGetDispatcher = `
@@ -526,7 +526,7 @@ func (s *Store) prepareDispatcherStatements() error {
 
 // Get retrieves program metadata by kernel ID.
 // Returns store.ErrNotFound if the program does not exist.
-func (s *Store) Get(ctx context.Context, kernelID uint32) (managed.Program, error) {
+func (s *sqliteStore) Get(ctx context.Context, kernelID uint32) (managed.Program, error) {
 	row := s.stmtGetProgram.QueryRowContext(ctx, kernelID)
 
 	var metadataJSON string
@@ -548,7 +548,7 @@ func (s *Store) Get(ctx context.Context, kernelID uint32) (managed.Program, erro
 
 // Save stores program metadata.
 // For atomicity with other operations, wrap in RunInTransaction.
-func (s *Store) Save(ctx context.Context, kernelID uint32, metadata managed.Program) error {
+func (s *sqliteStore) Save(ctx context.Context, kernelID uint32, metadata managed.Program) error {
 	metadataJSON, err := json.Marshal(metadata)
 	if err != nil {
 		return fmt.Errorf("failed to marshal metadata: %w", err)
@@ -579,7 +579,7 @@ func (s *Store) Save(ctx context.Context, kernelID uint32, metadata managed.Prog
 }
 
 // Delete removes program metadata.
-func (s *Store) Delete(ctx context.Context, kernelID uint32) error {
+func (s *sqliteStore) Delete(ctx context.Context, kernelID uint32) error {
 	_, err := s.stmtDeleteProgram.ExecContext(ctx, kernelID)
 	if err == nil {
 		s.logger.Debug("deleted program", "kernel_id", kernelID)
@@ -588,7 +588,7 @@ func (s *Store) Delete(ctx context.Context, kernelID uint32) error {
 }
 
 // List returns all program metadata.
-func (s *Store) List(ctx context.Context) (map[uint32]managed.Program, error) {
+func (s *sqliteStore) List(ctx context.Context) (map[uint32]managed.Program, error) {
 	rows, err := s.stmtListPrograms.QueryContext(ctx)
 	if err != nil {
 		return nil, err
@@ -616,7 +616,7 @@ func (s *Store) List(ctx context.Context) (map[uint32]managed.Program, error) {
 
 // FindProgramByMetadata finds a program by a specific metadata key/value pair.
 // Returns store.ErrNotFound if no program matches.
-func (s *Store) FindProgramByMetadata(ctx context.Context, key, value string) (managed.Program, uint32, error) {
+func (s *sqliteStore) FindProgramByMetadata(ctx context.Context, key, value string) (managed.Program, uint32, error) {
 	row := s.stmtFindProgramByMetadata.QueryRowContext(ctx, key, value)
 
 	var kernelID uint32
@@ -638,7 +638,7 @@ func (s *Store) FindProgramByMetadata(ctx context.Context, key, value string) (m
 }
 
 // FindAllProgramsByMetadata finds all programs with a specific metadata key/value pair.
-func (s *Store) FindAllProgramsByMetadata(ctx context.Context, key, value string) ([]struct {
+func (s *sqliteStore) FindAllProgramsByMetadata(ctx context.Context, key, value string) ([]struct {
 	KernelID uint32
 	Metadata managed.Program
 }, error) {
@@ -680,7 +680,7 @@ func (s *Store) FindAllProgramsByMetadata(ctx context.Context, key, value string
 
 // DeleteLink removes link metadata by kernel link ID.
 // Due to CASCADE, this also removes the corresponding detail table entry.
-func (s *Store) DeleteLink(ctx context.Context, kernelLinkID uint32) error {
+func (s *sqliteStore) DeleteLink(ctx context.Context, kernelLinkID uint32) error {
 	result, err := s.stmtDeleteLink.ExecContext(ctx, kernelLinkID)
 	if err != nil {
 		return fmt.Errorf("failed to delete link: %w", err)
@@ -699,7 +699,7 @@ func (s *Store) DeleteLink(ctx context.Context, kernelLinkID uint32) error {
 }
 
 // GetLink retrieves link metadata by kernel link ID using two-phase lookup.
-func (s *Store) GetLink(ctx context.Context, kernelLinkID uint32) (managed.LinkSummary, managed.LinkDetails, error) {
+func (s *sqliteStore) GetLink(ctx context.Context, kernelLinkID uint32) (managed.LinkSummary, managed.LinkDetails, error) {
 	// Phase 1: Get summary from registry
 	row := s.stmtGetLinkRegistry.QueryRowContext(ctx, kernelLinkID)
 
@@ -718,7 +718,7 @@ func (s *Store) GetLink(ctx context.Context, kernelLinkID uint32) (managed.LinkS
 }
 
 // ListLinks returns all links (summary only).
-func (s *Store) ListLinks(ctx context.Context) ([]managed.LinkSummary, error) {
+func (s *sqliteStore) ListLinks(ctx context.Context) ([]managed.LinkSummary, error) {
 	rows, err := s.stmtListLinks.QueryContext(ctx)
 	if err != nil {
 		return nil, err
@@ -729,7 +729,7 @@ func (s *Store) ListLinks(ctx context.Context) ([]managed.LinkSummary, error) {
 }
 
 // ListLinksByProgram returns all links for a given program kernel ID.
-func (s *Store) ListLinksByProgram(ctx context.Context, programKernelID uint32) ([]managed.LinkSummary, error) {
+func (s *sqliteStore) ListLinksByProgram(ctx context.Context, programKernelID uint32) ([]managed.LinkSummary, error) {
 	rows, err := s.stmtListLinksByProgram.QueryContext(ctx, programKernelID)
 	if err != nil {
 		return nil, err
@@ -745,7 +745,7 @@ func (s *Store) ListLinksByProgram(ctx context.Context, programKernelID uint32) 
 
 // SaveTracepointLink saves a tracepoint link.
 // For atomicity with other operations, wrap in RunInTransaction.
-func (s *Store) SaveTracepointLink(ctx context.Context, summary managed.LinkSummary, details managed.TracepointDetails) error {
+func (s *sqliteStore) SaveTracepointLink(ctx context.Context, summary managed.LinkSummary, details managed.TracepointDetails) error {
 	if err := s.insertLinkRegistry(ctx, summary); err != nil {
 		return err
 	}
@@ -762,7 +762,7 @@ func (s *Store) SaveTracepointLink(ctx context.Context, summary managed.LinkSumm
 
 // SaveKprobeLink saves a kprobe/kretprobe link.
 // For atomicity with other operations, wrap in RunInTransaction.
-func (s *Store) SaveKprobeLink(ctx context.Context, summary managed.LinkSummary, details managed.KprobeDetails) error {
+func (s *sqliteStore) SaveKprobeLink(ctx context.Context, summary managed.LinkSummary, details managed.KprobeDetails) error {
 	if err := s.insertLinkRegistry(ctx, summary); err != nil {
 		return err
 	}
@@ -784,7 +784,7 @@ func (s *Store) SaveKprobeLink(ctx context.Context, summary managed.LinkSummary,
 
 // SaveUprobeLink saves a uprobe/uretprobe link.
 // For atomicity with other operations, wrap in RunInTransaction.
-func (s *Store) SaveUprobeLink(ctx context.Context, summary managed.LinkSummary, details managed.UprobeDetails) error {
+func (s *sqliteStore) SaveUprobeLink(ctx context.Context, summary managed.LinkSummary, details managed.UprobeDetails) error {
 	if err := s.insertLinkRegistry(ctx, summary); err != nil {
 		return err
 	}
@@ -806,7 +806,7 @@ func (s *Store) SaveUprobeLink(ctx context.Context, summary managed.LinkSummary,
 
 // SaveFentryLink saves a fentry link.
 // For atomicity with other operations, wrap in RunInTransaction.
-func (s *Store) SaveFentryLink(ctx context.Context, summary managed.LinkSummary, details managed.FentryDetails) error {
+func (s *sqliteStore) SaveFentryLink(ctx context.Context, summary managed.LinkSummary, details managed.FentryDetails) error {
 	if err := s.insertLinkRegistry(ctx, summary); err != nil {
 		return err
 	}
@@ -822,7 +822,7 @@ func (s *Store) SaveFentryLink(ctx context.Context, summary managed.LinkSummary,
 
 // SaveFexitLink saves a fexit link.
 // For atomicity with other operations, wrap in RunInTransaction.
-func (s *Store) SaveFexitLink(ctx context.Context, summary managed.LinkSummary, details managed.FexitDetails) error {
+func (s *sqliteStore) SaveFexitLink(ctx context.Context, summary managed.LinkSummary, details managed.FexitDetails) error {
 	if err := s.insertLinkRegistry(ctx, summary); err != nil {
 		return err
 	}
@@ -838,7 +838,7 @@ func (s *Store) SaveFexitLink(ctx context.Context, summary managed.LinkSummary, 
 
 // SaveXDPLink saves an XDP link.
 // For atomicity with other operations, wrap in RunInTransaction.
-func (s *Store) SaveXDPLink(ctx context.Context, summary managed.LinkSummary, details managed.XDPDetails) error {
+func (s *sqliteStore) SaveXDPLink(ctx context.Context, summary managed.LinkSummary, details managed.XDPDetails) error {
 	if err := s.insertLinkRegistry(ctx, summary); err != nil {
 		return err
 	}
@@ -861,7 +861,7 @@ func (s *Store) SaveXDPLink(ctx context.Context, summary managed.LinkSummary, de
 
 // SaveTCLink saves a TC link.
 // For atomicity with other operations, wrap in RunInTransaction.
-func (s *Store) SaveTCLink(ctx context.Context, summary managed.LinkSummary, details managed.TCDetails) error {
+func (s *sqliteStore) SaveTCLink(ctx context.Context, summary managed.LinkSummary, details managed.TCDetails) error {
 	if err := s.insertLinkRegistry(ctx, summary); err != nil {
 		return err
 	}
@@ -884,7 +884,7 @@ func (s *Store) SaveTCLink(ctx context.Context, summary managed.LinkSummary, det
 
 // SaveTCXLink saves a TCX link.
 // For atomicity with other operations, wrap in RunInTransaction.
-func (s *Store) SaveTCXLink(ctx context.Context, summary managed.LinkSummary, details managed.TCXDetails) error {
+func (s *sqliteStore) SaveTCXLink(ctx context.Context, summary managed.LinkSummary, details managed.TCXDetails) error {
 	if err := s.insertLinkRegistry(ctx, summary); err != nil {
 		return err
 	}
@@ -904,7 +904,7 @@ func (s *Store) SaveTCXLink(ctx context.Context, summary managed.LinkSummary, de
 // ----------------------------------------------------------------------------
 
 // insertLinkRegistry inserts a record into the link_registry table.
-func (s *Store) insertLinkRegistry(ctx context.Context, summary managed.LinkSummary) error {
+func (s *sqliteStore) insertLinkRegistry(ctx context.Context, summary managed.LinkSummary) error {
 	_, err := s.stmtInsertLinkRegistry.ExecContext(ctx,
 		summary.KernelLinkID, string(summary.LinkType), summary.KernelProgramID,
 		summary.PinPath, summary.CreatedAt.Format(time.RFC3339))
@@ -915,7 +915,7 @@ func (s *Store) insertLinkRegistry(ctx context.Context, summary managed.LinkSumm
 }
 
 // scanLinkSummary scans a single row into a LinkSummary.
-func (s *Store) scanLinkSummary(row *sql.Row) (managed.LinkSummary, error) {
+func (s *sqliteStore) scanLinkSummary(row *sql.Row) (managed.LinkSummary, error) {
 	var summary managed.LinkSummary
 	var linkType string
 	var pinPath sql.NullString
@@ -939,7 +939,7 @@ func (s *Store) scanLinkSummary(row *sql.Row) (managed.LinkSummary, error) {
 }
 
 // scanLinkSummaries scans multiple rows into a slice of LinkSummary.
-func (s *Store) scanLinkSummaries(rows *sql.Rows) ([]managed.LinkSummary, error) {
+func (s *sqliteStore) scanLinkSummaries(rows *sql.Rows) ([]managed.LinkSummary, error) {
 	var result []managed.LinkSummary
 
 	for rows.Next() {
@@ -966,7 +966,7 @@ func (s *Store) scanLinkSummaries(rows *sql.Rows) ([]managed.LinkSummary, error)
 }
 
 // getLinkDetails retrieves the type-specific details for a link.
-func (s *Store) getLinkDetails(ctx context.Context, linkType managed.LinkType, kernelLinkID uint32) (managed.LinkDetails, error) {
+func (s *sqliteStore) getLinkDetails(ctx context.Context, linkType managed.LinkType, kernelLinkID uint32) (managed.LinkDetails, error) {
 	switch linkType {
 	case managed.LinkTypeTracepoint:
 		return s.getTracepointDetails(ctx, kernelLinkID)
@@ -989,7 +989,7 @@ func (s *Store) getLinkDetails(ctx context.Context, linkType managed.LinkType, k
 	}
 }
 
-func (s *Store) getTracepointDetails(ctx context.Context, kernelLinkID uint32) (managed.TracepointDetails, error) {
+func (s *sqliteStore) getTracepointDetails(ctx context.Context, kernelLinkID uint32) (managed.TracepointDetails, error) {
 	row := s.stmtGetTracepointDetails.QueryRowContext(ctx, kernelLinkID)
 
 	var details managed.TracepointDetails
@@ -1003,7 +1003,7 @@ func (s *Store) getTracepointDetails(ctx context.Context, kernelLinkID uint32) (
 	return details, nil
 }
 
-func (s *Store) getKprobeDetails(ctx context.Context, kernelLinkID uint32) (managed.KprobeDetails, error) {
+func (s *sqliteStore) getKprobeDetails(ctx context.Context, kernelLinkID uint32) (managed.KprobeDetails, error) {
 	row := s.stmtGetKprobeDetails.QueryRowContext(ctx, kernelLinkID)
 
 	var details managed.KprobeDetails
@@ -1019,7 +1019,7 @@ func (s *Store) getKprobeDetails(ctx context.Context, kernelLinkID uint32) (mana
 	return details, nil
 }
 
-func (s *Store) getUprobeDetails(ctx context.Context, kernelLinkID uint32) (managed.UprobeDetails, error) {
+func (s *sqliteStore) getUprobeDetails(ctx context.Context, kernelLinkID uint32) (managed.UprobeDetails, error) {
 	row := s.stmtGetUprobeDetails.QueryRowContext(ctx, kernelLinkID)
 
 	var details managed.UprobeDetails
@@ -1043,7 +1043,7 @@ func (s *Store) getUprobeDetails(ctx context.Context, kernelLinkID uint32) (mana
 	return details, nil
 }
 
-func (s *Store) getFentryDetails(ctx context.Context, kernelLinkID uint32) (managed.FentryDetails, error) {
+func (s *sqliteStore) getFentryDetails(ctx context.Context, kernelLinkID uint32) (managed.FentryDetails, error) {
 	row := s.stmtGetFentryDetails.QueryRowContext(ctx, kernelLinkID)
 
 	var details managed.FentryDetails
@@ -1057,7 +1057,7 @@ func (s *Store) getFentryDetails(ctx context.Context, kernelLinkID uint32) (mana
 	return details, nil
 }
 
-func (s *Store) getFexitDetails(ctx context.Context, kernelLinkID uint32) (managed.FexitDetails, error) {
+func (s *sqliteStore) getFexitDetails(ctx context.Context, kernelLinkID uint32) (managed.FexitDetails, error) {
 	row := s.stmtGetFexitDetails.QueryRowContext(ctx, kernelLinkID)
 
 	var details managed.FexitDetails
@@ -1071,7 +1071,7 @@ func (s *Store) getFexitDetails(ctx context.Context, kernelLinkID uint32) (manag
 	return details, nil
 }
 
-func (s *Store) getXDPDetails(ctx context.Context, kernelLinkID uint32) (managed.XDPDetails, error) {
+func (s *sqliteStore) getXDPDetails(ctx context.Context, kernelLinkID uint32) (managed.XDPDetails, error) {
 	row := s.stmtGetXDPDetails.QueryRowContext(ctx, kernelLinkID)
 
 	var details managed.XDPDetails
@@ -1095,7 +1095,7 @@ func (s *Store) getXDPDetails(ctx context.Context, kernelLinkID uint32) (managed
 	return details, nil
 }
 
-func (s *Store) getTCDetails(ctx context.Context, kernelLinkID uint32) (managed.TCDetails, error) {
+func (s *sqliteStore) getTCDetails(ctx context.Context, kernelLinkID uint32) (managed.TCDetails, error) {
 	row := s.stmtGetTCDetails.QueryRowContext(ctx, kernelLinkID)
 
 	var details managed.TCDetails
@@ -1119,7 +1119,7 @@ func (s *Store) getTCDetails(ctx context.Context, kernelLinkID uint32) (managed.
 	return details, nil
 }
 
-func (s *Store) getTCXDetails(ctx context.Context, kernelLinkID uint32) (managed.TCXDetails, error) {
+func (s *sqliteStore) getTCXDetails(ctx context.Context, kernelLinkID uint32) (managed.TCXDetails, error) {
 	row := s.stmtGetTCXDetails.QueryRowContext(ctx, kernelLinkID)
 
 	var details managed.TCXDetails
@@ -1147,7 +1147,7 @@ func (s *Store) getTCXDetails(ctx context.Context, kernelLinkID uint32) (managed
 // ----------------------------------------------------------------------------
 
 // GetDispatcher retrieves a dispatcher by type, nsid, and ifindex.
-func (s *Store) GetDispatcher(ctx context.Context, dispType string, nsid uint64, ifindex uint32) (managed.DispatcherState, error) {
+func (s *sqliteStore) GetDispatcher(ctx context.Context, dispType string, nsid uint64, ifindex uint32) (managed.DispatcherState, error) {
 	row := s.stmtGetDispatcher.QueryRowContext(ctx, dispType, nsid, ifindex)
 
 	var state managed.DispatcherState
@@ -1167,7 +1167,7 @@ func (s *Store) GetDispatcher(ctx context.Context, dispType string, nsid uint64,
 }
 
 // SaveDispatcher creates or updates a dispatcher.
-func (s *Store) SaveDispatcher(ctx context.Context, state managed.DispatcherState) error {
+func (s *sqliteStore) SaveDispatcher(ctx context.Context, state managed.DispatcherState) error {
 	now := time.Now().Format(time.RFC3339)
 
 	_, err := s.stmtSaveDispatcher.ExecContext(ctx,
@@ -1184,7 +1184,7 @@ func (s *Store) SaveDispatcher(ctx context.Context, state managed.DispatcherStat
 }
 
 // DeleteDispatcher removes a dispatcher by type, nsid, and ifindex.
-func (s *Store) DeleteDispatcher(ctx context.Context, dispType string, nsid uint64, ifindex uint32) error {
+func (s *sqliteStore) DeleteDispatcher(ctx context.Context, dispType string, nsid uint64, ifindex uint32) error {
 	result, err := s.stmtDeleteDispatcher.ExecContext(ctx, dispType, nsid, ifindex)
 	if err != nil {
 		return fmt.Errorf("delete dispatcher: %w", err)
@@ -1205,7 +1205,7 @@ func (s *Store) DeleteDispatcher(ctx context.Context, dispType string, nsid uint
 // IncrementRevision atomically increments the dispatcher revision.
 // Returns the new revision number. Wraps from MaxUint32 to 1.
 // For atomicity with other operations, wrap in RunInTransaction.
-func (s *Store) IncrementRevision(ctx context.Context, dispType string, nsid uint64, ifindex uint32) (uint32, error) {
+func (s *sqliteStore) IncrementRevision(ctx context.Context, dispType string, nsid uint64, ifindex uint32) (uint32, error) {
 	now := time.Now().Format(time.RFC3339)
 
 	// Use CASE to handle wrap-around at MaxUint32
@@ -1252,14 +1252,14 @@ func (s *Store) IncrementRevision(ctx context.Context, dispType string, nsid uin
 // txStore goes out of scope and subsequent RunInTransaction calls create fresh
 // handles from the still-valid masters. The masters are never invalidated by
 // transaction lifecycle events.
-func (s *Store) RunInTransaction(ctx context.Context, fn func(interpreter.Store) error) error {
+func (s *sqliteStore) RunInTransaction(ctx context.Context, fn func(interpreter.Store) error) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer tx.Rollback()
 
-	txStore := &Store{
+	txStore := &sqliteStore{
 		db:     s.db,
 		conn:   tx,
 		logger: s.logger,
