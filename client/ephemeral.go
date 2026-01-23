@@ -229,8 +229,6 @@ func (e *ephemeralClient) PullImage(ctx context.Context, ref interpreter.ImageRe
 	return e.puller.Pull(ctx, ref)
 }
 
-// LoadImage pulls an OCI image and loads the specified programs.
-// Pull happens locally, load goes through the gRPC server.
 // LoadImage loads programs from an OCI image via the ephemeral gRPC server.
 // The server handles pulling and caching the image.
 func (e *ephemeralClient) LoadImage(ctx context.Context, ref interpreter.ImageRef, programs []bpfman.LoadSpec, opts LoadImageOpts) ([]bpfman.ManagedProgram, error) {
