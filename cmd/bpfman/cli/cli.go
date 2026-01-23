@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 	"reflect"
@@ -132,5 +133,10 @@ func (c *CLI) Client() (client.Client, error) {
 		return client.NewRemote(c.Remote, logger)
 	}
 
-	return client.NewEphemeral(c.RuntimeDirs(), logger)
+	cfg, err := c.LoadConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load config: %w", err)
+	}
+
+	return client.NewEphemeral(c.RuntimeDirs(), cfg, logger)
 }
