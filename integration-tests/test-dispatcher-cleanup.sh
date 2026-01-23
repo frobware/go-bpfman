@@ -105,10 +105,10 @@ attach_until_full() {
 
     for i in $(seq 1 $((max_slots + 2))); do
         local output
-        output=$(bpfman attach xdp --program-id="$PROG_ID" lo 2>&1) || true
+        output=$(bpfman attach "$PROG_ID" xdp --iface lo 2>&1) || true
 
         local link_id
-        link_id=$(echo "$output" | jq -r '.kernel_link_id // empty' 2>/dev/null) || true
+        link_id=$(echo "$output" | jq -r '.summary.kernel_link_id // empty' 2>/dev/null) || true
 
         if [ -z "$link_id" ]; then
             if [ "$i" -gt "$max_slots" ]; then
