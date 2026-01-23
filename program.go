@@ -1,6 +1,7 @@
 package bpfman
 
 import (
+	"maps"
 	"slices"
 	"time"
 )
@@ -46,8 +47,6 @@ func cloneMap[K comparable, V any](m map[K]V) map[K]V {
 		return nil
 	}
 	result := make(map[K]V, len(m))
-	for k, v := range m {
-		result[k] = v
-	}
+	maps.Copy(result, m)
 	return result
 }
