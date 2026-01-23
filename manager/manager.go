@@ -47,10 +47,10 @@ import (
 	"github.com/frobware/go-bpfman/compute"
 	"github.com/frobware/go-bpfman/config"
 	"github.com/frobware/go-bpfman/dispatcher"
-	"github.com/frobware/go-bpfman/netns"
 	"github.com/frobware/go-bpfman/interpreter"
 	"github.com/frobware/go-bpfman/interpreter/store"
 	"github.com/frobware/go-bpfman/kernel"
+	"github.com/frobware/go-bpfman/netns"
 )
 
 // Manager orchestrates BPF program management using fetch/compute/execute.
