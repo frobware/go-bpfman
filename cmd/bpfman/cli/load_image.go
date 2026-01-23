@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/frobware/go-bpfman/pkg/bpfman/client"
-	"github.com/frobware/go-bpfman/pkg/bpfman/interpreter"
-	"github.com/frobware/go-bpfman/pkg/bpfman/managed"
+	"github.com/frobware/go-bpfman/client"
+	"github.com/frobware/go-bpfman/interpreter"
+	"github.com/frobware/go-bpfman/managed"
 )
 
 // LoadImageCmd loads BPF programs from an OCI container image.

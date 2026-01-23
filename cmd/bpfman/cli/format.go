@@ -9,9 +9,9 @@ import (
 
 	"k8s.io/client-go/util/jsonpath"
 
-	"github.com/frobware/go-bpfman/pkg/bpfman"
-	"github.com/frobware/go-bpfman/pkg/bpfman/managed"
-	"github.com/frobware/go-bpfman/pkg/bpfman/manager"
+	"github.com/frobware/go-bpfman/bpfman"
+	"github.com/frobware/go-bpfman/managed"
+	"github.com/frobware/go-bpfman/manager"
 )
 
 // FormatProgramInfo formats a ProgramInfo according to the specified output flags.

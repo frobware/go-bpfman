@@ -141,16 +141,16 @@ For XDP on loopback (ifindex=1) in the root namespace (nsid=4026531840):
 ### Package Structure
 
 ```
-pkg/bpfman/dispatcher/     # Dispatcher loading and config
+bpfman/dispatcher/     # Dispatcher loading and config
   dispatcher.go            # Load functions, config structs
   paths.go                 # Path construction functions
   xdp_dispatcher_v2.bpf.o  # Embedded XDP dispatcher bytecode
   tc_dispatcher.bpf.o      # Embedded TC dispatcher bytecode
 
-pkg/bpfman/netns/          # Network namespace utilities
+bpfman/netns/          # Network namespace utilities
   netns.go                 # GetCurrentNsid()
 
-pkg/bpfman/managed/        # Data types
+bpfman/managed/        # Data types
   dispatcher.go            # DispatcherState struct
 
 dispatchers/               # BPF source files

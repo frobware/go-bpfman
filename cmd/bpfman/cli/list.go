@@ -6,8 +6,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/frobware/go-bpfman/pkg/bpfman/client"
-	"github.com/frobware/go-bpfman/pkg/bpfman/manager"
+	"github.com/frobware/go-bpfman/client"
+	"github.com/frobware/go-bpfman/manager"
 )
 
 // ListCmd lists managed programs or links.

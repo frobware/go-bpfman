@@ -6,8 +6,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/frobware/go-bpfman/bpfman"
 	"github.com/frobware/go-bpfman/cmd/bpfman/cli"
-	"github.com/frobware/go-bpfman/pkg/bpfman"
 )
 
 func TestParseProgramSpec_ValidInputs(t *testing.T) {

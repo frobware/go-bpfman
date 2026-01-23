@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/frobware/go-bpfman/pkg/bpfman/client"
+	"github.com/frobware/go-bpfman/client"
 )
 
 // DetachCmd detaches a link.

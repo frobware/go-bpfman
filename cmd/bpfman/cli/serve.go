@@ -6,7 +6,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/frobware/go-bpfman/pkg/bpfman/server"
+	"github.com/frobware/go-bpfman/server"
 )
 
 // ServeCmd starts the gRPC daemon.

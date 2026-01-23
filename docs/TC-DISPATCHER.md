@@ -10,13 +10,13 @@ building on the existing XDP dispatcher infrastructure.
 | Component | Status | Location |
 |-----------|--------|----------|
 | TC dispatcher BPF program | Done | `dispatchers/tc_dispatcher.bpf.c` |
-| TC dispatcher bytecode | Done | `pkg/bpfman/dispatcher/tc_dispatcher.bpf.o` |
-| Dispatcher path utilities | Done | `pkg/bpfman/dispatcher/paths.go` |
-| DispatcherState type | Done | `pkg/bpfman/managed/dispatcher.go` |
-| Dispatcher store (SQLite) | Done | `pkg/bpfman/interpreter/store/sqlite/` |
-| Dispatcher cleanup actions | Done | `pkg/bpfman/action/action.go` |
-| Cleanup on detach | Done | `pkg/bpfman/manager/manager.go` |
-| TCDetails type | Done | `pkg/bpfman/managed/link_details.go` |
+| TC dispatcher bytecode | Done | `bpfman/dispatcher/tc_dispatcher.bpf.o` |
+| Dispatcher path utilities | Done | `bpfman/dispatcher/paths.go` |
+| DispatcherState type | Done | `bpfman/managed/dispatcher.go` |
+| Dispatcher store (SQLite) | Done | `interpreter/store/sqlite/` |
+| Dispatcher cleanup actions | Done | `bpfman/action/action.go` |
+| Cleanup on detach | Done | `bpfman/manager/manager.go` |
+| TCDetails type | Done | `bpfman/managed/link_details.go` |
 | TC link storage | Done | `tc_link_details` table |
 
 ### What Needs Implementation
@@ -83,7 +83,7 @@ than `BPF_PROG_TYPE_XDP`.
 
 ### 1. Kernel Operations Interface
 
-Add to `pkg/bpfman/interpreter/interfaces.go`:
+Add to `interpreter/interfaces.go`:
 
 ```go
 // TCDispatcherResult holds the result of loading a TC dispatcher.
@@ -112,7 +112,7 @@ type DispatcherAttacher interface {
 
 ### 2. Kernel Implementation
 
-Add to `pkg/bpfman/interpreter/ebpf/ebpf.go`:
+Add to `interpreter/ebpf/ebpf.go`:
 
 ```go
 func (k *Kernel) AttachTCDispatcher(ifindex int, direction string,
@@ -184,7 +184,7 @@ func (k *Kernel) ensureClsactQdisc(ifindex int) error {
 
 ### 3. Manager Method
 
-Add to `pkg/bpfman/manager/manager.go`. Note that all store operations go
+Add to `bpfman/manager/manager.go`. Note that all store operations go
 through the executor using reified effects (actions), following the
 FETCH/COMPUTE/EXECUTE pattern:
 

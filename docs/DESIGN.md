@@ -62,7 +62,7 @@ This enables:
 ## Package Structure
 
 ```
-pkg/bpfman/
+bpfman/
 ├── types.go              Shared types (ProgramType, AttachType, etc.)
 ├── kernel/               Kernel-observed BPF objects (read-only domain)
 │   ├── program.go
@@ -372,7 +372,7 @@ The SANS-IO architecture enables a layered testing strategy. The principle is: *
 
 ### Test Levels
 
-**Server tests** (`pkg/bpfman/server/server_test.go`) - The primary test suite. These are behaviour specifications written in BDD style with Given/When/Then structure. They drive requests through the gRPC layer using a fake kernel and real in-memory SQLite, exercising the full request path without mocks.
+**Server tests** (`server/server_test.go`) - The primary test suite. These are behaviour specifications written in BDD style with Given/When/Then structure. They drive requests through the gRPC layer using a fake kernel and real in-memory SQLite, exercising the full request path without mocks.
 
 ```go
 // TestLoadProgram_WithDuplicateName_IsRejected verifies that:
@@ -386,9 +386,9 @@ func TestLoadProgram_WithDuplicateName_IsRejected(t *testing.T) {
 }
 ```
 
-**SQLite constraint tests** (`pkg/bpfman/interpreter/store/sqlite/sqlite_test.go`) - Verify schema correctness directly. Foreign key constraints and unique indexes are database-level guarantees; testing them at the store level provides clear failure messages when schema invariants are violated.
+**SQLite constraint tests** (`interpreter/store/sqlite/sqlite_test.go`) - Verify schema correctness directly. Foreign key constraints and unique indexes are database-level guarantees; testing them at the store level provides clear failure messages when schema invariants are violated.
 
-**Pure function tests** (`pkg/bpfman/compute/`) - Test pure logic in isolation. These are trivially testable with no setup, no state, just input/output verification.
+**Pure function tests** (`compute/`) - Test pure logic in isolation. These are trivially testable with no setup, no state, just input/output verification.
 
 ### What We Don't Test
 
@@ -414,6 +414,6 @@ func testLogger() *slog.Logger {
 Migration is complete. All code now uses the FP architecture:
 
 - **CLI** (`cmd/bpfman/`) - Uses `interpreter/ebpf/` for BPF operations
-- **gRPC server** (`pkg/bpfman/server/`) - Uses `interpreter/ebpf/` and `interpreter/store/sqlite/`
+- **gRPC server** (`server/`) - Uses `interpreter/ebpf/` and `interpreter/store/sqlite/`
 
-The proto stubs are co-located with the server in `pkg/bpfman/server/pb/`. Generate them with `make bpfman-proto`.
+The proto stubs are co-located with the server in `server/pb/`. Generate them with `make bpfman-proto`.

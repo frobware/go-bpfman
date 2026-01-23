@@ -72,7 +72,7 @@ doc:
 
 doc-text:
 	@echo "=== Public API ===" && echo
-	@for pkg in ./pkg/bpfman ./pkg/bpfman/config ./pkg/bpfman/client ./pkg/csi/driver; do \
+	@for pkg in ./bpfman ./client ./csi; do \
 		echo "--- $$pkg ---" && go doc -all $$pkg 2>/dev/null && echo; \
 	done
 
@@ -89,7 +89,7 @@ bpfman-clean:
 
 # Proto generation for bpfman gRPC API
 BPFMAN_PROTO_DIR := proto
-BPFMAN_PB_DIR := pkg/bpfman/server/pb
+BPFMAN_PB_DIR := server/pb
 
 bpfman-proto: $(BPFMAN_PB_DIR)/bpfman.pb.go $(BPFMAN_PB_DIR)/bpfman_grpc.pb.go
 

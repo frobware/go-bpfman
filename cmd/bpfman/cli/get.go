@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/frobware/go-bpfman/pkg/bpfman/client"
+	"github.com/frobware/go-bpfman/client"
 )
 
 // GetCmd gets details of a program or link.
