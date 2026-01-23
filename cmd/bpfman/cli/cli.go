@@ -51,6 +51,7 @@ func KongOptions() []kong.Option {
 		kong.ConfigureHelp(kong.HelpOptions{
 			Compact: true,
 		}),
+		kong.ShortUsageOnError(),
 		kong.TypeMapper(reflect.TypeOf(ProgramID{}), programIDMapper()),
 		kong.TypeMapper(reflect.TypeOf(LinkID{}), linkIDMapper()),
 		kong.TypeMapper(reflect.TypeOf(KeyValue{}), keyValueMapper()),
