@@ -4,6 +4,7 @@ help:
 	@echo "Build:"
 	@echo "  build-all                   Build all binaries"
 	@echo "  clean                       Remove all build artifacts"
+	@echo "  e2e-test                    Run e2e tests (requires root)"
 	@echo "  docker-build-all            Build all container images"
 	@echo "  test                        Run all tests"
 	@echo ""
@@ -60,6 +61,10 @@ clean: bpfman-clean dispatchers-clean
 
 test:
 	go test -v ./...
+
+e2e-test:
+	@echo "Running e2e tests (requires root)..."
+	go test -tags=e2e -v ./e2e/...
 
 # Documentation
 DOC_PORT ?= 6060
@@ -191,6 +196,7 @@ kind-undeploy-all: stats-reader-delete bpfman-delete
 
 .PHONY: \
 	bpfman-build \
+	e2e-test \
 	bpfman-clean \
 	bpfman-delete \
 	bpfman-delete-test \

@@ -1,0 +1,326 @@
+//go:build e2e
+
+package e2e
+
+import (
+	"bufio"
+	"context"
+	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/frobware/go-bpfman"
+	"github.com/frobware/go-bpfman/client"
+	"github.com/frobware/go-bpfman/config"
+)
+
+// TestEnv provides an isolated test environment for e2e tests.
+// Each test gets a fully isolated environment with unique directories,
+// database, and socket, enabling t.Parallel() across all tests.
+type TestEnv struct {
+	T      *testing.T
+	Dirs   config.RuntimeDirs
+	Client client.Client
+	logger *slog.Logger
+}
+
+// NewTestEnv creates an isolated test environment for e2e testing.
+// The environment includes:
+//   - A unique runtime directory in /tmp/bpfman-e2e-<pid>-<testname>/
+//   - A fresh SQLite database
+//   - A bpffs mount
+//   - An ephemeral gRPC server and client
+//
+// The environment is automatically cleaned up via t.Cleanup().
+func NewTestEnv(t *testing.T) *TestEnv {
+	t.Helper()
+
+	// Create unique directory for this test
+	testName := sanitizeTestName(t.Name())
+	baseDir := filepath.Join(os.TempDir(), fmt.Sprintf("bpfman-e2e-%d-%s", os.Getpid(), testName))
+
+	dirs := config.NewRuntimeDirs(baseDir)
+
+	// Set up logger based on environment variable
+	var logger *slog.Logger
+	if os.Getenv("BPFMAN_TEST_VERBOSE") != "" {
+		logger = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+			Level: slog.LevelDebug,
+		}))
+	} else {
+		logger = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+			Level: slog.LevelError,
+		}))
+	}
+
+	// Create client with test-specific runtime directory
+	// The client.Open function handles all setup: directories, bpffs, store, server
+	cfg := config.DefaultConfig()
+	cfg.Signing.AllowUnsigned = true  // Allow unsigned images
+	cfg.Signing.VerifyEnabled = false // Disable signature verification for tests
+
+	c, err := client.Open(
+		client.WithRuntimeDir(baseDir),
+		client.WithLogger(logger),
+		client.WithConfig(cfg),
+	)
+	require.NoError(t, err, "failed to create client")
+
+	env := &TestEnv{
+		T:      t,
+		Dirs:   dirs,
+		Client: c,
+		logger: logger,
+	}
+
+	// Register cleanup
+	t.Cleanup(func() {
+		env.cleanup()
+	})
+
+	return env
+}
+
+// cleanup releases resources and removes test directories.
+func (e *TestEnv) cleanup() {
+	if e.Client != nil {
+		e.Client.Close()
+	}
+
+	// Unmount bpffs if mounted
+	if isMounted(e.Dirs.FS) {
+		if err := unmount(e.Dirs.FS); err != nil {
+			e.T.Logf("warning: failed to unmount bpffs at %s: %v", e.Dirs.FS, err)
+		}
+	}
+
+	// Remove runtime directories
+	if err := os.RemoveAll(e.Dirs.Base); err != nil {
+		e.T.Logf("warning: failed to remove %s: %v", e.Dirs.Base, err)
+	}
+	if err := os.RemoveAll(e.Dirs.Sock); err != nil {
+		e.T.Logf("warning: failed to remove %s: %v", e.Dirs.Sock, err)
+	}
+}
+
+// AssertCleanState verifies that no programs or links are managed.
+func (e *TestEnv) AssertCleanState() {
+	e.T.Helper()
+	e.AssertProgramCount(0)
+	e.AssertLinkCount(0)
+}
+
+// AssertProgramCount verifies the number of managed programs via Client.List().
+func (e *TestEnv) AssertProgramCount(expected int) {
+	e.T.Helper()
+	ctx := context.Background()
+
+	programs, err := e.Client.List(ctx)
+	require.NoError(e.T, err, "failed to list programs")
+	require.Len(e.T, programs, expected, "unexpected program count")
+}
+
+// AssertLinkCount verifies the total number of managed links via Client.ListLinks().
+func (e *TestEnv) AssertLinkCount(expected int) {
+	e.T.Helper()
+	ctx := context.Background()
+
+	links, err := e.Client.ListLinks(ctx)
+	require.NoError(e.T, err, "failed to list links")
+	require.Len(e.T, links, expected, "unexpected link count")
+}
+
+// AssertLinkCountByType verifies the number of links of a specific type.
+func (e *TestEnv) AssertLinkCountByType(linkType bpfman.LinkType, expected int) {
+	e.T.Helper()
+	ctx := context.Background()
+
+	links, err := e.Client.ListLinks(ctx)
+	require.NoError(e.T, err, "failed to list links")
+
+	count := 0
+	for _, link := range links {
+		if link.LinkType == linkType {
+			count++
+		}
+	}
+	require.Equal(e.T, expected, count, "unexpected link count for type %s", linkType)
+}
+
+// RequireRoot fails the test if not running as root.
+func RequireRoot(t *testing.T) {
+	t.Helper()
+	if os.Geteuid() != 0 {
+		t.Fatal("test requires root privileges")
+	}
+}
+
+// RequireBTF fails the test if kernel BTF is not available.
+// BTF is required for fentry/fexit program types.
+func RequireBTF(t *testing.T) {
+	t.Helper()
+	if _, err := os.Stat("/sys/kernel/btf/vmlinux"); os.IsNotExist(err) {
+		t.Fatal("test requires kernel BTF support (/sys/kernel/btf/vmlinux)")
+	}
+}
+
+// RequireKernelFunction fails the test if the specified kernel function
+// is not found in /proc/kallsyms.
+func RequireKernelFunction(t *testing.T, fnName string) {
+	t.Helper()
+
+	f, err := os.Open("/proc/kallsyms")
+	if err != nil {
+		t.Fatalf("cannot open /proc/kallsyms: %v", err)
+		return
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) >= 3 {
+			// Symbol name is the third field, may have module suffix
+			sym := fields[2]
+			if sym == fnName || strings.HasPrefix(sym, fnName+".") {
+				return // Found it
+			}
+		}
+	}
+
+	t.Fatalf("kernel function %s not found in /proc/kallsyms", fnName)
+}
+
+// RequireKernelVersion fails the test if the kernel version is below the specified version.
+// Useful for features like TCX which require kernel 6.6+.
+func RequireKernelVersion(t *testing.T, major, minor int) {
+	t.Helper()
+
+	data, err := os.ReadFile("/proc/version")
+	if err != nil {
+		t.Fatalf("cannot read /proc/version: %v", err)
+		return
+	}
+
+	// Parse kernel version from /proc/version
+	// Format: "Linux version X.Y.Z-..."
+	re := regexp.MustCompile(`Linux version (\d+)\.(\d+)`)
+	matches := re.FindStringSubmatch(string(data))
+	if len(matches) < 3 {
+		t.Fatalf("cannot parse kernel version from /proc/version")
+		return
+	}
+
+	kernelMajor, _ := strconv.Atoi(matches[1])
+	kernelMinor, _ := strconv.Atoi(matches[2])
+
+	if kernelMajor < major || (kernelMajor == major && kernelMinor < minor) {
+		t.Fatalf("test requires kernel %d.%d+, have %d.%d", major, minor, kernelMajor, kernelMinor)
+	}
+}
+
+// RequireTracepoint fails the test if the specified tracepoint doesn't exist.
+func RequireTracepoint(t *testing.T, group, name string) {
+	t.Helper()
+
+	path := filepath.Join("/sys/kernel/debug/tracing/events", group, name)
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		t.Fatalf("tracepoint %s/%s not found", group, name)
+	}
+}
+
+// sanitizeTestName converts a test name to a safe directory name.
+func sanitizeTestName(name string) string {
+	// Replace characters that might be problematic in paths
+	name = strings.ReplaceAll(name, "/", "-")
+	name = strings.ReplaceAll(name, " ", "_")
+	// Limit length
+	if len(name) > 50 {
+		name = name[:50]
+	}
+	return name
+}
+
+// isMounted checks if a path is a mount point.
+func isMounted(path string) bool {
+	data, err := os.ReadFile("/proc/mounts")
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[1] == path {
+			return true
+		}
+	}
+	return false
+}
+
+// unmount unmounts a filesystem.
+func unmount(path string) error {
+	// Use lazy unmount to avoid "device busy" errors
+	cmd := fmt.Sprintf("umount -l %q 2>/dev/null", path)
+	return runCommand(cmd)
+}
+
+// runCommand executes a shell command.
+func runCommand(cmd string) error {
+	c := []string{"sh", "-c", cmd}
+	proc := os.ProcAttr{
+		Files: []*os.File{os.Stdin, os.Stdout, os.Stderr},
+	}
+	p, err := os.StartProcess("/bin/sh", c, &proc)
+	if err != nil {
+		return err
+	}
+	state, err := p.Wait()
+	if err != nil {
+		return err
+	}
+	if !state.Success() {
+		return fmt.Errorf("command failed: %s", cmd)
+	}
+	return nil
+}
+
+// cleanupStaleTestDirs removes leftover test directories from previous runs.
+func cleanupStaleTestDirs() {
+	pattern := filepath.Join(os.TempDir(), "bpfman-e2e-*")
+	matches, err := filepath.Glob(pattern)
+	if err != nil {
+		return
+	}
+
+	for _, path := range matches {
+		// Check if the PID in the directory name is still running
+		parts := strings.Split(filepath.Base(path), "-")
+		if len(parts) >= 3 {
+			pid, err := strconv.Atoi(parts[2])
+			if err == nil {
+				// Check if process exists
+				if _, err := os.Stat(fmt.Sprintf("/proc/%d", pid)); err == nil {
+					// Process still running, skip
+					continue
+				}
+			}
+		}
+
+		// Try to unmount bpffs if present
+		fsPath := filepath.Join(path, "fs")
+		if isMounted(fsPath) {
+			unmount(fsPath)
+		}
+
+		// Remove the directory
+		os.RemoveAll(path)
+		// Also remove the -sock directory
+		os.RemoveAll(path + "-sock")
+	}
+}

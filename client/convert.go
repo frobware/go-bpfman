@@ -176,6 +176,17 @@ func protoListResponseToPrograms(resp *pb.ListResponse) []manager.ManagedProgram
 				ID:          r.KernelInfo.Id,
 				Name:        r.KernelInfo.Name,
 				ProgramType: progType.String(),
+				Tag:         r.KernelInfo.Tag,
+				MapIDs:      r.KernelInfo.MapIds,
+				BTFId:       r.KernelInfo.BtfId,
+				XlatedSize:  r.KernelInfo.BytesXlated,
+				JitedSize:   r.KernelInfo.BytesJited,
+			}
+			// Parse LoadedAt time if provided
+			if r.KernelInfo.LoadedAt != "" {
+				if loadedAt, err := time.Parse(time.RFC3339, r.KernelInfo.LoadedAt); err == nil {
+					mp.KernelProgram.LoadedAt = loadedAt
+				}
 			}
 		}
 
@@ -216,6 +227,17 @@ func protoGetResponseToInfo(resp *pb.GetResponse, kernelID uint32) manager.Progr
 			ID:          resp.KernelInfo.Id,
 			Name:        resp.KernelInfo.Name,
 			ProgramType: progType.String(),
+			Tag:         resp.KernelInfo.Tag,
+			MapIDs:      resp.KernelInfo.MapIds,
+			BTFId:       resp.KernelInfo.BtfId,
+			XlatedSize:  resp.KernelInfo.BytesXlated,
+			JitedSize:   resp.KernelInfo.BytesJited,
+		}
+		// Parse LoadedAt time if provided
+		if resp.KernelInfo.LoadedAt != "" {
+			if loadedAt, err := time.Parse(time.RFC3339, resp.KernelInfo.LoadedAt); err == nil {
+				kp.LoadedAt = loadedAt
+			}
 		}
 		info.Kernel = &manager.KernelInfo{
 			Program: &kp,

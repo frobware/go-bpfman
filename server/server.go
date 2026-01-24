@@ -611,6 +611,14 @@ func (s *Server) List(ctx context.Context, req *pb.ListRequest) (*pb.ListRespons
 			}
 		}
 
+		// Query kernel for actual program info
+		kp, err := s.kernel.GetProgramByID(ctx, kernelID)
+		if err != nil {
+			// Program exists in store but not in kernel - skip (needs reconciliation)
+			s.logger.Warn("program in store but not in kernel", "kernel_id", kernelID, "error", err)
+			continue
+		}
+
 		results = append(results, &pb.ListResponse_ListResult{
 			Info: &pb.ProgramInfo{
 				Name:       metadata.LoadSpec.ProgramName,
@@ -621,8 +629,14 @@ func (s *Server) List(ctx context.Context, req *pb.ListRequest) (*pb.ListRespons
 			},
 			KernelInfo: &pb.KernelProgramInfo{
 				Id:          kernelID,
-				Name:        metadata.LoadSpec.ProgramName,
+				Name:        kp.Name,
 				ProgramType: uint32(metadata.LoadSpec.ProgramType),
+				Tag:         kp.Tag,
+				LoadedAt:    kp.LoadedAt.Format(time.RFC3339),
+				MapIds:      kp.MapIDs,
+				BtfId:       kp.BTFId,
+				BytesXlated: kp.XlatedSize,
+				BytesJited:  kp.JitedSize,
 			},
 		})
 	}
@@ -643,6 +657,12 @@ func (s *Server) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, 
 		return nil, status.Errorf(codes.Internal, "failed to get program: %v", err)
 	}
 
+	// Query kernel for actual program info
+	kp, err := s.kernel.GetProgramByID(ctx, req.Id)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "program %d exists in store but not in kernel: %v", req.Id, err)
+	}
+
 	return &pb.GetResponse{
 		Info: &pb.ProgramInfo{
 			Name:       metadata.LoadSpec.ProgramName,
@@ -653,8 +673,14 @@ func (s *Server) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, 
 		},
 		KernelInfo: &pb.KernelProgramInfo{
 			Id:          req.Id,
-			Name:        metadata.LoadSpec.ProgramName,
+			Name:        kp.Name,
 			ProgramType: uint32(metadata.LoadSpec.ProgramType),
+			Tag:         kp.Tag,
+			LoadedAt:    kp.LoadedAt.Format(time.RFC3339),
+			MapIds:      kp.MapIDs,
+			BtfId:       kp.BTFId,
+			BytesXlated: kp.XlatedSize,
+			BytesJited:  kp.JitedSize,
 		},
 	}, nil
 }
