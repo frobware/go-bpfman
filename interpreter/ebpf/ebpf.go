@@ -20,6 +20,51 @@ import (
 	"github.com/frobware/go-bpfman/kernel"
 )
 
+// inferProgramType returns the program type based on the ELF section name.
+// This follows the Rust bpfman approach of deriving the type from bytecode
+// metadata rather than relying on user-specified types.
+//
+// Section name patterns (from cilium/ebpf elf_sections.go):
+//   - kprobe/*, kprobe.multi/* -> kprobe
+//   - kretprobe/*, kretprobe.multi/* -> kretprobe
+//   - uprobe/*, uprobe.multi/* -> uprobe
+//   - uretprobe/*, uretprobe.multi/* -> uretprobe
+//   - tracepoint/* -> tracepoint
+//   - xdp*, xdp.frags* -> xdp
+//   - tc, classifier/* -> tc
+//   - tcx/* -> tcx
+//   - fentry/* -> fentry
+//   - fexit/* -> fexit
+func inferProgramType(sectionName string) bpfman.ProgramType {
+	// Remove optional program marking prefix
+	sectionName = strings.TrimPrefix(sectionName, "?")
+
+	switch {
+	case strings.HasPrefix(sectionName, "kretprobe"):
+		return bpfman.ProgramTypeKretprobe
+	case strings.HasPrefix(sectionName, "kprobe"):
+		return bpfman.ProgramTypeKprobe
+	case strings.HasPrefix(sectionName, "uretprobe"):
+		return bpfman.ProgramTypeUretprobe
+	case strings.HasPrefix(sectionName, "uprobe"):
+		return bpfman.ProgramTypeUprobe
+	case strings.HasPrefix(sectionName, "tracepoint"):
+		return bpfman.ProgramTypeTracepoint
+	case strings.HasPrefix(sectionName, "fentry"):
+		return bpfman.ProgramTypeFentry
+	case strings.HasPrefix(sectionName, "fexit"):
+		return bpfman.ProgramTypeFexit
+	case strings.HasPrefix(sectionName, "xdp"):
+		return bpfman.ProgramTypeXDP
+	case strings.HasPrefix(sectionName, "tcx"):
+		return bpfman.ProgramTypeTCX
+	case strings.HasPrefix(sectionName, "tc") || strings.HasPrefix(sectionName, "classifier"):
+		return bpfman.ProgramTypeTC
+	default:
+		return bpfman.ProgramTypeUnspecified
+	}
+}
+
 // kernelAdapter implements interpreter.KernelOperations using cilium/ebpf.
 type kernelAdapter struct {
 	logger *slog.Logger
@@ -238,6 +283,15 @@ func (k *kernelAdapter) Load(ctx context.Context, spec bpfman.LoadSpec) (bpfman.
 	}
 	license := progSpec.License
 
+	// Determine program type: prefer user-specified type, fall back to ELF inference.
+	// The user's CLI specification (e.g., --programs kretprobe:func) takes precedence
+	// because a kprobe program CAN be attached as either entry or return probe.
+	programType := spec.ProgramType
+	if programType == bpfman.ProgramTypeUnspecified {
+		// Fall back to inferring from ELF section name
+		programType = inferProgramType(progSpec.SectionName)
+	}
+
 	prog, ok := coll.Programs[spec.ProgramName]
 	if !ok {
 		return bpfman.ManagedProgram{}, fmt.Errorf("program %q not found in collection", spec.ProgramName)
@@ -307,7 +361,7 @@ func (k *kernelAdapter) Load(ctx context.Context, spec bpfman.LoadSpec) (bpfman.
 	return bpfman.ManagedProgram{
 		Managed: &bpfman.ProgramInfo{
 			Name:       spec.ProgramName,
-			Type:       spec.ProgramType,
+			Type:       programType,
 			ObjectPath: spec.ObjectPath,
 			PinPath:    progPinPath,
 			PinDir:     mapsDir,

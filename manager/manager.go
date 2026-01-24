@@ -115,9 +115,12 @@ func (m *Manager) Load(ctx context.Context, spec bpfman.LoadSpec, opts LoadOpts)
 		"maps_dir", loaded.Managed.PinDir)
 
 	// Phase 2: Persist metadata to DB (single transaction)
-	// Store the actual pin paths (not the root) for later use
+	// Store the actual pin paths (not the root) for later use.
+	// Use the inferred type from the kernel layer (from ELF section name)
+	// rather than the user-specified type.
 	storedSpec := spec
-	storedSpec.PinPath = loaded.Managed.PinDir // Store maps directory for CSI/unload
+	storedSpec.PinPath = loaded.Managed.PinDir   // Store maps directory for CSI/unload
+	storedSpec.ProgramType = loaded.Managed.Type // Use inferred type from ELF
 	metadata := bpfman.Program{
 		LoadSpec:     storedSpec,
 		UserMetadata: opts.UserMetadata,
