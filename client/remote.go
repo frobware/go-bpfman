@@ -66,16 +66,32 @@ func (c *remoteClient) Close() error {
 
 // Load loads a BPF program via gRPC.
 func (c *remoteClient) Load(ctx context.Context, spec bpfman.LoadSpec, opts manager.LoadOpts) (bpfman.ManagedProgram, error) {
+	info := &pb.LoadInfo{
+		Name:        spec.ProgramName,
+		ProgramType: domainTypeToProto(spec.ProgramType),
+	}
+	// Add ProgSpecificInfo for fentry/fexit which require attach function at load time
+	if spec.ProgramType == bpfman.ProgramTypeFentry {
+		info.Info = &pb.ProgSpecificInfo{
+			Info: &pb.ProgSpecificInfo_FentryLoadInfo{
+				FentryLoadInfo: &pb.FentryLoadInfo{FnName: spec.AttachFunc},
+			},
+		}
+	} else if spec.ProgramType == bpfman.ProgramTypeFexit {
+		info.Info = &pb.ProgSpecificInfo{
+			Info: &pb.ProgSpecificInfo_FexitLoadInfo{
+				FexitLoadInfo: &pb.FexitLoadInfo{FnName: spec.AttachFunc},
+			},
+		}
+	}
+
 	req := &pb.LoadRequest{
 		Bytecode: &pb.BytecodeLocation{
 			Location: &pb.BytecodeLocation_File{File: spec.ObjectPath},
 		},
 		Metadata:   opts.UserMetadata,
 		GlobalData: spec.GlobalData,
-		Info: []*pb.LoadInfo{{
-			Name:        spec.ProgramName,
-			ProgramType: domainTypeToProto(spec.ProgramType),
-		}},
+		Info:       []*pb.LoadInfo{info},
 	}
 
 	resp, err := c.client.Load(ctx, req)
@@ -281,6 +297,54 @@ func (c *remoteClient) AttachUprobe(ctx context.Context, programKernelID uint32,
 	}, nil
 }
 
+// AttachFentry attaches a fentry program via gRPC.
+func (c *remoteClient) AttachFentry(ctx context.Context, programKernelID uint32, linkPinPath string) (bpfman.LinkSummary, error) {
+	req := &pb.AttachRequest{
+		Id: programKernelID,
+		Attach: &pb.AttachInfo{
+			Info: &pb.AttachInfo_FentryAttachInfo{
+				FentryAttachInfo: &pb.FentryAttachInfo{},
+			},
+		},
+	}
+
+	resp, err := c.client.Attach(ctx, req)
+	if err != nil {
+		return bpfman.LinkSummary{}, translateGRPCError(err)
+	}
+
+	return bpfman.LinkSummary{
+		LinkType:        bpfman.LinkTypeFentry,
+		KernelProgramID: programKernelID,
+		KernelLinkID:    resp.LinkId,
+		PinPath:         linkPinPath,
+	}, nil
+}
+
+// AttachFexit attaches a fexit program via gRPC.
+func (c *remoteClient) AttachFexit(ctx context.Context, programKernelID uint32, linkPinPath string) (bpfman.LinkSummary, error) {
+	req := &pb.AttachRequest{
+		Id: programKernelID,
+		Attach: &pb.AttachInfo{
+			Info: &pb.AttachInfo_FexitAttachInfo{
+				FexitAttachInfo: &pb.FexitAttachInfo{},
+			},
+		},
+	}
+
+	resp, err := c.client.Attach(ctx, req)
+	if err != nil {
+		return bpfman.LinkSummary{}, translateGRPCError(err)
+	}
+
+	return bpfman.LinkSummary{
+		LinkType:        bpfman.LinkTypeFexit,
+		KernelProgramID: programKernelID,
+		KernelLinkID:    resp.LinkId,
+		PinPath:         linkPinPath,
+	}, nil
+}
+
 // Detach removes a link via gRPC.
 // The proto uses link_id (uint32) which matches our kernel_link_id.
 func (c *remoteClient) Detach(ctx context.Context, kernelLinkID uint32) error {
@@ -361,10 +425,25 @@ func (c *remoteClient) LoadImage(ctx context.Context, ref interpreter.ImageRef, 
 	}
 
 	for _, spec := range programs {
-		loadInfo = append(loadInfo, &pb.LoadInfo{
+		info := &pb.LoadInfo{
 			Name:        spec.ProgramName,
 			ProgramType: domainTypeToProto(spec.ProgramType),
-		})
+		}
+		// Add ProgSpecificInfo for fentry/fexit which require attach function at load time
+		if spec.ProgramType == bpfman.ProgramTypeFentry {
+			info.Info = &pb.ProgSpecificInfo{
+				Info: &pb.ProgSpecificInfo_FentryLoadInfo{
+					FentryLoadInfo: &pb.FentryLoadInfo{FnName: spec.AttachFunc},
+				},
+			}
+		} else if spec.ProgramType == bpfman.ProgramTypeFexit {
+			info.Info = &pb.ProgSpecificInfo{
+				Info: &pb.ProgSpecificInfo_FexitLoadInfo{
+					FexitLoadInfo: &pb.FexitLoadInfo{FnName: spec.AttachFunc},
+				},
+			}
+		}
+		loadInfo = append(loadInfo, info)
 		if spec.GlobalData != nil {
 			globalData = spec.GlobalData
 		}

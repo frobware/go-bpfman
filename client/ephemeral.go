@@ -200,6 +200,16 @@ func (e *ephemeralClient) AttachUprobe(ctx context.Context, programKernelID uint
 	return e.remote.AttachUprobe(ctx, programKernelID, target, fnName, offset, linkPinPath)
 }
 
+// AttachFentry attaches a fentry program to a kernel function via the ephemeral gRPC server.
+func (e *ephemeralClient) AttachFentry(ctx context.Context, programKernelID uint32, linkPinPath string) (bpfman.LinkSummary, error) {
+	return e.remote.AttachFentry(ctx, programKernelID, linkPinPath)
+}
+
+// AttachFexit attaches a fexit program to a kernel function via the ephemeral gRPC server.
+func (e *ephemeralClient) AttachFexit(ctx context.Context, programKernelID uint32, linkPinPath string) (bpfman.LinkSummary, error) {
+	return e.remote.AttachFexit(ctx, programKernelID, linkPinPath)
+}
+
 // Detach removes a link via the ephemeral gRPC server.
 func (e *ephemeralClient) Detach(ctx context.Context, kernelLinkID uint32) error {
 	return e.remote.Detach(ctx, kernelLinkID)

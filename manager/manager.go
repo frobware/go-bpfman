@@ -622,6 +622,140 @@ func computeAttachUprobeAction(programKernelID, kernelLinkID uint32, pinPath, ta
 	}
 }
 
+// AttachFentry attaches a pinned fentry program to its target kernel function.
+// The target function was specified at load time and stored in the program's AttachFunc.
+// If linkPinPath is empty, a default path is generated in the links directory.
+//
+// Pattern: FETCH -> KERNEL I/O -> COMPUTE -> EXECUTE
+func (m *Manager) AttachFentry(ctx context.Context, programKernelID uint32, linkPinPath string) (bpfman.LinkSummary, error) {
+	// FETCH: Get program metadata to access AttachFunc
+	prog, err := m.store.Get(ctx, programKernelID)
+	if err != nil {
+		return bpfman.LinkSummary{}, fmt.Errorf("get program %d: %w", programKernelID, err)
+	}
+
+	fnName := prog.LoadSpec.AttachFunc
+	if fnName == "" {
+		return bpfman.LinkSummary{}, fmt.Errorf("program %d has no attach function (fentry requires attach function at load time)", programKernelID)
+	}
+
+	// COMPUTE: Construct paths from convention (kernel ID + bpffs root)
+	progPinPath := filepath.Join(m.dirs.FS, fmt.Sprintf("prog_%d", programKernelID))
+
+	// COMPUTE: Auto-generate link pin path if not provided
+	if linkPinPath == "" {
+		linkName := "fentry_" + sanitiseFilename(fnName)
+		linksDir := filepath.Join(m.dirs.FS, "links", fmt.Sprintf("%d", programKernelID))
+		linkPinPath = filepath.Join(linksDir, linkName)
+	}
+
+	// KERNEL I/O: Attach to the kernel
+	link, err := m.kernel.AttachFentry(progPinPath, fnName, linkPinPath)
+	if err != nil {
+		return bpfman.LinkSummary{}, fmt.Errorf("attach fentry %s: %w", fnName, err)
+	}
+
+	// COMPUTE: Build save action from kernel result
+	saveAction := computeAttachFentryAction(programKernelID, link.Kernel.ID(), link.Managed.PinPath, fnName)
+
+	// EXECUTE: Save link metadata
+	if err := m.executor.Execute(ctx, saveAction); err != nil {
+		return bpfman.LinkSummary{}, fmt.Errorf("save link metadata: %w", err)
+	}
+
+	m.logger.Info("attached fentry",
+		"kernel_link_id", link.Kernel.ID(),
+		"program_id", programKernelID,
+		"fn_name", fnName,
+		"pin_path", link.Managed.PinPath)
+
+	return saveAction.Summary, nil
+}
+
+// computeAttachFentryAction is a pure function that builds the save action
+// for a fentry attachment.
+func computeAttachFentryAction(programKernelID, kernelLinkID uint32, pinPath, fnName string) action.SaveFentryLink {
+	return action.SaveFentryLink{
+		Summary: bpfman.LinkSummary{
+			KernelLinkID:    kernelLinkID,
+			LinkType:        bpfman.LinkTypeFentry,
+			KernelProgramID: programKernelID,
+			PinPath:         pinPath,
+			CreatedAt:       time.Now(),
+		},
+		Details: bpfman.FentryDetails{
+			FnName: fnName,
+		},
+	}
+}
+
+// AttachFexit attaches a pinned fexit program to its target kernel function.
+// The target function was specified at load time and stored in the program's AttachFunc.
+// If linkPinPath is empty, a default path is generated in the links directory.
+//
+// Pattern: FETCH -> KERNEL I/O -> COMPUTE -> EXECUTE
+func (m *Manager) AttachFexit(ctx context.Context, programKernelID uint32, linkPinPath string) (bpfman.LinkSummary, error) {
+	// FETCH: Get program metadata to access AttachFunc
+	prog, err := m.store.Get(ctx, programKernelID)
+	if err != nil {
+		return bpfman.LinkSummary{}, fmt.Errorf("get program %d: %w", programKernelID, err)
+	}
+
+	fnName := prog.LoadSpec.AttachFunc
+	if fnName == "" {
+		return bpfman.LinkSummary{}, fmt.Errorf("program %d has no attach function (fexit requires attach function at load time)", programKernelID)
+	}
+
+	// COMPUTE: Construct paths from convention (kernel ID + bpffs root)
+	progPinPath := filepath.Join(m.dirs.FS, fmt.Sprintf("prog_%d", programKernelID))
+
+	// COMPUTE: Auto-generate link pin path if not provided
+	if linkPinPath == "" {
+		linkName := "fexit_" + sanitiseFilename(fnName)
+		linksDir := filepath.Join(m.dirs.FS, "links", fmt.Sprintf("%d", programKernelID))
+		linkPinPath = filepath.Join(linksDir, linkName)
+	}
+
+	// KERNEL I/O: Attach to the kernel
+	link, err := m.kernel.AttachFexit(progPinPath, fnName, linkPinPath)
+	if err != nil {
+		return bpfman.LinkSummary{}, fmt.Errorf("attach fexit %s: %w", fnName, err)
+	}
+
+	// COMPUTE: Build save action from kernel result
+	saveAction := computeAttachFexitAction(programKernelID, link.Kernel.ID(), link.Managed.PinPath, fnName)
+
+	// EXECUTE: Save link metadata
+	if err := m.executor.Execute(ctx, saveAction); err != nil {
+		return bpfman.LinkSummary{}, fmt.Errorf("save link metadata: %w", err)
+	}
+
+	m.logger.Info("attached fexit",
+		"kernel_link_id", link.Kernel.ID(),
+		"program_id", programKernelID,
+		"fn_name", fnName,
+		"pin_path", link.Managed.PinPath)
+
+	return saveAction.Summary, nil
+}
+
+// computeAttachFexitAction is a pure function that builds the save action
+// for a fexit attachment.
+func computeAttachFexitAction(programKernelID, kernelLinkID uint32, pinPath, fnName string) action.SaveFexitLink {
+	return action.SaveFexitLink{
+		Summary: bpfman.LinkSummary{
+			KernelLinkID:    kernelLinkID,
+			LinkType:        bpfman.LinkTypeFexit,
+			KernelProgramID: programKernelID,
+			PinPath:         pinPath,
+			CreatedAt:       time.Now(),
+		},
+		Details: bpfman.FexitDetails{
+			FnName: fnName,
+		},
+	}
+}
+
 // XDP proceed-on action bits (matches XDP return codes).
 const (
 	xdpProceedOnPass = 1 << 2 // Continue to next program on XDP_PASS

@@ -58,8 +58,10 @@ func (c *AttachCmd) Run(cli *CLI) error {
 		return c.attachKprobe(cli)
 	case "uprobe":
 		return c.attachUprobe(cli)
-	case "fentry", "fexit":
-		return fmt.Errorf("%s attachment not yet implemented", c.Type)
+	case "fentry":
+		return c.attachFentry(cli)
+	case "fexit":
+		return c.attachFexit(cli)
 	default:
 		return fmt.Errorf("unknown attach type: %s", c.Type)
 	}
@@ -227,6 +229,38 @@ func (c *AttachCmd) attachUprobe(cli *CLI) error {
 
 	ctx := context.Background()
 	result, err := b.AttachUprobe(ctx, c.ProgramID.Value, c.Target, c.FnName, c.Offset, "")
+	if err != nil {
+		return err
+	}
+
+	return c.printLinkResult(ctx, b, result.KernelLinkID)
+}
+
+func (c *AttachCmd) attachFentry(cli *CLI) error {
+	b, err := cli.Client()
+	if err != nil {
+		return fmt.Errorf("failed to create client: %w", err)
+	}
+	defer b.Close()
+
+	ctx := context.Background()
+	result, err := b.AttachFentry(ctx, c.ProgramID.Value, "")
+	if err != nil {
+		return err
+	}
+
+	return c.printLinkResult(ctx, b, result.KernelLinkID)
+}
+
+func (c *AttachCmd) attachFexit(cli *CLI) error {
+	b, err := cli.Client()
+	if err != nil {
+		return fmt.Errorf("failed to create client: %w", err)
+	}
+	defer b.Close()
+
+	ctx := context.Background()
+	result, err := b.AttachFexit(ctx, c.ProgramID.Value, "")
 	if err != nil {
 		return err
 	}

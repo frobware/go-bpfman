@@ -14,6 +14,8 @@ const (
 	AttachKretprobe  AttachType = "kretprobe"
 	AttachUprobe     AttachType = "uprobe"
 	AttachUretprobe  AttachType = "uretprobe"
+	AttachFentry     AttachType = "fentry"
+	AttachFexit      AttachType = "fexit"
 	AttachXDP        AttachType = "xdp"
 	AttachTC         AttachType = "tc"
 	AttachTCX        AttachType = "tcx"

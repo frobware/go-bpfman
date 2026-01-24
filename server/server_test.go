@@ -310,6 +310,48 @@ func (f *fakeKernel) AttachUprobe(progPinPath, target, fnName string, offset uin
 	}, nil
 }
 
+func (f *fakeKernel) AttachFentry(progPinPath, fnName, linkPinPath string) (bpfman.ManagedLink, error) {
+	id := f.nextID.Add(1)
+	// Store for DetachLink lookup
+	f.links[id] = &bpfman.AttachedLink{
+		ID:      id,
+		PinPath: linkPinPath,
+		Type:    bpfman.AttachFentry,
+	}
+	return bpfman.ManagedLink{
+		Managed: &bpfman.LinkInfo{
+			KernelLinkID:    id,
+			KernelProgramID: 0,
+			Type:            bpfman.LinkTypeFentry,
+			PinPath:         linkPinPath,
+			CreatedAt:       time.Now(),
+			Details:         bpfman.FentryDetails{FnName: fnName},
+		},
+		Kernel: &fakeKernelLinkInfo{id: id, programID: 0, linkType: "fentry"},
+	}, nil
+}
+
+func (f *fakeKernel) AttachFexit(progPinPath, fnName, linkPinPath string) (bpfman.ManagedLink, error) {
+	id := f.nextID.Add(1)
+	// Store for DetachLink lookup
+	f.links[id] = &bpfman.AttachedLink{
+		ID:      id,
+		PinPath: linkPinPath,
+		Type:    bpfman.AttachFexit,
+	}
+	return bpfman.ManagedLink{
+		Managed: &bpfman.LinkInfo{
+			KernelLinkID:    id,
+			KernelProgramID: 0,
+			Type:            bpfman.LinkTypeFexit,
+			PinPath:         linkPinPath,
+			CreatedAt:       time.Now(),
+			Details:         bpfman.FexitDetails{FnName: fnName},
+		},
+		Kernel: &fakeKernelLinkInfo{id: id, programID: 0, linkType: "fexit"},
+	}, nil
+}
+
 func (f *fakeKernel) DetachLink(linkPinPath string) error {
 	for id, link := range f.links {
 		if link.PinPath == linkPinPath {

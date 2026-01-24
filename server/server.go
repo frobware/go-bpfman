@@ -267,6 +267,16 @@ func (s *Server) Load(ctx context.Context, req *pb.LoadRequest) (*pb.LoadRespons
 			ImageSource: imageSource,
 		}
 
+		// Extract AttachFunc from ProgSpecificInfo for fentry/fexit
+		if info.Info != nil {
+			switch i := info.Info.Info.(type) {
+			case *pb.ProgSpecificInfo_FentryLoadInfo:
+				spec.AttachFunc = i.FentryLoadInfo.FnName
+			case *pb.ProgSpecificInfo_FexitLoadInfo:
+				spec.AttachFunc = i.FexitLoadInfo.FnName
+			}
+		}
+
 		opts := manager.LoadOpts{
 			UserMetadata: req.Metadata,
 			Owner:        "bpfman",
@@ -349,6 +359,10 @@ func (s *Server) Attach(ctx context.Context, req *pb.AttachRequest) (*pb.AttachR
 		return s.attachKprobe(ctx, req.Id, info.KprobeAttachInfo)
 	case *pb.AttachInfo_UprobeAttachInfo:
 		return s.attachUprobe(ctx, req.Id, info.UprobeAttachInfo)
+	case *pb.AttachInfo_FentryAttachInfo:
+		return s.attachFentry(ctx, req.Id, info.FentryAttachInfo)
+	case *pb.AttachInfo_FexitAttachInfo:
+		return s.attachFexit(ctx, req.Id, info.FexitAttachInfo)
 	default:
 		return nil, status.Errorf(codes.Unimplemented, "attach type %T not yet implemented", req.Attach.Info)
 	}
@@ -513,6 +527,36 @@ func (s *Server) attachUprobe(ctx context.Context, programID uint32, info *pb.Up
 	summary, err := s.mgr.AttachUprobe(ctx, programID, info.Target, info.GetFnName(), info.Offset, retprobe, "")
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "attach uprobe: %v", err)
+	}
+
+	return &pb.AttachResponse{
+		LinkId: summary.KernelLinkID,
+	}, nil
+}
+
+// attachFentry handles fentry attachment via the manager.
+// The attach function is stored in the program metadata from load time.
+func (s *Server) attachFentry(ctx context.Context, programID uint32, info *pb.FentryAttachInfo) (*pb.AttachResponse, error) {
+	// Call manager with empty linkPinPath to auto-generate.
+	// The manager will retrieve the attach function from the stored program metadata.
+	summary, err := s.mgr.AttachFentry(ctx, programID, "")
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "attach fentry: %v", err)
+	}
+
+	return &pb.AttachResponse{
+		LinkId: summary.KernelLinkID,
+	}, nil
+}
+
+// attachFexit handles fexit attachment via the manager.
+// The attach function is stored in the program metadata from load time.
+func (s *Server) attachFexit(ctx context.Context, programID uint32, info *pb.FexitAttachInfo) (*pb.AttachResponse, error) {
+	// Call manager with empty linkPinPath to auto-generate.
+	// The manager will retrieve the attach function from the stored program metadata.
+	summary, err := s.mgr.AttachFexit(ctx, programID, "")
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "attach fexit: %v", err)
 	}
 
 	return &pb.AttachResponse{

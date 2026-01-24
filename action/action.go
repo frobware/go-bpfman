@@ -87,6 +87,22 @@ type SaveUprobeLink struct {
 
 func (SaveUprobeLink) isAction() {}
 
+// SaveFentryLink saves a fentry link to the store.
+type SaveFentryLink struct {
+	Summary bpfman.LinkSummary
+	Details bpfman.FentryDetails
+}
+
+func (SaveFentryLink) isAction() {}
+
+// SaveFexitLink saves a fexit link to the store.
+type SaveFexitLink struct {
+	Summary bpfman.LinkSummary
+	Details bpfman.FexitDetails
+}
+
+func (SaveFexitLink) isAction() {}
+
 // Kernel actions - operations on the BPF subsystem
 
 // LoadProgram loads a BPF program into the kernel.

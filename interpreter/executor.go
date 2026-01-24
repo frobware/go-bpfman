@@ -57,6 +57,12 @@ func (e *executor) Execute(ctx context.Context, a action.Action) error {
 	case action.SaveUprobeLink:
 		return e.store.SaveUprobeLink(ctx, a.Summary, a.Details)
 
+	case action.SaveFentryLink:
+		return e.store.SaveFentryLink(ctx, a.Summary, a.Details)
+
+	case action.SaveFexitLink:
+		return e.store.SaveFexitLink(ctx, a.Summary, a.Details)
+
 	case action.LoadProgram:
 		_, err := e.kernel.Load(ctx, a.Spec)
 		return err

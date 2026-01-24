@@ -155,6 +155,12 @@ type ProgramAttacher interface {
 	// target is the path to the binary or library (e.g., /usr/lib/libc.so.6).
 	// If retprobe is true, attaches as a uretprobe instead of uprobe.
 	AttachUprobe(progPinPath, target, fnName string, offset uint64, retprobe bool, linkPinPath string) (bpfman.ManagedLink, error)
+	// AttachFentry attaches a pinned program to a kernel function entry point.
+	// The fnName was specified at load time and stored with the program.
+	AttachFentry(progPinPath, fnName, linkPinPath string) (bpfman.ManagedLink, error)
+	// AttachFexit attaches a pinned program to a kernel function exit point.
+	// The fnName was specified at load time and stored with the program.
+	AttachFexit(progPinPath, fnName, linkPinPath string) (bpfman.ManagedLink, error)
 }
 
 // XDPDispatcherResult holds the result of loading an XDP dispatcher.

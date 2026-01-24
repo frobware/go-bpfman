@@ -1642,3 +1642,81 @@ func sanitiseFilename(s string) string {
 	}
 	return string(result)
 }
+
+// AttachFentry attaches a pinned fentry program to a kernel function.
+// The target function was specified at load time and is stored in the program.
+func (k *kernelAdapter) AttachFentry(progPinPath, fnName, linkPinPath string) (bpfman.ManagedLink, error) {
+	return k.attachTracing(progPinPath, fnName, linkPinPath, bpfman.LinkTypeFentry)
+}
+
+// AttachFexit attaches a pinned fexit program to a kernel function.
+// The target function was specified at load time and is stored in the program.
+func (k *kernelAdapter) AttachFexit(progPinPath, fnName, linkPinPath string) (bpfman.ManagedLink, error) {
+	return k.attachTracing(progPinPath, fnName, linkPinPath, bpfman.LinkTypeFexit)
+}
+
+// attachTracing is the shared implementation for fentry and fexit attachment.
+func (k *kernelAdapter) attachTracing(progPinPath, fnName, linkPinPath string, linkType bpfman.LinkType) (bpfman.ManagedLink, error) {
+	prog, err := ebpf.LoadPinnedProgram(progPinPath, nil)
+	if err != nil {
+		return bpfman.ManagedLink{}, fmt.Errorf("load pinned program %s: %w", progPinPath, err)
+	}
+	defer prog.Close()
+
+	// Get program info to find kernel program ID
+	progInfo, err := prog.Info()
+	if err != nil {
+		return bpfman.ManagedLink{}, fmt.Errorf("get program info: %w", err)
+	}
+	progID, _ := progInfo.ID()
+
+	// Attach using link.AttachTracing - the program already has the target
+	// function and attach type set from load time (via ELF section name).
+	lnk, err := link.AttachTracing(link.TracingOptions{
+		Program: prog,
+	})
+	if err != nil {
+		return bpfman.ManagedLink{}, fmt.Errorf("attach tracing to %s: %w", fnName, err)
+	}
+
+	// Pin the link if a path is provided
+	if linkPinPath != "" {
+		// Ensure parent directory exists
+		if err := os.MkdirAll(filepath.Dir(linkPinPath), 0755); err != nil {
+			lnk.Close()
+			return bpfman.ManagedLink{}, fmt.Errorf("create link pin directory: %w", err)
+		}
+
+		if err := lnk.Pin(linkPinPath); err != nil {
+			lnk.Close()
+			return bpfman.ManagedLink{}, fmt.Errorf("pin link to %s: %w", linkPinPath, err)
+		}
+	}
+
+	// Get link info
+	linkInfo, err := lnk.Info()
+	if err != nil {
+		lnk.Close()
+		return bpfman.ManagedLink{}, fmt.Errorf("get link info: %w", err)
+	}
+
+	// Build details based on link type
+	var details bpfman.LinkDetails
+	if linkType == bpfman.LinkTypeFentry {
+		details = bpfman.FentryDetails{FnName: fnName}
+	} else {
+		details = bpfman.FexitDetails{FnName: fnName}
+	}
+
+	return bpfman.ManagedLink{
+		Managed: &bpfman.LinkInfo{
+			KernelLinkID:    uint32(linkInfo.ID),
+			KernelProgramID: uint32(progID),
+			Type:            linkType,
+			PinPath:         linkPinPath,
+			CreatedAt:       time.Now(),
+			Details:         details,
+		},
+		Kernel: NewLinkInfo(linkInfo),
+	}, nil
+}
