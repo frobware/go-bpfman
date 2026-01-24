@@ -862,6 +862,95 @@ func computeAttachTCActions(
 	}
 }
 
+// AttachTCX attaches a TCX program to a network interface using native
+// kernel multi-program support. Unlike TC, TCX doesn't use dispatchers.
+//
+// Pin paths follow the convention:
+//   - Link: /sys/fs/bpf/bpfman/tcx-{direction}/link_{nsid}_{ifindex}_{linkid}
+//
+// Pattern: FETCH -> KERNEL I/O -> COMPUTE -> EXECUTE
+func (m *Manager) AttachTCX(ctx context.Context, programKernelID uint32, ifindex int, ifname, direction string, priority int, linkPinPath string) (bpfman.LinkSummary, error) {
+	// Validate direction
+	if direction != "ingress" && direction != "egress" {
+		return bpfman.LinkSummary{}, fmt.Errorf("invalid TCX direction %q: must be ingress or egress", direction)
+	}
+
+	// FETCH: Get program metadata to find pin path
+	prog, err := m.store.Get(ctx, programKernelID)
+	if err != nil {
+		return bpfman.LinkSummary{}, fmt.Errorf("get program %d: %w", programKernelID, err)
+	}
+
+	// Verify program type is TCX
+	if prog.LoadSpec.ProgramType != bpfman.ProgramTypeTCX {
+		return bpfman.LinkSummary{}, fmt.Errorf("program %d is type %s, not tcx", programKernelID, prog.LoadSpec.ProgramType)
+	}
+
+	// FETCH: Get network namespace ID
+	nsid, err := netns.GetCurrentNsid()
+	if err != nil {
+		return bpfman.LinkSummary{}, fmt.Errorf("get current nsid: %w", err)
+	}
+
+	// COMPUTE: Calculate link pin path if not provided
+	if linkPinPath == "" {
+		// Use a path under tcx-{direction} directory
+		dirName := fmt.Sprintf("tcx-%s", direction)
+		linkPinPath = filepath.Join(m.dirs.FS, dirName, fmt.Sprintf("link_%d_%d", nsid, ifindex))
+	}
+
+	// COMPUTE: The stored PinPath is the maps directory (e.g., /fs/maps/8518).
+	// The program is pinned at /fs/prog_<kernelID>.
+	// So we go up two levels from maps dir to get /fs, then add prog_<id>.
+	fsRoot := filepath.Dir(filepath.Dir(prog.LoadSpec.PinPath))
+	progPinPath := filepath.Join(fsRoot, fmt.Sprintf("prog_%d", programKernelID))
+
+	// KERNEL I/O: Attach program using TCX link
+	link, err := m.kernel.AttachTCX(ifindex, direction, progPinPath, linkPinPath)
+	if err != nil {
+		return bpfman.LinkSummary{}, fmt.Errorf("attach TCX to %s %s: %w", ifname, direction, err)
+	}
+
+	// COMPUTE: Build save action
+	summary := bpfman.LinkSummary{
+		KernelLinkID:    link.Kernel.ID(),
+		LinkType:        bpfman.LinkTypeTCX,
+		KernelProgramID: programKernelID,
+		PinPath:         link.Managed.PinPath,
+		CreatedAt:       time.Now(),
+	}
+
+	details := bpfman.TCXDetails{
+		Interface: ifname,
+		Ifindex:   uint32(ifindex),
+		Direction: direction,
+		Priority:  int32(priority),
+		Nsid:      nsid,
+	}
+
+	saveAction := action.SaveTCXLink{
+		Summary: summary,
+		Details: details,
+	}
+
+	// EXECUTE: Save link metadata
+	if err := m.executor.Execute(ctx, saveAction); err != nil {
+		return bpfman.LinkSummary{}, fmt.Errorf("save TCX link metadata: %w", err)
+	}
+
+	m.logger.Info("attached TCX program",
+		"kernel_link_id", link.Kernel.ID(),
+		"program_id", programKernelID,
+		"interface", ifname,
+		"direction", direction,
+		"ifindex", ifindex,
+		"nsid", nsid,
+		"priority", priority,
+		"pin_path", link.Managed.PinPath)
+
+	return summary, nil
+}
+
 // createTCDispatcher creates a new TC dispatcher for the given interface and direction.
 //
 // Pattern: COMPUTE -> KERNEL I/O -> COMPUTE -> EXECUTE

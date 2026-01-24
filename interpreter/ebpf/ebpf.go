@@ -1348,6 +1348,76 @@ func (k *kernelAdapter) AttachTCExtension(dispatcherPinPath, objectPath, program
 	}, nil
 }
 
+// AttachTCX attaches a loaded program directly to an interface using TCX link.
+// Unlike TC which uses dispatchers, TCX uses native kernel multi-program support.
+func (k *kernelAdapter) AttachTCX(ifindex int, direction, programPinPath, linkPinPath string) (bpfman.ManagedLink, error) {
+	// Load the pinned program
+	prog, err := ebpf.LoadPinnedProgram(programPinPath, nil)
+	if err != nil {
+		return bpfman.ManagedLink{}, fmt.Errorf("load pinned program %s: %w", programPinPath, err)
+	}
+	defer prog.Close()
+
+	// Get program info for the ID
+	progInfo, err := prog.Info()
+	if err != nil {
+		return bpfman.ManagedLink{}, fmt.Errorf("get program info: %w", err)
+	}
+	progID, _ := progInfo.ID()
+
+	// Determine attach type based on direction
+	var attachType ebpf.AttachType
+	switch direction {
+	case "ingress":
+		attachType = ebpf.AttachTCXIngress
+	case "egress":
+		attachType = ebpf.AttachTCXEgress
+	default:
+		return bpfman.ManagedLink{}, fmt.Errorf("invalid TCX direction %q: must be ingress or egress", direction)
+	}
+
+	// Attach using TCX link
+	lnk, err := link.AttachTCX(link.TCXOptions{
+		Interface: ifindex,
+		Program:   prog,
+		Attach:    attachType,
+	})
+	if err != nil {
+		return bpfman.ManagedLink{}, fmt.Errorf("attach TCX to ifindex %d %s: %w", ifindex, direction, err)
+	}
+
+	// Pin the link if path provided
+	if linkPinPath != "" {
+		if err := os.MkdirAll(filepath.Dir(linkPinPath), 0755); err != nil {
+			lnk.Close()
+			return bpfman.ManagedLink{}, fmt.Errorf("create TCX link pin directory: %w", err)
+		}
+
+		if err := lnk.Pin(linkPinPath); err != nil {
+			lnk.Close()
+			return bpfman.ManagedLink{}, fmt.Errorf("pin TCX link to %s: %w", linkPinPath, err)
+		}
+	}
+
+	// Get link info
+	linkInfo, err := lnk.Info()
+	if err != nil {
+		lnk.Close()
+		return bpfman.ManagedLink{}, fmt.Errorf("get TCX link info: %w", err)
+	}
+
+	return bpfman.ManagedLink{
+		Managed: &bpfman.LinkInfo{
+			KernelLinkID:    uint32(linkInfo.ID),
+			KernelProgramID: uint32(progID),
+			Type:            bpfman.LinkTypeTCX,
+			PinPath:         linkPinPath,
+			CreatedAt:       time.Now(),
+		},
+		Kernel: NewLinkInfo(linkInfo),
+	}, nil
+}
+
 // sanitiseFilename replaces characters that are invalid in filenames.
 func sanitiseFilename(s string) string {
 	var result []byte

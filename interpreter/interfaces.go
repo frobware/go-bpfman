@@ -206,6 +206,17 @@ type DispatcherAttacher interface {
 	// it to a TC dispatcher slot. The program is loaded with BPF_PROG_TYPE_EXT
 	// targeting the dispatcher's slot function.
 	AttachTCExtension(dispatcherPinPath, objectPath, programName string, position int, linkPinPath string) (bpfman.ManagedLink, error)
+
+	// AttachTCX attaches a loaded program directly to an interface using TCX link.
+	// Unlike TC which uses dispatchers, TCX uses native kernel multi-program support.
+	// The program must already be pinned at programPinPath.
+	//
+	// Parameters:
+	//   - ifindex: Network interface index
+	//   - direction: "ingress" or "egress"
+	//   - programPinPath: Path where the program is pinned
+	//   - linkPinPath: Path to pin the TCX link
+	AttachTCX(ifindex int, direction, programPinPath, linkPinPath string) (bpfman.ManagedLink, error)
 }
 
 // LinkDetacher detaches links from hooks.

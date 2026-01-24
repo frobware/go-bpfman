@@ -13,6 +13,17 @@ import (
 	"github.com/frobware/go-bpfman/manager"
 )
 
+// toKernelType converts a bpfman program type to its underlying kernel type.
+// TCX and TC both use the kernel's sched_cls type.
+func toKernelType(t bpfman.ProgramType) string {
+	switch t {
+	case bpfman.ProgramTypeTCX:
+		return "tc"
+	default:
+		return t.String()
+	}
+}
+
 // FormatProgramInfo formats a ProgramInfo according to the specified output flags.
 func FormatProgramInfo(info manager.ProgramInfo, flags *OutputFlags) (string, error) {
 	switch flags.Format() {
@@ -379,6 +390,15 @@ func formatLinkResultTable(bpfFunction string, summary bpfman.LinkSummary, detai
 		if d.Offset != 0 {
 			fmt.Fprintf(w, " Offset:\t%d\n", d.Offset)
 		}
+	case bpfman.TCXDetails:
+		fmt.Fprintf(w, " Interface:\t%s\n", d.Interface)
+		fmt.Fprintf(w, " Direction:\t%s\n", d.Direction)
+		fmt.Fprintf(w, " Priority:\t%d\n", d.Priority)
+		if d.Netns != "" {
+			fmt.Fprintf(w, " Network Namespace:\t%s\n", d.Netns)
+		} else {
+			fmt.Fprintf(w, " Network Namespace:\tNone\n")
+		}
 	}
 
 	// Metadata placeholder
@@ -525,12 +545,12 @@ func formatLoadedProgramsTable(programs []bpfman.ManagedProgram) string {
 		kw := tabwriter.NewWriter(&b, 0, 0, 1, ' ', 0)
 		fmt.Fprintf(kw, " Program ID:\t%d\n", p.Kernel.ID())
 		fmt.Fprintf(kw, " BPF Function:\t%s\n", p.Kernel.Name())
-		fmt.Fprintf(kw, " Kernel Type:\t%s\n", p.Kernel.Type())
+		fmt.Fprintf(kw, " Kernel Type:\t%s\n", toKernelType(p.Kernel.Type()))
 		if !p.Kernel.LoadedAt().IsZero() {
 			fmt.Fprintf(kw, " Loaded At:\t%s\n", p.Kernel.LoadedAt().Format("2006-01-02T15:04:05-0700"))
 		}
 		fmt.Fprintf(kw, " Tag:\t%s\n", p.Kernel.Tag())
-		fmt.Fprintf(kw, " GPL Compatible:\t%s\n", "TODO / FIX ME")
+		fmt.Fprintf(kw, " GPL Compatible:\t%t\n", p.Kernel.GPLCompatible())
 		if mapIDs := p.Kernel.MapIDs(); len(mapIDs) > 0 {
 			fmt.Fprintf(kw, " Map IDs:\t%v\n", mapIDs)
 		}

@@ -290,8 +290,9 @@ func (s *Server) Load(ctx context.Context, req *pb.LoadRequest) (*pb.LoadRespons
 			KernelInfo: &pb.KernelProgramInfo{
 				Id:            loaded.Kernel.ID(),
 				Name:          loaded.Kernel.Name(),
-				ProgramType:   uint32(loaded.Kernel.Type()),
+				ProgramType:   uint32(loaded.Managed.Type),
 				LoadedAt:      loadedAt,
+				Tag:           loaded.Kernel.Tag(),
 				GplCompatible: loaded.Kernel.GPLCompatible(),
 				Jited:         loaded.Kernel.BytesJited() > 0,
 				MapIds:        loaded.Kernel.MapIDs(),
@@ -338,6 +339,8 @@ func (s *Server) Attach(ctx context.Context, req *pb.AttachRequest) (*pb.AttachR
 		return s.attachXDP(ctx, req.Id, info.XdpAttachInfo)
 	case *pb.AttachInfo_TcAttachInfo:
 		return s.attachTC(ctx, req.Id, info.TcAttachInfo)
+	case *pb.AttachInfo_TcxAttachInfo:
+		return s.attachTCX(ctx, req.Id, info.TcxAttachInfo)
 	default:
 		return nil, status.Errorf(codes.Unimplemented, "attach type %T not yet implemented", req.Attach.Info)
 	}
@@ -413,6 +416,37 @@ func (s *Server) attachTC(ctx context.Context, programID uint32, info *pb.TCAtta
 	summary, err := s.mgr.AttachTC(ctx, programID, iface.Index, iface.Name, direction, priority, proceedOn, "")
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "attach TC: %v", err)
+	}
+
+	return &pb.AttachResponse{
+		LinkId: summary.KernelLinkID,
+	}, nil
+}
+
+// attachTCX handles TCX attachment via the manager.
+func (s *Server) attachTCX(ctx context.Context, programID uint32, info *pb.TCXAttachInfo) (*pb.AttachResponse, error) {
+	// Validate direction
+	direction := strings.ToLower(info.Direction)
+	if direction != "ingress" && direction != "egress" {
+		return nil, status.Errorf(codes.InvalidArgument, "direction must be 'ingress' or 'egress', got %q", info.Direction)
+	}
+
+	// Get interface index from name
+	iface, err := net.InterfaceByName(info.Iface)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "interface %q: %v", info.Iface, err)
+	}
+
+	// Use provided priority or default
+	priority := int(info.Priority)
+	if priority == 0 {
+		priority = 50 // Default priority
+	}
+
+	// Call manager with empty linkPinPath to auto-generate
+	summary, err := s.mgr.AttachTCX(ctx, programID, iface.Index, iface.Name, direction, priority, "")
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "attach TCX: %v", err)
 	}
 
 	return &pb.AttachResponse{

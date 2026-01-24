@@ -185,6 +185,11 @@ func (e *ephemeralClient) AttachTC(ctx context.Context, programKernelID uint32, 
 	return e.remote.AttachTC(ctx, programKernelID, ifindex, ifname, direction, priority, proceedOn, linkPinPath)
 }
 
+// AttachTCX attaches a TCX program to a network interface via the ephemeral gRPC server.
+func (e *ephemeralClient) AttachTCX(ctx context.Context, programKernelID uint32, ifindex int, ifname, direction string, priority int, linkPinPath string) (bpfman.LinkSummary, error) {
+	return e.remote.AttachTCX(ctx, programKernelID, ifindex, ifname, direction, priority, linkPinPath)
+}
+
 // Detach removes a link via the ephemeral gRPC server.
 func (e *ephemeralClient) Detach(ctx context.Context, kernelLinkID uint32) error {
 	return e.remote.Detach(ctx, kernelLinkID)

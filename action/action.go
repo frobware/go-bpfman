@@ -63,6 +63,14 @@ type SaveTCLink struct {
 
 func (SaveTCLink) isAction() {}
 
+// SaveTCXLink saves a TCX link to the store.
+type SaveTCXLink struct {
+	Summary bpfman.LinkSummary
+	Details bpfman.TCXDetails
+}
+
+func (SaveTCXLink) isAction() {}
+
 // Kernel actions - operations on the BPF subsystem
 
 // LoadProgram loads a BPF program into the kernel.

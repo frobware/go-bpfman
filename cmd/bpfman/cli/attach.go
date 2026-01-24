@@ -51,9 +51,11 @@ func (c *AttachCmd) Run(cli *CLI) error {
 		return c.attachXDP(cli)
 	case "tc":
 		return c.attachTC(cli)
+	case "tcx":
+		return c.attachTCX(cli)
 	case "kprobe":
 		return c.attachKprobe(cli)
-	case "tcx", "uprobe", "fentry", "fexit":
+	case "uprobe", "fentry", "fexit":
 		return fmt.Errorf("%s attachment not yet implemented", c.Type)
 	default:
 		return fmt.Errorf("unknown attach type: %s", c.Type)
@@ -146,6 +148,42 @@ func (c *AttachCmd) attachTC(cli *CLI) error {
 
 	ctx := context.Background()
 	result, err := b.AttachTC(ctx, c.ProgramID.Value, iface.Index, c.Iface, string(direction), c.Priority, proceedOn, "")
+	if err != nil {
+		return err
+	}
+
+	return c.printLinkResult(ctx, b, result.KernelLinkID)
+}
+
+func (c *AttachCmd) attachTCX(cli *CLI) error {
+	if c.Iface == "" {
+		return fmt.Errorf("--iface is required for TCX attachment")
+	}
+	if c.Direction == "" {
+		return fmt.Errorf("--direction is required for TCX attachment")
+	}
+	if c.Priority < 1 || c.Priority > 1000 {
+		return fmt.Errorf("--priority is required for TCX attachment (must be 1-1000)")
+	}
+
+	direction, err := ParseTCDirection(c.Direction)
+	if err != nil {
+		return err
+	}
+
+	b, err := cli.Client()
+	if err != nil {
+		return fmt.Errorf("failed to create client: %w", err)
+	}
+	defer b.Close()
+
+	iface, err := net.InterfaceByName(c.Iface)
+	if err != nil {
+		return fmt.Errorf("failed to find interface %q: %w", c.Iface, err)
+	}
+
+	ctx := context.Background()
+	result, err := b.AttachTCX(ctx, c.ProgramID.Value, iface.Index, c.Iface, string(direction), c.Priority, "")
 	if err != nil {
 		return err
 	}

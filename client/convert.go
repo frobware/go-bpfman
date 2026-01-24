@@ -124,6 +124,7 @@ func protoLoadResponseToManagedProgram(resp *pb.LoadResponseInfo) bpfman.Managed
 	if resp.KernelInfo != nil {
 		kernelInfo.id = resp.KernelInfo.Id
 		kernelInfo.name = resp.KernelInfo.Name
+		kernelInfo.tag = resp.KernelInfo.Tag
 		kernelInfo.mapIDs = resp.KernelInfo.MapIds
 		kernelInfo.btfID = resp.KernelInfo.BtfId
 		kernelInfo.bytesXlated = resp.KernelInfo.BytesXlated

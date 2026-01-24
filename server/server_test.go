@@ -341,6 +341,25 @@ func (f *fakeKernel) AttachTCExtension(dispatcherPinPath, objectPath, programNam
 	}, nil
 }
 
+func (f *fakeKernel) AttachTCX(ifindex int, direction, programPinPath, linkPinPath string) (bpfman.ManagedLink, error) {
+	id := f.nextID.Add(1)
+	f.links[id] = &bpfman.AttachedLink{
+		ID:      id,
+		PinPath: linkPinPath,
+		Type:    bpfman.AttachTCX,
+	}
+	return bpfman.ManagedLink{
+		Managed: &bpfman.LinkInfo{
+			KernelLinkID:    id,
+			KernelProgramID: 0,
+			Type:            bpfman.LinkTypeTCX,
+			PinPath:         linkPinPath,
+			CreatedAt:       time.Now(),
+		},
+		Kernel: &fakeKernelLinkInfo{id: id, programID: 0, linkType: "tcx"},
+	}, nil
+}
+
 func (f *fakeKernel) RemovePin(path string) error {
 	return nil // Fake implementation - no-op
 }

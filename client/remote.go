@@ -198,6 +198,34 @@ func (c *remoteClient) AttachTC(ctx context.Context, programKernelID uint32, ifi
 	}, nil
 }
 
+// AttachTCX attaches a TCX program to a network interface via gRPC.
+func (c *remoteClient) AttachTCX(ctx context.Context, programKernelID uint32, ifindex int, ifname, direction string, priority int, linkPinPath string) (bpfman.LinkSummary, error) {
+	req := &pb.AttachRequest{
+		Id: programKernelID,
+		Attach: &pb.AttachInfo{
+			Info: &pb.AttachInfo_TcxAttachInfo{
+				TcxAttachInfo: &pb.TCXAttachInfo{
+					Iface:     ifname,
+					Direction: direction,
+					Priority:  int32(priority),
+				},
+			},
+		},
+	}
+
+	resp, err := c.client.Attach(ctx, req)
+	if err != nil {
+		return bpfman.LinkSummary{}, translateGRPCError(err)
+	}
+
+	return bpfman.LinkSummary{
+		LinkType:        bpfman.LinkTypeTCX,
+		KernelProgramID: programKernelID,
+		KernelLinkID:    resp.LinkId,
+		PinPath:         linkPinPath,
+	}, nil
+}
+
 // Detach removes a link via gRPC.
 // The proto uses link_id (uint32) which matches our kernel_link_id.
 func (c *remoteClient) Detach(ctx context.Context, kernelLinkID uint32) error {
