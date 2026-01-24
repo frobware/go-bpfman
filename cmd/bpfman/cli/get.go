@@ -11,8 +11,8 @@ import (
 
 // GetCmd gets details of a program or link.
 type GetCmd struct {
-	Program GetProgramCmd `cmd:"" default:"withargs" help:"Get program details."`
-	Link    GetLinkCmd    `cmd:"" help:"Get link details."`
+	Program GetProgramCmd `cmd:"" help:"Get a loaded eBPF program using the Program Id."`
+	Link    GetLinkCmd    `cmd:"" help:"Get a loaded eBPF program's attachment using the Link Id."`
 }
 
 // GetProgramCmd gets details of a managed program by kernel ID.

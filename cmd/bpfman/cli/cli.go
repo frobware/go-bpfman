@@ -29,7 +29,7 @@ type CLI struct {
 	Attach AttachCmd `cmd:"" help:"Attach a loaded program to a hook."`
 	Detach DetachCmd `cmd:"" help:"Detach a link."`
 	List   ListCmd   `cmd:"" help:"List managed programs or links."`
-	Get    GetCmd    `cmd:"" help:"Get details of a program or link."`
+	Get    GetCmd    `cmd:"" help:"Get a loaded eBPF program or program attachment link."`
 	GC     GCCmd     `cmd:"" help:"Garbage collect stale resources."`
 	Image  ImageCmd  `cmd:"" help:"Image operations (verify signatures)."`
 }
