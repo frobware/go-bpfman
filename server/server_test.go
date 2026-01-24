@@ -199,12 +199,15 @@ func (f *fakeKernel) Load(_ context.Context, spec bpfman.LoadSpec) (bpfman.Manag
 	}
 
 	id := f.nextID.Add(1)
+	// Compute paths the same way the real kernel does - using kernel ID
+	progPinPath := fmt.Sprintf("%s/prog_%d", spec.PinPath, id)
+	mapsDir := fmt.Sprintf("%s/maps/%d", spec.PinPath, id)
 	fp := fakeProgram{
 		id:          id,
 		name:        spec.ProgramName,
 		programType: spec.ProgramType,
-		pinPath:     spec.PinPath + "/" + spec.ProgramName,
-		pinDir:      spec.PinPath,
+		pinPath:     progPinPath,
+		pinDir:      mapsDir,
 	}
 	f.programs[id] = fp
 	f.recordOp("load", spec.ProgramName, id, nil)
@@ -1215,8 +1218,6 @@ func TestFakeKernel_RejectsInvalidProgramType(t *testing.T) {
 //	And neither program exists in the kernel,
 //	And neither program exists in the database.
 func TestLoadProgram_PartialFailure_SecondProgramFails(t *testing.T) {
-	t.Skip("rollback not yet implemented: server leaves orphaned programs in kernel and database on partial failure")
-
 	fix := newTestFixture(t)
 	ctx := context.Background()
 
@@ -1259,9 +1260,10 @@ func TestLoadProgram_PartialFailure_SecondProgramFails(t *testing.T) {
 //	When I attempt to load three programs,
 //	Then the first two programs are unloaded (rolled back),
 //	And no programs exist in the kernel or database.
+//
+// Note: We avoid using bpfman.io/ProgramName metadata because it has a unique
+// constraint. Using non-unique metadata (like "app") allows batch loading.
 func TestLoadProgram_PartialFailure_ThirdOfThreeFails(t *testing.T) {
-	t.Skip("rollback not yet implemented: server leaves orphaned programs in kernel and database on partial failure")
-
 	fix := newTestFixture(t)
 	ctx := context.Background()
 
@@ -1278,7 +1280,7 @@ func TestLoadProgram_PartialFailure_ThirdOfThreeFails(t *testing.T) {
 			{Name: "prog_three", ProgramType: pb.BpfmanProgramType_KPROBE},
 		},
 		Metadata: map[string]string{
-			"bpfman.io/ProgramName": "triple-prog",
+			"app": "triple-prog", // Non-unique metadata - ok for batch loads
 		},
 	}
 
@@ -1379,8 +1381,6 @@ func TestLoadProgram_SingleProgram_FailsCleanly(t *testing.T) {
 //	Then the failure occurs at the expected point,
 //	And rollback cleans up all previously loaded programs.
 func TestLoadProgram_FailOnNthLoad(t *testing.T) {
-	t.Skip("rollback not yet implemented: server leaves orphaned programs in kernel and database on partial failure")
-
 	fix := newTestFixture(t)
 	ctx := context.Background()
 

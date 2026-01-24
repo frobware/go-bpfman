@@ -246,11 +246,24 @@ func (s *Server) Load(ctx context.Context, req *pb.LoadRequest) (*pb.LoadRespons
 		Programs: make([]*pb.LoadResponseInfo, 0, len(req.Info)),
 	}
 
+	// Track successfully loaded programs for rollback on failure
+	var loadedKernelIDs []uint32
+
+	// rollback unloads all previously loaded programs in reverse order
+	rollback := func() {
+		for i := len(loadedKernelIDs) - 1; i >= 0; i-- {
+			if err := s.mgr.Unload(ctx, loadedKernelIDs[i]); err != nil {
+				s.logger.Error("rollback failed", "kernel_id", loadedKernelIDs[i], "error", err)
+			}
+		}
+	}
+
 	// Load each requested program using the manager (transactional)
 	// Pin paths are computed from kernel ID, following upstream convention
 	for _, info := range req.Info {
 		progType, err := protoToBpfmanType(info.ProgramType)
 		if err != nil {
+			rollback()
 			return nil, status.Errorf(codes.InvalidArgument, "invalid program type for %s: %v", info.Name, err)
 		}
 
@@ -284,8 +297,12 @@ func (s *Server) Load(ctx context.Context, req *pb.LoadRequest) (*pb.LoadRespons
 
 		loaded, err := s.mgr.Load(ctx, spec, opts)
 		if err != nil {
+			rollback()
 			return nil, status.Errorf(codes.Internal, "failed to load program %s: %v", info.Name, err)
 		}
+
+		// Track for potential rollback
+		loadedKernelIDs = append(loadedKernelIDs, loaded.Kernel.ID())
 
 		// Format LoadedAt as RFC3339 if available
 		var loadedAt string
