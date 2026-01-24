@@ -1,6 +1,7 @@
 package client
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/frobware/go-bpfman"
@@ -13,26 +14,26 @@ import (
 // Note: kretprobe/uretprobe map to KPROBE/UPROBE since the proto enum
 // doesn't have separate values. Use ActualTypeMetadataKey to preserve
 // the distinction.
-func domainTypeToProto(pt bpfman.ProgramType) pb.BpfmanProgramType {
+func domainTypeToProto(pt bpfman.ProgramType) (pb.BpfmanProgramType, error) {
 	switch pt {
 	case bpfman.ProgramTypeXDP:
-		return pb.BpfmanProgramType_XDP
+		return pb.BpfmanProgramType_XDP, nil
 	case bpfman.ProgramTypeTC:
-		return pb.BpfmanProgramType_TC
+		return pb.BpfmanProgramType_TC, nil
 	case bpfman.ProgramTypeTracepoint:
-		return pb.BpfmanProgramType_TRACEPOINT
+		return pb.BpfmanProgramType_TRACEPOINT, nil
 	case bpfman.ProgramTypeKprobe, bpfman.ProgramTypeKretprobe:
-		return pb.BpfmanProgramType_KPROBE
+		return pb.BpfmanProgramType_KPROBE, nil
 	case bpfman.ProgramTypeUprobe, bpfman.ProgramTypeUretprobe:
-		return pb.BpfmanProgramType_UPROBE
+		return pb.BpfmanProgramType_UPROBE, nil
 	case bpfman.ProgramTypeFentry:
-		return pb.BpfmanProgramType_FENTRY
+		return pb.BpfmanProgramType_FENTRY, nil
 	case bpfman.ProgramTypeFexit:
-		return pb.BpfmanProgramType_FEXIT
+		return pb.BpfmanProgramType_FEXIT, nil
 	case bpfman.ProgramTypeTCX:
-		return pb.BpfmanProgramType_TCX
+		return pb.BpfmanProgramType_TCX, nil
 	default:
-		return pb.BpfmanProgramType_XDP
+		return 0, fmt.Errorf("unsupported program type: %v", pt)
 	}
 }
 
@@ -50,26 +51,49 @@ func NeedsTypeMetadata(pt bpfman.ProgramType) bool {
 }
 
 // protoTypeToDomain converts a protobuf program type to bpfman.ProgramType.
-func protoTypeToDomain(pt pb.BpfmanProgramType) bpfman.ProgramType {
+func protoTypeToDomain(pt pb.BpfmanProgramType) (bpfman.ProgramType, error) {
 	switch pt {
 	case pb.BpfmanProgramType_XDP:
-		return bpfman.ProgramTypeXDP
+		return bpfman.ProgramTypeXDP, nil
 	case pb.BpfmanProgramType_TC:
-		return bpfman.ProgramTypeTC
+		return bpfman.ProgramTypeTC, nil
 	case pb.BpfmanProgramType_TRACEPOINT:
-		return bpfman.ProgramTypeTracepoint
+		return bpfman.ProgramTypeTracepoint, nil
 	case pb.BpfmanProgramType_KPROBE:
-		return bpfman.ProgramTypeKprobe
+		return bpfman.ProgramTypeKprobe, nil
 	case pb.BpfmanProgramType_UPROBE:
-		return bpfman.ProgramTypeUprobe
+		return bpfman.ProgramTypeUprobe, nil
 	case pb.BpfmanProgramType_FENTRY:
-		return bpfman.ProgramTypeFentry
+		return bpfman.ProgramTypeFentry, nil
 	case pb.BpfmanProgramType_FEXIT:
-		return bpfman.ProgramTypeFexit
+		return bpfman.ProgramTypeFexit, nil
 	case pb.BpfmanProgramType_TCX:
-		return bpfman.ProgramTypeTCX
+		return bpfman.ProgramTypeTCX, nil
 	default:
-		return bpfman.ProgramTypeUnspecified
+		return bpfman.ProgramTypeUnspecified, fmt.Errorf("unknown proto program type: %d", pt)
+	}
+}
+
+// validateProgramType validates a raw uint32 value as a bpfman.ProgramType.
+// The KernelProgramInfo.program_type field stores domain type values directly,
+// not proto enum values.
+func validateProgramType(raw uint32) (bpfman.ProgramType, error) {
+	pt := bpfman.ProgramType(raw)
+	switch pt {
+	case bpfman.ProgramTypeUnspecified,
+		bpfman.ProgramTypeXDP,
+		bpfman.ProgramTypeTC,
+		bpfman.ProgramTypeTCX,
+		bpfman.ProgramTypeTracepoint,
+		bpfman.ProgramTypeKprobe,
+		bpfman.ProgramTypeKretprobe,
+		bpfman.ProgramTypeUprobe,
+		bpfman.ProgramTypeUretprobe,
+		bpfman.ProgramTypeFentry,
+		bpfman.ProgramTypeFexit:
+		return pt, nil
+	default:
+		return bpfman.ProgramTypeUnspecified, fmt.Errorf("invalid program type: %d", raw)
 	}
 }
 
@@ -103,12 +127,16 @@ func (r *remoteKernelInfo) MemoryLocked() uint64         { return r.memoryLocked
 func (r *remoteKernelInfo) GPLCompatible() bool          { return r.gplCompatible }
 
 // protoLoadResponseToManagedProgram converts a LoadResponseInfo to bpfman.ManagedProgram.
-func protoLoadResponseToManagedProgram(resp *pb.LoadResponseInfo) bpfman.ManagedProgram {
+func protoLoadResponseToManagedProgram(resp *pb.LoadResponseInfo) (bpfman.ManagedProgram, error) {
 	var progType bpfman.ProgramType
 	var name, objectPath, pinPath, pinDir string
 
 	if resp.KernelInfo != nil {
-		progType = bpfman.ProgramType(resp.KernelInfo.ProgramType)
+		var err error
+		progType, err = validateProgramType(resp.KernelInfo.ProgramType)
+		if err != nil {
+			return bpfman.ManagedProgram{}, fmt.Errorf("convert program type: %w", err)
+		}
 		name = resp.KernelInfo.Name
 	}
 
@@ -156,13 +184,13 @@ func protoLoadResponseToManagedProgram(resp *pb.LoadResponseInfo) bpfman.Managed
 	return bpfman.ManagedProgram{
 		Managed: managedInfo,
 		Kernel:  kernelInfo,
-	}
+	}, nil
 }
 
 // protoListResponseToPrograms converts a ListResponse to []manager.ManagedProgram.
-func protoListResponseToPrograms(resp *pb.ListResponse) []manager.ManagedProgram {
+func protoListResponseToPrograms(resp *pb.ListResponse) ([]manager.ManagedProgram, error) {
 	if resp == nil || len(resp.Results) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	result := make([]manager.ManagedProgram, 0, len(resp.Results))
@@ -171,7 +199,11 @@ func protoListResponseToPrograms(resp *pb.ListResponse) []manager.ManagedProgram
 
 		var progType bpfman.ProgramType
 		if r.KernelInfo != nil {
-			progType = bpfman.ProgramType(r.KernelInfo.ProgramType)
+			var err error
+			progType, err = validateProgramType(r.KernelInfo.ProgramType)
+			if err != nil {
+				return nil, fmt.Errorf("convert program type for ID %d: %w", r.KernelInfo.Id, err)
+			}
 			mp.KernelProgram = kernel.Program{
 				ID:          r.KernelInfo.Id,
 				Name:        r.KernelInfo.Name,
@@ -213,16 +245,20 @@ func protoListResponseToPrograms(resp *pb.ListResponse) []manager.ManagedProgram
 		result = append(result, mp)
 	}
 
-	return result
+	return result, nil
 }
 
 // protoGetResponseToInfo converts a GetResponse to manager.ProgramInfo.
-func protoGetResponseToInfo(resp *pb.GetResponse, kernelID uint32) manager.ProgramInfo {
+func protoGetResponseToInfo(resp *pb.GetResponse, kernelID uint32) (manager.ProgramInfo, error) {
 	info := manager.ProgramInfo{}
 
 	var progType bpfman.ProgramType
 	if resp.KernelInfo != nil {
-		progType = bpfman.ProgramType(resp.KernelInfo.ProgramType)
+		var err error
+		progType, err = validateProgramType(resp.KernelInfo.ProgramType)
+		if err != nil {
+			return manager.ProgramInfo{}, fmt.Errorf("convert program type: %w", err)
+		}
 		kp := kernel.Program{
 			ID:          resp.KernelInfo.Id,
 			Name:        resp.KernelInfo.Name,
@@ -281,7 +317,7 @@ func protoGetResponseToInfo(resp *pb.GetResponse, kernelID uint32) manager.Progr
 		}
 	}
 
-	return info
+	return info, nil
 }
 
 // protoLinkTypeToManaged converts a protobuf link type to bpfman.LinkType.

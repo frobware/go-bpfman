@@ -66,9 +66,13 @@ func (c *remoteClient) Close() error {
 
 // Load loads a BPF program via gRPC.
 func (c *remoteClient) Load(ctx context.Context, spec bpfman.LoadSpec, opts manager.LoadOpts) (bpfman.ManagedProgram, error) {
+	protoType, err := domainTypeToProto(spec.ProgramType)
+	if err != nil {
+		return bpfman.ManagedProgram{}, fmt.Errorf("convert program type: %w", err)
+	}
 	info := &pb.LoadInfo{
 		Name:        spec.ProgramName,
-		ProgramType: domainTypeToProto(spec.ProgramType),
+		ProgramType: protoType,
 	}
 	// Add ProgSpecificInfo for fentry/fexit which require attach function at load time
 	if spec.ProgramType == bpfman.ProgramTypeFentry {
@@ -103,7 +107,7 @@ func (c *remoteClient) Load(ctx context.Context, spec bpfman.LoadSpec, opts mana
 		return bpfman.ManagedProgram{}, fmt.Errorf("no programs returned from load")
 	}
 
-	return protoLoadResponseToManagedProgram(resp.Programs[0]), nil
+	return protoLoadResponseToManagedProgram(resp.Programs[0])
 }
 
 // Unload removes a BPF program via gRPC.
@@ -119,7 +123,7 @@ func (c *remoteClient) List(ctx context.Context) ([]manager.ManagedProgram, erro
 		return nil, translateGRPCError(err)
 	}
 
-	return protoListResponseToPrograms(resp), nil
+	return protoListResponseToPrograms(resp)
 }
 
 // Get retrieves a program by its kernel ID via gRPC.
@@ -129,7 +133,7 @@ func (c *remoteClient) Get(ctx context.Context, kernelID uint32) (manager.Progra
 		return manager.ProgramInfo{}, translateGRPCError(err)
 	}
 
-	return protoGetResponseToInfo(resp, kernelID), nil
+	return protoGetResponseToInfo(resp, kernelID)
 }
 
 // AttachTracepoint attaches a program to a tracepoint via gRPC.
@@ -425,9 +429,13 @@ func (c *remoteClient) LoadImage(ctx context.Context, ref interpreter.ImageRef, 
 	}
 
 	for _, spec := range programs {
+		protoType, err := domainTypeToProto(spec.ProgramType)
+		if err != nil {
+			return nil, fmt.Errorf("convert program type for %s: %w", spec.ProgramName, err)
+		}
 		info := &pb.LoadInfo{
 			Name:        spec.ProgramName,
-			ProgramType: domainTypeToProto(spec.ProgramType),
+			ProgramType: protoType,
 		}
 		// Add ProgSpecificInfo for fentry/fexit which require attach function at load time
 		if spec.ProgramType == bpfman.ProgramTypeFentry {
@@ -484,7 +492,11 @@ func (c *remoteClient) LoadImage(ctx context.Context, ref interpreter.ImageRef, 
 	// Convert response to ManagedPrograms
 	results := make([]bpfman.ManagedProgram, 0, len(resp.Programs))
 	for _, p := range resp.Programs {
-		results = append(results, protoLoadResponseToManagedProgram(p))
+		mp, err := protoLoadResponseToManagedProgram(p)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, mp)
 	}
 
 	return results, nil
