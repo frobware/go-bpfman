@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -50,12 +49,6 @@ type GetLinkCmd struct {
 	LinkID LinkID `arg:"" name:"link-id" help:"Kernel link ID."`
 }
 
-// LinkInfo combines summary and details for JSON output.
-type LinkInfo struct {
-	Summary interface{} `json:"summary"`
-	Details interface{} `json:"details"`
-}
-
 // Run executes the get link command.
 func (c *GetLinkCmd) Run(cli *CLI) error {
 	b, err := cli.Client()
@@ -73,16 +66,11 @@ func (c *GetLinkCmd) Run(cli *CLI) error {
 		return err
 	}
 
-	info := LinkInfo{
-		Summary: summary,
-		Details: details,
-	}
-
-	output, err := json.MarshalIndent(info, "", "  ")
+	output, err := FormatLinkInfo(summary, details, &c.OutputFlags)
 	if err != nil {
-		return fmt.Errorf("failed to marshal result: %w", err)
+		return err
 	}
 
-	fmt.Println(string(output))
+	fmt.Print(output)
 	return nil
 }

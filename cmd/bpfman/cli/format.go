@@ -158,53 +158,77 @@ func formatProgramInfoTree(info manager.ProgramInfo) string {
 func formatProgramInfoTable(info manager.ProgramInfo) string {
 	var b strings.Builder
 
-	// Header line
-	if info.Kernel != nil && info.Kernel.Program != nil {
-		p := info.Kernel.Program
-		fmt.Fprintf(&b, "PROGRAM  %d  %s  %s\n", p.ID, p.Name, p.ProgramType)
-	}
-
-	// Details
+	// Bpfman State section (only if managed by bpfman)
 	if info.Bpfman != nil && info.Bpfman.Program != nil {
 		p := info.Bpfman.Program
-		if info.Kernel != nil && info.Kernel.Program != nil {
-			fmt.Fprintf(&b, "  tag    %s\n", info.Kernel.Program.Tag)
+		b.WriteString(" Bpfman State\n")
+		bw := tabwriter.NewWriter(&b, 0, 0, 1, ' ', 0)
+		fmt.Fprintf(bw, " BPF Function:\t%s\n", p.LoadSpec.ProgramName)
+		fmt.Fprintf(bw, " Program Type:\t%s\n", p.LoadSpec.ProgramType)
+		fmt.Fprintf(bw, " Path:\t%s\n", p.LoadSpec.ObjectPath)
+		fmt.Fprintf(bw, " Global:\tNone\n")
+		fmt.Fprintf(bw, " Metadata:\tNone\n")
+		fmt.Fprintf(bw, " Map Pin Path:\t%s\n", p.LoadSpec.PinPath)
+		fmt.Fprintf(bw, " Map Owner ID:\tNone\n")
+		fmt.Fprintf(bw, " Maps Used By:\tNone\n")
+
+		// Links
+		if len(info.Bpfman.Links) > 0 {
+			for i, l := range info.Bpfman.Links {
+				attachInfo := formatAttachDetails(l.Details)
+				linkStr := fmt.Sprintf("%d (%s)", l.Summary.KernelLinkID, attachInfo)
+				if i == 0 {
+					fmt.Fprintf(bw, " Links:\t%s\n", linkStr)
+				} else {
+					fmt.Fprintf(bw, " \t%s\n", linkStr)
+				}
+			}
+		} else if info.Kernel != nil && len(info.Kernel.Links) > 0 {
+			for i, l := range info.Kernel.Links {
+				linkStr := fmt.Sprintf("%d (%s)", l.ID, l.AttachType)
+				if i == 0 {
+					fmt.Fprintf(bw, " Links:\t%s\n", linkStr)
+				} else {
+					fmt.Fprintf(bw, " \t%s\n", linkStr)
+				}
+			}
+		} else {
+			fmt.Fprintf(bw, " Links:\tNone\n")
 		}
-		fmt.Fprintf(&b, "  source %s\n", p.LoadSpec.ObjectPath)
-		fmt.Fprintf(&b, "  pin    %s\n", p.LoadSpec.PinPath)
+		bw.Flush()
+		b.WriteString("\n")
 	}
 
-	// Maps table
-	b.WriteString("\n  MAPS\n")
-	if info.Kernel != nil && len(info.Kernel.Maps) > 0 {
-		fmt.Fprintf(&b, "  %-6s %-20s %-10s %-6s %-8s %s\n", "ID", "NAME", "TYPE", "KEYS", "VALUES", "MAX")
-		for _, m := range info.Kernel.Maps {
-			fmt.Fprintf(&b, "  %-6d %-20s %-10s %-6d %-8d %d\n",
-				m.ID, m.Name, m.MapType, m.KeySize, m.ValueSize, m.MaxEntries)
+	// Kernel State section
+	if info.Kernel != nil && info.Kernel.Program != nil {
+		p := info.Kernel.Program
+		b.WriteString(" Kernel State\n")
+		kw := tabwriter.NewWriter(&b, 0, 0, 1, ' ', 0)
+		fmt.Fprintf(kw, " Program ID:\t%d\n", p.ID)
+		fmt.Fprintf(kw, " BPF Function:\t%s\n", p.Name)
+
+		// Convert program type to kernel type
+		progType, _ := bpfman.ParseProgramType(p.ProgramType)
+		fmt.Fprintf(kw, " Kernel Type:\t%s\n", toKernelType(progType))
+
+		if !p.LoadedAt.IsZero() {
+			fmt.Fprintf(kw, " Loaded At:\t%s\n", p.LoadedAt.Format("2006-01-02T15:04:05-0700"))
 		}
-	} else {
-		b.WriteString("  (none)\n")
+		fmt.Fprintf(kw, " Tag:\t%s\n", p.Tag)
+		fmt.Fprintf(kw, " GPL Compatible:\ttrue\n") // Assume GPL compatible if loaded
+		if len(p.MapIDs) > 0 {
+			fmt.Fprintf(kw, " Map IDs:\t%v\n", p.MapIDs)
+		}
+		if p.BTFId != 0 {
+			fmt.Fprintf(kw, " BTF ID:\t%d\n", p.BTFId)
+		}
+		fmt.Fprintf(kw, " Size Translated (bytes):\t%d\n", p.XlatedSize)
+		fmt.Fprintf(kw, " JITted:\t%t\n", p.JitedSize > 0)
+		fmt.Fprintf(kw, " Size JITted:\t%d\n", p.JitedSize)
+		kw.Flush()
 	}
 
-	// Links table - prefer bpfman stored info for attach details
-	b.WriteString("\n  LINKS\n")
-	if info.Bpfman != nil && len(info.Bpfman.Links) > 0 {
-		fmt.Fprintf(&b, "  %-6s %-15s %s\n", "ID", "TYPE", "ATTACH")
-		for _, l := range info.Bpfman.Links {
-			attachInfo := formatAttachDetails(l.Details)
-			fmt.Fprintf(&b, "  %-6d %-15s %s\n", l.Summary.KernelLinkID, l.Summary.LinkType, attachInfo)
-		}
-	} else if info.Kernel != nil && len(info.Kernel.Links) > 0 {
-		// Fallback to kernel info if no bpfman links
-		fmt.Fprintf(&b, "  %-6s %-15s %s\n", "ID", "TYPE", "ATTACH")
-		for _, l := range info.Kernel.Links {
-			fmt.Fprintf(&b, "  %-6d %-15s %s\n", l.ID, l.LinkType, l.AttachType)
-		}
-	} else {
-		b.WriteString("  (none)\n")
-	}
-
-	return b.String()
+	return b.String() + "\n"
 }
 
 // FormatProgramList formats a list of ManagedProgram according to the specified output flags.
@@ -429,6 +453,154 @@ func formatLinkResultTable(bpfFunction string, summary bpfman.LinkSummary, detai
 
 	w.Flush()
 	return b.String()
+}
+
+// LinkInfo combines summary and details for JSON output.
+type LinkInfo struct {
+	Summary any `json:"summary"`
+	Details any `json:"details"`
+}
+
+// FormatLinkInfo formats link info for the get link command according to the specified output flags.
+func FormatLinkInfo(summary bpfman.LinkSummary, details bpfman.LinkDetails, flags *OutputFlags) (string, error) {
+	switch flags.Format() {
+	case OutputFormatJSON:
+		return formatLinkInfoJSON(summary, details)
+	case OutputFormatTable:
+		return formatLinkInfoTable(summary, details), nil
+	case OutputFormatJSONPath:
+		return formatLinkInfoJSONPath(summary, details, flags.JSONPathExpr())
+	default:
+		return formatLinkInfoTable(summary, details), nil
+	}
+}
+
+func formatLinkInfoJSON(summary bpfman.LinkSummary, details bpfman.LinkDetails) (string, error) {
+	data := LinkInfo{
+		Summary: summary,
+		Details: details,
+	}
+	output, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal result: %w", err)
+	}
+	return string(output) + "\n", nil
+}
+
+func formatLinkInfoJSONPath(summary bpfman.LinkSummary, details bpfman.LinkDetails, expr string) (string, error) {
+	data := LinkInfo{
+		Summary: summary,
+		Details: details,
+	}
+
+	jp := jsonpath.New("output")
+	if err := jp.Parse(expr); err != nil {
+		return "", fmt.Errorf("invalid jsonpath expression %q: %w", expr, err)
+	}
+
+	jsonBytes, err := json.Marshal(data)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal: %w", err)
+	}
+
+	var genericData any
+	if err := json.Unmarshal(jsonBytes, &genericData); err != nil {
+		return "", fmt.Errorf("failed to unmarshal: %w", err)
+	}
+
+	var buf bytes.Buffer
+	if err := jp.Execute(&buf, genericData); err != nil {
+		return "", fmt.Errorf("jsonpath execution failed: %w", err)
+	}
+
+	return buf.String() + "\n", nil
+}
+
+func formatLinkInfoTable(summary bpfman.LinkSummary, details bpfman.LinkDetails) string {
+	var b strings.Builder
+	w := tabwriter.NewWriter(&b, 0, 0, 1, ' ', 0)
+
+	// Bpfman State header
+	fmt.Fprintln(w, " Bpfman State")
+
+	// Common fields - use link type as program type display
+	fmt.Fprintf(w, " BPF Function:\tNone\n") // We don't have the function name from GetLink
+	fmt.Fprintf(w, " Program Type:\t%s\n", summary.LinkType)
+	fmt.Fprintf(w, " Program ID:\t%d\n", summary.KernelProgramID)
+	fmt.Fprintf(w, " Link ID:\t%d\n", summary.KernelLinkID)
+
+	// Type-specific fields
+	switch d := details.(type) {
+	case bpfman.TracepointDetails:
+		fmt.Fprintf(w, " Tracepoint:\t%s/%s\n", d.Group, d.Name)
+	case bpfman.KprobeDetails:
+		fmt.Fprintf(w, " Attach Function:\t%s\n", d.FnName)
+		fmt.Fprintf(w, " Offset:\t%d\n", d.Offset)
+		fmt.Fprintf(w, " Container PID:\tNone\n")
+	case bpfman.UprobeDetails:
+		fmt.Fprintf(w, " Target:\t%s\n", d.Target)
+		if d.FnName != "" {
+			fmt.Fprintf(w, " Attach Function:\t%s\n", d.FnName)
+		} else {
+			fmt.Fprintf(w, " Attach Function:\tNone\n")
+		}
+		fmt.Fprintf(w, " Offset:\t%d\n", d.Offset)
+		if d.PID != 0 {
+			fmt.Fprintf(w, " PID:\t%d\n", d.PID)
+		} else {
+			fmt.Fprintf(w, " PID:\tNone\n")
+		}
+		fmt.Fprintf(w, " Container PID:\tNone\n")
+	case bpfman.FentryDetails:
+		fmt.Fprintf(w, " Attach Function:\t%s\n", d.FnName)
+	case bpfman.FexitDetails:
+		fmt.Fprintf(w, " Attach Function:\t%s\n", d.FnName)
+	case bpfman.TCDetails:
+		fmt.Fprintf(w, " Interface:\t%s\n", d.Interface)
+		fmt.Fprintf(w, " Direction:\t%s\n", d.Direction)
+		fmt.Fprintf(w, " Priority:\t%d\n", d.Priority)
+		if d.Position != 0 {
+			fmt.Fprintf(w, " Position:\t%d\n", d.Position)
+		} else {
+			fmt.Fprintf(w, " Position:\tNone\n")
+		}
+		fmt.Fprintf(w, " Proceed On:\t%s\n", TCActionsToString(d.ProceedOn))
+		if d.Netns != "" {
+			fmt.Fprintf(w, " Network Namespace:\t%s\n", d.Netns)
+		} else {
+			fmt.Fprintf(w, " Network Namespace:\tNone\n")
+		}
+	case bpfman.TCXDetails:
+		fmt.Fprintf(w, " Interface:\t%s\n", d.Interface)
+		fmt.Fprintf(w, " Direction:\t%s\n", d.Direction)
+		fmt.Fprintf(w, " Priority:\t%d\n", d.Priority)
+		fmt.Fprintf(w, " Position:\tNone\n") // TCX uses native kernel multi-prog, no position tracking
+		if d.Netns != "" {
+			fmt.Fprintf(w, " Network Namespace:\t%s\n", d.Netns)
+		} else {
+			fmt.Fprintf(w, " Network Namespace:\tNone\n")
+		}
+	case bpfman.XDPDetails:
+		fmt.Fprintf(w, " Interface:\t%s\n", d.Interface)
+		fmt.Fprintf(w, " Priority:\t%d\n", d.Priority)
+		if d.Position != 0 {
+			fmt.Fprintf(w, " Position:\t%d\n", d.Position)
+		} else {
+			fmt.Fprintf(w, " Position:\tNone\n")
+		}
+		fmt.Fprintf(w, " Proceed On:\t%s\n", formatXDPProceedOn(d.ProceedOn))
+		if d.Netns != "" {
+			fmt.Fprintf(w, " Network Namespace:\t%s\n", d.Netns)
+		} else {
+			fmt.Fprintf(w, " Network Namespace:\tNone\n")
+		}
+	}
+
+	// Metadata
+	fmt.Fprintf(w, " Metadata:\tNone\n")
+
+	w.Flush()
+	return b.String() + "\n"
 }
 
 // formatXDPProceedOn converts XDP proceed-on values to a human-readable string.
