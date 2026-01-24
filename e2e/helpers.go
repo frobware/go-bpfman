@@ -19,6 +19,7 @@ import (
 	"github.com/frobware/go-bpfman"
 	"github.com/frobware/go-bpfman/client"
 	"github.com/frobware/go-bpfman/config"
+	"github.com/frobware/go-bpfman/logging"
 )
 
 // TestEnv provides an isolated test environment for e2e tests.
@@ -48,13 +49,23 @@ func NewTestEnv(t *testing.T) *TestEnv {
 
 	dirs := config.NewRuntimeDirs(baseDir)
 
-	// Set up logger based on environment variable
+	// Set up logger based on BPFMAN_LOG environment variable.
+	// Examples:
+	//   BPFMAN_LOG=debug           - all components at debug
+	//   BPFMAN_LOG=info,store=debug - default info, store (SQL) at debug
 	var logger *slog.Logger
-	if os.Getenv("BPFMAN_TEST_VERBOSE") != "" {
-		logger = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-			Level: slog.LevelDebug,
-		}))
+	if envSpec := os.Getenv("BPFMAN_LOG"); envSpec != "" {
+		var err error
+		logger, err = logging.New(logging.Options{
+			EnvSpec: envSpec,
+			Format:  logging.FormatText,
+			Output:  os.Stderr,
+		})
+		if err != nil {
+			t.Fatalf("invalid BPFMAN_LOG spec: %v", err)
+		}
 	} else {
+		// Default: only errors
 		logger = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 			Level: slog.LevelError,
 		}))
