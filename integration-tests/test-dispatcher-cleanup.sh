@@ -22,7 +22,9 @@ set -euo pipefail
 
 # Configuration - can be overridden via environment
 BPFMAN="${BPFMAN:-./bin/bpfman}"
+CONFIG="${CONFIG:-./config/test.toml}"
 RUNTIME_DIR="${RUNTIME_DIR:-/tmp/bpfman-integration-test-$$}"
+IMAGE="${IMAGE:-quay.io/bpfman-bytecode/xdp_pass:latest}"
 
 # Derived paths (matching RuntimeDirs structure)
 DB_PATH="$RUNTIME_DIR/db/store.db"
@@ -42,7 +44,7 @@ log_pass() { echo -e "${GREEN}[PASS]${NC} $*"; }
 log_fail() { echo -e "${RED}[FAIL]${NC} $*"; }
 
 bpfman() {
-    sudo "$BPFMAN" --runtime-dir="$RUNTIME_DIR" "$@"
+    sudo "$BPFMAN" --config="$CONFIG" --runtime-dir="$RUNTIME_DIR" "$@"
 }
 
 cleanup() {
@@ -85,8 +87,9 @@ ensure_clean_state() {
 # Step 1: Load XDP program
 load_program() {
     log_info "Step 1: Loading XDP program..."
+    log_info "Image: $IMAGE"
     local output
-    output=$(bpfman load image -o json --program=xdp:pass quay.io/bpfman-bytecode/xdp_pass:latest 2>&1)
+    output=$(bpfman load image -o json --programs=xdp:pass --image-url="$IMAGE" 2>&1)
     PROG_ID=$(echo "$output" | jq -r '.[0].kernel.id')
 
     if [ -z "$PROG_ID" ] || [ "$PROG_ID" = "null" ]; then
@@ -105,7 +108,7 @@ attach_until_full() {
 
     for i in $(seq 1 $((max_slots + 2))); do
         local output
-        output=$(bpfman attach "$PROG_ID" xdp --iface lo 2>&1) || true
+        output=$(bpfman attach "$PROG_ID" xdp --iface lo -o json 2>&1) || true
 
         local link_id
         link_id=$(echo "$output" | jq -r '.summary.kernel_link_id // empty' 2>/dev/null) || true
