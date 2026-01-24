@@ -231,7 +231,13 @@ func (k *kernelAdapter) Load(ctx context.Context, spec bpfman.LoadSpec) (bpfman.
 	}
 	defer coll.Close()
 
-	// Find the requested program
+	// Find the requested program and get its license
+	progSpec, ok := collSpec.Programs[spec.ProgramName]
+	if !ok {
+		return bpfman.ManagedProgram{}, fmt.Errorf("program %q not found in collection spec", spec.ProgramName)
+	}
+	license := progSpec.License
+
 	prog, ok := coll.Programs[spec.ProgramName]
 	if !ok {
 		return bpfman.ManagedProgram{}, fmt.Errorf("program %q not found in collection", spec.ProgramName)
@@ -306,7 +312,7 @@ func (k *kernelAdapter) Load(ctx context.Context, spec bpfman.LoadSpec) (bpfman.
 			PinPath:    progPinPath,
 			PinDir:     mapsDir,
 		},
-		Kernel: NewProgramInfo(info),
+		Kernel: NewProgramInfo(info, license),
 	}, nil
 }
 
