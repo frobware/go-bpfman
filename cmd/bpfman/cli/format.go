@@ -175,8 +175,14 @@ func formatProgramInfoTable(info manager.ProgramInfo) string {
 		// Links
 		if len(info.Bpfman.Links) > 0 {
 			for i, l := range info.Bpfman.Links {
-				attachInfo := formatAttachDetails(l.Details)
-				linkStr := fmt.Sprintf("%d (%s)", l.Summary.KernelLinkID, attachInfo)
+				var linkStr string
+				if l.Details != nil {
+					attachInfo := formatAttachDetails(l.Details)
+					linkStr = fmt.Sprintf("%d (%s)", l.Summary.KernelLinkID, attachInfo)
+				} else {
+					// No details available, just show the link ID
+					linkStr = fmt.Sprintf("%d", l.Summary.KernelLinkID)
+				}
 				if i == 0 {
 					fmt.Fprintf(bw, " Links:\t%s\n", linkStr)
 				} else {

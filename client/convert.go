@@ -262,8 +262,22 @@ func protoGetResponseToInfo(resp *pb.GetResponse, kernelID uint32) manager.Progr
 			},
 			UserMetadata: resp.Info.Metadata,
 		}
+
+		// Convert link IDs to LinkWithDetails (summary only, no details from this RPC)
+		var linksWithDetails []manager.LinkWithDetails
+		for _, linkID := range resp.Info.Links {
+			linksWithDetails = append(linksWithDetails, manager.LinkWithDetails{
+				Summary: bpfman.LinkSummary{
+					KernelLinkID:    linkID,
+					KernelProgramID: kernelID,
+				},
+				Details: nil, // Details not available from Get RPC
+			})
+		}
+
 		info.Bpfman = &manager.BpfmanInfo{
 			Program: prog,
+			Links:   linksWithDetails,
 		}
 	}
 

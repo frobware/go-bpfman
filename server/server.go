@@ -663,6 +663,16 @@ func (s *Server) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, 
 		return nil, status.Errorf(codes.Internal, "program %d exists in store but not in kernel: %v", req.Id, err)
 	}
 
+	// Query store for links associated with this program
+	links, err := s.store.ListLinksByProgram(ctx, req.Id)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to list links for program %d: %v", req.Id, err)
+	}
+	linkIDs := make([]uint32, 0, len(links))
+	for _, link := range links {
+		linkIDs = append(linkIDs, link.KernelLinkID)
+	}
+
 	return &pb.GetResponse{
 		Info: &pb.ProgramInfo{
 			Name:       metadata.LoadSpec.ProgramName,
@@ -670,6 +680,7 @@ func (s *Server) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, 
 			Metadata:   metadata.UserMetadata,
 			GlobalData: metadata.LoadSpec.GlobalData,
 			MapPinPath: metadata.LoadSpec.PinPath,
+			Links:      linkIDs,
 		},
 		KernelInfo: &pb.KernelProgramInfo{
 			Id:          req.Id,
