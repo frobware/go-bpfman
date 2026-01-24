@@ -268,6 +268,134 @@ To test failures at new points:
 
 4. Write tests that exercise the new failure path.
 
+## Test Scenarios
+
+This section outlines the comprehensive set of scenarios to test using the fake kernel. Each scenario can be implemented by adding appropriate error injection and verification.
+
+### Program Lifecycle - Success Paths
+
+| Scenario | Operations | Verification |
+|----------|------------|--------------|
+| Load single program | Load | Program in kernel and DB |
+| Load multiple programs (batch) | Load × N | All programs in kernel and DB |
+| Load then unload | Load, Unload | Clean state |
+| Load, attach, detach, unload | Full lifecycle | Clean state, correct op sequence |
+
+### Program Lifecycle - Failure at Each Stage
+
+| Scenario | Failure Point | Expected Behaviour |
+|----------|---------------|-------------------|
+| Load fails (verifier) | `kernel.Load` | Error returned, clean state |
+| Load succeeds, DB save fails | `store.Save` | Kernel rollback, clean state |
+| Batch load fails at position N | `kernel.Load` (Nth) | Rollback programs 1..N-1 |
+| Batch load, DB fails at position N | `store.Save` (Nth) | Rollback all, clean state |
+
+### Attach/Detach Failures
+
+| Scenario | Failure Point | Expected Behaviour |
+|----------|---------------|-------------------|
+| Attach fails after load | `kernel.AttachX` | Program remains loaded, no link |
+| Attach succeeds, link save fails | `store.SaveLink` | Kernel link detached, program intact |
+| Detach non-existent link | `store.GetLink` | NotFound error |
+| Detach fails at kernel | `kernel.DetachLink` | Link remains in DB (needs reconciliation) |
+
+### Unload Failures
+
+| Scenario | Failure Point | Expected Behaviour |
+|----------|---------------|-------------------|
+| Unload non-existent program | `store.Get` | NotFound error |
+| Unload with active links | - | Links detached first, then unload |
+| Unload kernel fails | `kernel.Unload` | DB entry remains (needs reconciliation) |
+| Unload DB delete fails | `store.Delete` | Kernel cleaned, DB stale |
+
+### Multi-Program Batch Scenarios
+
+| Scenario | Setup | Expected Behaviour |
+|----------|-------|-------------------|
+| Batch load 2, fail 2nd | `FailOnProgram("prog_two")` | Rollback prog_one, clean state |
+| Batch load 3, fail 3rd | `FailOnProgram("prog_three")` | Rollback prog_one and prog_two |
+| Batch load 5, fail 3rd | `FailOnNthLoad(3)` | Rollback first 2 only |
+| Batch load, DB unique constraint | Same ProgramName metadata | Fail on 2nd, rollback 1st |
+
+### Dispatcher Scenarios (XDP/TC)
+
+| Scenario | Setup | Expected Behaviour |
+|----------|-------|-------------------|
+| First XDP attach creates dispatcher | No existing dispatcher | Dispatcher created, extension attached |
+| Second XDP attach reuses dispatcher | Existing dispatcher | Extension added to existing |
+| XDP attach, dispatcher creation fails | `FailOnDispatcherCreate` | Error, no partial state |
+| XDP attach, extension attach fails | `FailOnExtensionAttach` | Dispatcher exists, no extension |
+| Last extension detach cleans dispatcher | Single extension | Dispatcher removed |
+| Detach extension, dispatcher cleanup fails | `FailOnDispatcherCleanup` | Extension gone, dispatcher orphaned |
+
+### Constraint Validation
+
+| Scenario | Input | Expected Behaviour |
+|----------|-------|-------------------|
+| Duplicate program name | Same `bpfman.io/ProgramName` | Second load fails |
+| Invalid program type | `ProgramType(999)` | Rejected before kernel load |
+| Unspecified program type | `ProgramTypeUnspecified` | Rejected before kernel load |
+| Attach to non-existent program | Invalid kernel ID | NotFound error |
+| Load with empty program name | `Name: ""` | Validation error |
+
+### State Consistency
+
+| Scenario | Setup | Verification |
+|----------|-------|--------------|
+| Program in kernel, not in DB | Manual kernel injection | Reconciliation detects orphan |
+| Program in DB, not in kernel | Manual DB injection | Reconciliation detects stale |
+| Link in DB, program gone | Delete program directly | Link becomes orphaned |
+| Dispatcher in DB, not in kernel | Manual DB injection | Reconciliation cleans up |
+
+### Resource Limits
+
+| Scenario | Setup | Expected Behaviour |
+|----------|-------|-------------------|
+| Max programs per dispatcher | Load MAX_PROGRAMS + 1 | Fails or creates new dispatcher |
+| Simulated memory exhaustion | `FailOnNthLoad` with ENOMEM | Proper error propagation |
+
+### Error Injection Methods Needed
+
+To implement all scenarios, the fake kernel needs these injection points:
+
+```go
+// Already implemented
+FailOnProgram(name string, err error)
+FailOnNthLoad(n int, err error)
+
+// Needed for attach failures
+FailOnAttach(attachType string, err error)
+FailOnNthAttach(n int, err error)
+
+// Needed for detach failures
+FailOnDetach(linkID uint32, err error)
+
+// Needed for unload failures
+FailOnUnload(kernelID uint32, err error)
+
+// Needed for dispatcher scenarios
+FailOnDispatcherCreate(ifindex int, err error)
+FailOnExtensionAttach(position int, err error)
+FailOnDispatcherCleanup(ifindex int, err error)
+```
+
+### Implementation Priority
+
+**High Priority** (core correctness):
+- [ ] Batch load rollback (implemented)
+- [ ] Attach failure after successful load
+- [ ] Unload with active links
+- [ ] Constraint validation (duplicate names, invalid types)
+
+**Medium Priority** (robustness):
+- [ ] DB save failures with kernel rollback
+- [ ] Detach failures
+- [ ] Dispatcher creation/cleanup failures
+
+**Lower Priority** (edge cases):
+- [ ] State consistency / reconciliation scenarios
+- [ ] Resource limit scenarios
+
 ## Related Files
 
 - `server/server_test.go` - Test fixtures and tests
