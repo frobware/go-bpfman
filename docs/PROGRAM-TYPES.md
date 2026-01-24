@@ -29,8 +29,8 @@ Use the Rust binary to discover CLI flags and behaviour:
 | kretprobe | Yes | Yes | No | Complete (shares kprobe implementation) |
 | uprobe | Yes | Yes | No | Complete |
 | uretprobe | Yes | Yes | No | Complete (shares uprobe implementation) |
-| fentry | Yes | No | No | Not implemented |
-| fexit | Yes | No | No | Not implemented |
+| fentry | Yes | Yes | No | Complete |
+| fexit | Yes | Yes | No | Complete (shares fentry implementation) |
 
 ### Kretprobe Usage
 
@@ -176,37 +176,23 @@ Create `test-<type>-load-attach.sh` following existing patterns.
 | Attach logic | `bpfman/src/lib.rs` |
 | Examples | `examples/` |
 
-## Remaining Program Types
-
-### Fentry / Fexit
+### Fentry / Fexit Usage
 
 **Key difference**: The attach function is specified at **load time**, not attach time.
 
-**Rust load format**:
 ```bash
---programs fentry:test_fentry:do_unlinkat
-# Format: <type>:<func_name>:<attach_func>
+# Load as fentry (entry)
+bpfman load image --programs fentry:test_fentry:do_unlinkat --image-url quay.io/bpfman-bytecode/go-fentry-counter:latest
+
+# Load as fexit (exit)
+bpfman load image --programs fexit:test_fexit:do_unlinkat --image-url quay.io/bpfman-bytecode/go-fexit-counter:latest
+
+# Attach - no function name needed, it was stored at load time
+bpfman attach <id> fentry
+bpfman attach <id> fexit
 ```
 
-**Rust CLI flags** (`attach 0 fentry --help`):
-- Only `--metadata` - no other flags needed at attach time
-
-**Proto definition**:
-```protobuf
-message FentryAttachInfo {
-    string fn_name = 1;
-}
-message FentryLoadInfo {
-    string fn_name = 1;
-}
-```
-
-**Implementation notes**:
-- Requires changes to load path to handle attach function
-- The `LoadSpec` already has `AttachFunc` field for this purpose
-- Program is loaded with `BPF_PROG_TYPE_TRACING` and attach type `BPF_TRACE_FENTRY` or `BPF_TRACE_FEXIT`
-
-**cilium/ebpf API**: `link.AttachTracing()` with appropriate attach type
+The server retrieves the attach function from the stored program metadata (`LoadSpec.AttachFunc`) when processing the attach request.
 
 ## Test Images
 
@@ -220,6 +206,17 @@ Available from quay.io/bpfman-bytecode/:
 | tc | go-tc-counter:latest | stats | interface |
 | uprobe | go-uprobe-counter:latest | uprobe_counter | libc:malloc |
 | uretprobe | go-uretprobe-counter:latest | uretprobe_counter | libc:malloc |
+
+### Fentry / Fexit Test Bytecode
+
+Fentry and fexit use local bytecode for integration tests since OCI images are not available:
+
+| Type | Bytecode | BPF Function | Attach Target |
+|------|----------|--------------|---------------|
+| fentry | `integration-tests/bytecode/fentry.bpf.o` | test_fentry | do_unlinkat |
+| fexit | `integration-tests/bytecode/fentry.bpf.o` | test_fexit | do_unlinkat |
+
+The bytecode was compiled from the Rust bpfman test source (`tests/integration-test/bpf/fentry.bpf.c`).
 
 Example configurations can be found in:
 `~/src/github.com/bpfman/bpfman/worktrees/general/examples/config/`
