@@ -256,6 +256,33 @@ func (f *fakeKernel) AttachXDP(progPinPath string, ifindex int, linkPinPath stri
 	}, nil
 }
 
+func (f *fakeKernel) AttachKprobe(progPinPath, fnName string, offset uint64, retprobe bool, linkPinPath string) (bpfman.ManagedLink, error) {
+	id := f.nextID.Add(1)
+	linkType := bpfman.LinkTypeKprobe
+	kernelLinkType := "kprobe"
+	if retprobe {
+		linkType = bpfman.LinkTypeKretprobe
+		kernelLinkType = "kretprobe"
+	}
+	// Store for DetachLink lookup
+	f.links[id] = &bpfman.AttachedLink{
+		ID:      id,
+		PinPath: linkPinPath,
+		Type:    bpfman.AttachKprobe,
+	}
+	return bpfman.ManagedLink{
+		Managed: &bpfman.LinkInfo{
+			KernelLinkID:    id,
+			KernelProgramID: 0,
+			Type:            linkType,
+			PinPath:         linkPinPath,
+			CreatedAt:       time.Now(),
+			Details:         bpfman.KprobeDetails{FnName: fnName, Offset: offset, Retprobe: retprobe},
+		},
+		Kernel: &fakeKernelLinkInfo{id: id, programID: 0, linkType: kernelLinkType},
+	}, nil
+}
+
 func (f *fakeKernel) DetachLink(linkPinPath string) error {
 	for id, link := range f.links {
 		if link.PinPath == linkPinPath {

@@ -190,6 +190,11 @@ func (e *ephemeralClient) AttachTCX(ctx context.Context, programKernelID uint32,
 	return e.remote.AttachTCX(ctx, programKernelID, ifindex, ifname, direction, priority, linkPinPath)
 }
 
+// AttachKprobe attaches a kprobe/kretprobe program to a kernel function via the ephemeral gRPC server.
+func (e *ephemeralClient) AttachKprobe(ctx context.Context, programKernelID uint32, fnName string, offset uint64, linkPinPath string) (bpfman.LinkSummary, error) {
+	return e.remote.AttachKprobe(ctx, programKernelID, fnName, offset, linkPinPath)
+}
+
 // Detach removes a link via the ephemeral gRPC server.
 func (e *ephemeralClient) Detach(ctx context.Context, kernelLinkID uint32) error {
 	return e.remote.Detach(ctx, kernelLinkID)

@@ -51,6 +51,9 @@ func (e *executor) Execute(ctx context.Context, a action.Action) error {
 	case action.SaveTCXLink:
 		return e.store.SaveTCXLink(ctx, a.Summary, a.Details)
 
+	case action.SaveKprobeLink:
+		return e.store.SaveKprobeLink(ctx, a.Summary, a.Details)
+
 	case action.LoadProgram:
 		_, err := e.kernel.Load(ctx, a.Spec)
 		return err

@@ -226,6 +226,33 @@ func (c *remoteClient) AttachTCX(ctx context.Context, programKernelID uint32, if
 	}, nil
 }
 
+// AttachKprobe attaches a kprobe/kretprobe program to a kernel function via gRPC.
+func (c *remoteClient) AttachKprobe(ctx context.Context, programKernelID uint32, fnName string, offset uint64, linkPinPath string) (bpfman.LinkSummary, error) {
+	req := &pb.AttachRequest{
+		Id: programKernelID,
+		Attach: &pb.AttachInfo{
+			Info: &pb.AttachInfo_KprobeAttachInfo{
+				KprobeAttachInfo: &pb.KprobeAttachInfo{
+					FnName: fnName,
+					Offset: offset,
+				},
+			},
+		},
+	}
+
+	resp, err := c.client.Attach(ctx, req)
+	if err != nil {
+		return bpfman.LinkSummary{}, translateGRPCError(err)
+	}
+
+	return bpfman.LinkSummary{
+		LinkType:        bpfman.LinkTypeKprobe,
+		KernelProgramID: programKernelID,
+		KernelLinkID:    resp.LinkId,
+		PinPath:         linkPinPath,
+	}, nil
+}
+
 // Detach removes a link via gRPC.
 // The proto uses link_id (uint32) which matches our kernel_link_id.
 func (c *remoteClient) Detach(ctx context.Context, kernelLinkID uint32) error {
@@ -297,6 +324,14 @@ func (c *remoteClient) LoadImage(ctx context.Context, ref interpreter.ImageRef, 
 	// Build LoadInfo for each program
 	loadInfo := make([]*pb.LoadInfo, 0, len(programs))
 	var globalData map[string][]byte
+
+	// Copy user metadata and add type hints for kretprobe/uretprobe
+	// since the proto enum doesn't distinguish them from kprobe/uprobe.
+	metadata := make(map[string]string)
+	for k, v := range opts.UserMetadata {
+		metadata[k] = v
+	}
+
 	for _, spec := range programs {
 		loadInfo = append(loadInfo, &pb.LoadInfo{
 			Name:        spec.ProgramName,
@@ -304,6 +339,10 @@ func (c *remoteClient) LoadImage(ctx context.Context, ref interpreter.ImageRef, 
 		})
 		if spec.GlobalData != nil {
 			globalData = spec.GlobalData
+		}
+		// Add metadata to preserve kretprobe/uretprobe distinction
+		if NeedsTypeMetadata(spec.ProgramType) {
+			metadata[ActualTypeMetadataKey(spec.ProgramName)] = spec.ProgramType.String()
 		}
 	}
 
@@ -325,7 +364,7 @@ func (c *remoteClient) LoadImage(ctx context.Context, ref interpreter.ImageRef, 
 				},
 			},
 		},
-		Metadata:   opts.UserMetadata,
+		Metadata:   metadata,
 		GlobalData: globalData,
 		Info:       loadInfo,
 	}

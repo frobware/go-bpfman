@@ -254,6 +254,10 @@ func (s *Server) Load(ctx context.Context, req *pb.LoadRequest) (*pb.LoadRespons
 			return nil, status.Errorf(codes.InvalidArgument, "invalid program type for %s: %v", info.Name, err)
 		}
 
+		// Check for actual type metadata to handle kretprobe/uretprobe
+		// which map to KPROBE/UPROBE in the proto enum.
+		progType = resolveActualType(progType, info.Name, req.Metadata)
+
 		spec := bpfman.LoadSpec{
 			ObjectPath:  objectPath,
 			ProgramName: info.Name,
@@ -341,6 +345,8 @@ func (s *Server) Attach(ctx context.Context, req *pb.AttachRequest) (*pb.AttachR
 		return s.attachTC(ctx, req.Id, info.TcAttachInfo)
 	case *pb.AttachInfo_TcxAttachInfo:
 		return s.attachTCX(ctx, req.Id, info.TcxAttachInfo)
+	case *pb.AttachInfo_KprobeAttachInfo:
+		return s.attachKprobe(ctx, req.Id, info.KprobeAttachInfo)
 	default:
 		return nil, status.Errorf(codes.Unimplemented, "attach type %T not yet implemented", req.Attach.Info)
 	}
@@ -447,6 +453,35 @@ func (s *Server) attachTCX(ctx context.Context, programID uint32, info *pb.TCXAt
 	summary, err := s.mgr.AttachTCX(ctx, programID, iface.Index, iface.Name, direction, priority, "")
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "attach TCX: %v", err)
+	}
+
+	return &pb.AttachResponse{
+		LinkId: summary.KernelLinkID,
+	}, nil
+}
+
+// attachKprobe handles kprobe/kretprobe attachment via the manager.
+func (s *Server) attachKprobe(ctx context.Context, programID uint32, info *pb.KprobeAttachInfo) (*pb.AttachResponse, error) {
+	if info.FnName == "" {
+		return nil, status.Error(codes.InvalidArgument, "fn_name is required for kprobe attachment")
+	}
+
+	// Look up program to determine if it's a kretprobe
+	prog, err := s.mgr.Get(ctx, programID)
+	if err != nil {
+		return nil, status.Errorf(codes.NotFound, "program %d not found: %v", programID, err)
+	}
+
+	// Determine retprobe from program type stored in bpfman metadata
+	var retprobe bool
+	if prog.Bpfman != nil && prog.Bpfman.Program != nil {
+		retprobe = prog.Bpfman.Program.LoadSpec.ProgramType == bpfman.ProgramTypeKretprobe
+	}
+
+	// Call manager with empty linkPinPath to auto-generate
+	summary, err := s.mgr.AttachKprobe(ctx, programID, info.FnName, info.Offset, retprobe, "")
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "attach kprobe: %v", err)
 	}
 
 	return &pb.AttachResponse{
@@ -906,6 +941,30 @@ func protoToBpfmanType(pt pb.BpfmanProgramType) (bpfman.ProgramType, error) {
 	default:
 		return bpfman.ProgramTypeUnspecified, fmt.Errorf("unknown program type: %d", pt)
 	}
+}
+
+// actualTypeMetadataKey returns the metadata key used to preserve the actual
+// program type when the proto enum doesn't distinguish (e.g., kretprobe vs kprobe).
+func actualTypeMetadataKey(programName string) string {
+	return "bpfman.io/actual-type:" + programName
+}
+
+// resolveActualType checks metadata for type hints and returns the actual
+// program type. This handles kretprobe/uretprobe which map to KPROBE/UPROBE
+// in the proto enum but need to be distinguished for attach semantics.
+func resolveActualType(protoType bpfman.ProgramType, programName string, metadata map[string]string) bpfman.ProgramType {
+	if metadata == nil {
+		return protoType
+	}
+
+	key := actualTypeMetadataKey(programName)
+	if actualTypeStr, ok := metadata[key]; ok {
+		if actualType, valid := bpfman.ParseProgramType(actualTypeStr); valid {
+			return actualType
+		}
+	}
+
+	return protoType
 }
 
 // protoToPullPolicy converts a proto image pull policy to managed type.

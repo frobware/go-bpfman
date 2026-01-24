@@ -10,6 +10,9 @@ import (
 )
 
 // domainTypeToProto converts a bpfman.ProgramType to protobuf.
+// Note: kretprobe/uretprobe map to KPROBE/UPROBE since the proto enum
+// doesn't have separate values. Use ActualTypeMetadataKey to preserve
+// the distinction.
 func domainTypeToProto(pt bpfman.ProgramType) pb.BpfmanProgramType {
 	switch pt {
 	case bpfman.ProgramTypeXDP:
@@ -18,9 +21,9 @@ func domainTypeToProto(pt bpfman.ProgramType) pb.BpfmanProgramType {
 		return pb.BpfmanProgramType_TC
 	case bpfman.ProgramTypeTracepoint:
 		return pb.BpfmanProgramType_TRACEPOINT
-	case bpfman.ProgramTypeKprobe:
+	case bpfman.ProgramTypeKprobe, bpfman.ProgramTypeKretprobe:
 		return pb.BpfmanProgramType_KPROBE
-	case bpfman.ProgramTypeUprobe:
+	case bpfman.ProgramTypeUprobe, bpfman.ProgramTypeUretprobe:
 		return pb.BpfmanProgramType_UPROBE
 	case bpfman.ProgramTypeFentry:
 		return pb.BpfmanProgramType_FENTRY
@@ -31,6 +34,19 @@ func domainTypeToProto(pt bpfman.ProgramType) pb.BpfmanProgramType {
 	default:
 		return pb.BpfmanProgramType_XDP
 	}
+}
+
+// ActualTypeMetadataKey returns the metadata key used to preserve the actual
+// program type when the proto enum doesn't distinguish (e.g., kretprobe vs kprobe).
+// Format: "bpfman.io/actual-type:<program-name>"
+func ActualTypeMetadataKey(programName string) string {
+	return "bpfman.io/actual-type:" + programName
+}
+
+// NeedsTypeMetadata returns true if the program type requires metadata to
+// preserve its distinction (kretprobe, uretprobe).
+func NeedsTypeMetadata(pt bpfman.ProgramType) bool {
+	return pt == bpfman.ProgramTypeKretprobe || pt == bpfman.ProgramTypeUretprobe
 }
 
 // protoTypeToDomain converts a protobuf program type to bpfman.ProgramType.

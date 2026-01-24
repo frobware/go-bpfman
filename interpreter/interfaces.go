@@ -148,6 +148,9 @@ type ProgramAttacher interface {
 	AttachTracepoint(progPinPath, group, name, linkPinPath string) (bpfman.ManagedLink, error)
 	// AttachXDP attaches a pinned XDP program to a network interface.
 	AttachXDP(progPinPath string, ifindex int, linkPinPath string) (bpfman.ManagedLink, error)
+	// AttachKprobe attaches a pinned program to a kernel function.
+	// If retprobe is true, attaches as a kretprobe instead of kprobe.
+	AttachKprobe(progPinPath, fnName string, offset uint64, retprobe bool, linkPinPath string) (bpfman.ManagedLink, error)
 }
 
 // XDPDispatcherResult holds the result of loading an XDP dispatcher.

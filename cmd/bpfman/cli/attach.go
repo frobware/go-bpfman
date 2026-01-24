@@ -195,7 +195,20 @@ func (c *AttachCmd) attachKprobe(cli *CLI) error {
 	if c.FnName == "" {
 		return fmt.Errorf("--fn-name is required for kprobe attachment")
 	}
-	return fmt.Errorf("kprobe attachment not yet implemented")
+
+	b, err := cli.Client()
+	if err != nil {
+		return fmt.Errorf("failed to create client: %w", err)
+	}
+	defer b.Close()
+
+	ctx := context.Background()
+	result, err := b.AttachKprobe(ctx, c.ProgramID.Value, c.FnName, c.Offset, "")
+	if err != nil {
+		return err
+	}
+
+	return c.printLinkResult(ctx, b, result.KernelLinkID)
 }
 
 func (c *AttachCmd) printLinkResult(ctx context.Context, b interface {

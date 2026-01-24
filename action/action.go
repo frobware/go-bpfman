@@ -71,6 +71,14 @@ type SaveTCXLink struct {
 
 func (SaveTCXLink) isAction() {}
 
+// SaveKprobeLink saves a kprobe link to the store.
+type SaveKprobeLink struct {
+	Summary bpfman.LinkSummary
+	Details bpfman.KprobeDetails
+}
+
+func (SaveKprobeLink) isAction() {}
+
 // Kernel actions - operations on the BPF subsystem
 
 // LoadProgram loads a BPF program into the kernel.

@@ -462,6 +462,83 @@ func computeAttachTracepointAction(programKernelID, kernelLinkID uint32, pinPath
 	}
 }
 
+// AttachKprobe attaches a pinned program to a kernel function.
+// programKernelID is required to associate the link with the program in the store.
+// If linkPinPath is empty, a default path is generated in the links directory.
+// If retprobe is true, attaches as a kretprobe instead of kprobe.
+//
+// Pattern: FETCH -> KERNEL I/O -> COMPUTE -> EXECUTE
+func (m *Manager) AttachKprobe(ctx context.Context, programKernelID uint32, fnName string, offset uint64, retprobe bool, linkPinPath string) (bpfman.LinkSummary, error) {
+	// FETCH: Verify program exists in store
+	_, err := m.store.Get(ctx, programKernelID)
+	if err != nil {
+		return bpfman.LinkSummary{}, fmt.Errorf("get program %d: %w", programKernelID, err)
+	}
+
+	// COMPUTE: Construct paths from convention (kernel ID + bpffs root)
+	progPinPath := filepath.Join(m.dirs.FS, fmt.Sprintf("prog_%d", programKernelID))
+
+	// COMPUTE: Auto-generate link pin path if not provided
+	if linkPinPath == "" {
+		linkName := sanitiseFilename(fnName)
+		if retprobe {
+			linkName = "ret_" + linkName
+		}
+		linksDir := filepath.Join(m.dirs.FS, "links", fmt.Sprintf("%d", programKernelID))
+		linkPinPath = filepath.Join(linksDir, linkName)
+	}
+
+	// KERNEL I/O: Attach to the kernel (returns ManagedLink with full info)
+	link, err := m.kernel.AttachKprobe(progPinPath, fnName, offset, retprobe, linkPinPath)
+	if err != nil {
+		return bpfman.LinkSummary{}, fmt.Errorf("attach kprobe %s: %w", fnName, err)
+	}
+
+	// COMPUTE: Build save action from kernel result
+	saveAction := computeAttachKprobeAction(programKernelID, link.Kernel.ID(), link.Managed.PinPath, fnName, offset, retprobe)
+
+	// EXECUTE: Save link metadata
+	if err := m.executor.Execute(ctx, saveAction); err != nil {
+		return bpfman.LinkSummary{}, fmt.Errorf("save link metadata: %w", err)
+	}
+
+	probeType := "kprobe"
+	if retprobe {
+		probeType = "kretprobe"
+	}
+	m.logger.Info("attached "+probeType,
+		"kernel_link_id", link.Kernel.ID(),
+		"program_id", programKernelID,
+		"fn_name", fnName,
+		"offset", offset,
+		"pin_path", link.Managed.PinPath)
+
+	return saveAction.Summary, nil
+}
+
+// computeAttachKprobeAction is a pure function that builds the save action
+// for a kprobe/kretprobe attachment.
+func computeAttachKprobeAction(programKernelID, kernelLinkID uint32, pinPath, fnName string, offset uint64, retprobe bool) action.SaveKprobeLink {
+	linkType := bpfman.LinkTypeKprobe
+	if retprobe {
+		linkType = bpfman.LinkTypeKretprobe
+	}
+	return action.SaveKprobeLink{
+		Summary: bpfman.LinkSummary{
+			KernelLinkID:    kernelLinkID,
+			LinkType:        linkType,
+			KernelProgramID: programKernelID,
+			PinPath:         pinPath,
+			CreatedAt:       time.Now(),
+		},
+		Details: bpfman.KprobeDetails{
+			FnName:   fnName,
+			Offset:   offset,
+			Retprobe: retprobe,
+		},
+	}
+}
+
 // XDP proceed-on action bits (matches XDP return codes).
 const (
 	xdpProceedOnPass = 1 << 2 // Continue to next program on XDP_PASS
