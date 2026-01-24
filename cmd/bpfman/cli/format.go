@@ -15,10 +15,13 @@ import (
 
 // toKernelType converts a bpfman program type to its underlying kernel type.
 // TCX and TC both use the kernel's sched_cls type.
+// Fentry and fexit use the kernel's tracing type.
 func toKernelType(t bpfman.ProgramType) string {
 	switch t {
 	case bpfman.ProgramTypeTCX:
 		return "tc"
+	case bpfman.ProgramTypeFentry, bpfman.ProgramTypeFexit:
+		return "tracing"
 	default:
 		return t.String()
 	}
@@ -399,6 +402,26 @@ func formatLinkResultTable(bpfFunction string, summary bpfman.LinkSummary, detai
 		} else {
 			fmt.Fprintf(w, " Network Namespace:\tNone\n")
 		}
+	case bpfman.UprobeDetails:
+		if d.Retprobe {
+			fmt.Fprintf(w, " Attach Type:\turetprobe\n")
+		} else {
+			fmt.Fprintf(w, " Attach Type:\tuprobe\n")
+		}
+		fmt.Fprintf(w, " Target:\t%s\n", d.Target)
+		fmt.Fprintf(w, " Function:\t%s\n", d.FnName)
+		if d.Offset != 0 {
+			fmt.Fprintf(w, " Offset:\t%d\n", d.Offset)
+		}
+		if d.PID != 0 {
+			fmt.Fprintf(w, " PID:\t%d\n", d.PID)
+		} else {
+			fmt.Fprintf(w, " PID:\tNone\n")
+		}
+	case bpfman.FentryDetails:
+		fmt.Fprintf(w, " Attach Function:\t%s\n", d.FnName)
+	case bpfman.FexitDetails:
+		fmt.Fprintf(w, " Attach Function:\t%s\n", d.FnName)
 	}
 
 	// Metadata placeholder
