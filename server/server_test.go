@@ -283,6 +283,33 @@ func (f *fakeKernel) AttachKprobe(progPinPath, fnName string, offset uint64, ret
 	}, nil
 }
 
+func (f *fakeKernel) AttachUprobe(progPinPath, target, fnName string, offset uint64, retprobe bool, linkPinPath string) (bpfman.ManagedLink, error) {
+	id := f.nextID.Add(1)
+	linkType := bpfman.LinkTypeUprobe
+	kernelLinkType := "uprobe"
+	if retprobe {
+		linkType = bpfman.LinkTypeUretprobe
+		kernelLinkType = "uretprobe"
+	}
+	// Store for DetachLink lookup
+	f.links[id] = &bpfman.AttachedLink{
+		ID:      id,
+		PinPath: linkPinPath,
+		Type:    bpfman.AttachUprobe,
+	}
+	return bpfman.ManagedLink{
+		Managed: &bpfman.LinkInfo{
+			KernelLinkID:    id,
+			KernelProgramID: 0,
+			Type:            linkType,
+			PinPath:         linkPinPath,
+			CreatedAt:       time.Now(),
+			Details:         bpfman.UprobeDetails{Target: target, FnName: fnName, Offset: offset, Retprobe: retprobe},
+		},
+		Kernel: &fakeKernelLinkInfo{id: id, programID: 0, linkType: kernelLinkType},
+	}, nil
+}
+
 func (f *fakeKernel) DetachLink(linkPinPath string) error {
 	for id, link := range f.links {
 		if link.PinPath == linkPinPath {

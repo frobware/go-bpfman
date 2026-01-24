@@ -347,6 +347,8 @@ func (s *Server) Attach(ctx context.Context, req *pb.AttachRequest) (*pb.AttachR
 		return s.attachTCX(ctx, req.Id, info.TcxAttachInfo)
 	case *pb.AttachInfo_KprobeAttachInfo:
 		return s.attachKprobe(ctx, req.Id, info.KprobeAttachInfo)
+	case *pb.AttachInfo_UprobeAttachInfo:
+		return s.attachUprobe(ctx, req.Id, info.UprobeAttachInfo)
 	default:
 		return nil, status.Errorf(codes.Unimplemented, "attach type %T not yet implemented", req.Attach.Info)
 	}
@@ -482,6 +484,35 @@ func (s *Server) attachKprobe(ctx context.Context, programID uint32, info *pb.Kp
 	summary, err := s.mgr.AttachKprobe(ctx, programID, info.FnName, info.Offset, retprobe, "")
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "attach kprobe: %v", err)
+	}
+
+	return &pb.AttachResponse{
+		LinkId: summary.KernelLinkID,
+	}, nil
+}
+
+// attachUprobe handles uprobe/uretprobe attachment via the manager.
+func (s *Server) attachUprobe(ctx context.Context, programID uint32, info *pb.UprobeAttachInfo) (*pb.AttachResponse, error) {
+	if info.Target == "" {
+		return nil, status.Error(codes.InvalidArgument, "target is required for uprobe attachment")
+	}
+
+	// Look up program to determine if it's a uretprobe
+	prog, err := s.mgr.Get(ctx, programID)
+	if err != nil {
+		return nil, status.Errorf(codes.NotFound, "program %d not found: %v", programID, err)
+	}
+
+	// Determine retprobe from program type stored in bpfman metadata
+	var retprobe bool
+	if prog.Bpfman != nil && prog.Bpfman.Program != nil {
+		retprobe = prog.Bpfman.Program.LoadSpec.ProgramType == bpfman.ProgramTypeUretprobe
+	}
+
+	// Call manager with empty linkPinPath to auto-generate
+	summary, err := s.mgr.AttachUprobe(ctx, programID, info.Target, info.GetFnName(), info.Offset, retprobe, "")
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "attach uprobe: %v", err)
 	}
 
 	return &pb.AttachResponse{

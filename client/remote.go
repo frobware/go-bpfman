@@ -253,6 +253,34 @@ func (c *remoteClient) AttachKprobe(ctx context.Context, programKernelID uint32,
 	}, nil
 }
 
+// AttachUprobe attaches a uprobe/uretprobe program to a user-space function via gRPC.
+func (c *remoteClient) AttachUprobe(ctx context.Context, programKernelID uint32, target, fnName string, offset uint64, linkPinPath string) (bpfman.LinkSummary, error) {
+	req := &pb.AttachRequest{
+		Id: programKernelID,
+		Attach: &pb.AttachInfo{
+			Info: &pb.AttachInfo_UprobeAttachInfo{
+				UprobeAttachInfo: &pb.UprobeAttachInfo{
+					Target: target,
+					FnName: &fnName,
+					Offset: offset,
+				},
+			},
+		},
+	}
+
+	resp, err := c.client.Attach(ctx, req)
+	if err != nil {
+		return bpfman.LinkSummary{}, translateGRPCError(err)
+	}
+
+	return bpfman.LinkSummary{
+		LinkType:        bpfman.LinkTypeUprobe,
+		KernelProgramID: programKernelID,
+		KernelLinkID:    resp.LinkId,
+		PinPath:         linkPinPath,
+	}, nil
+}
+
 // Detach removes a link via gRPC.
 // The proto uses link_id (uint32) which matches our kernel_link_id.
 func (c *remoteClient) Detach(ctx context.Context, kernelLinkID uint32) error {

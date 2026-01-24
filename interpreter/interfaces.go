@@ -151,6 +151,10 @@ type ProgramAttacher interface {
 	// AttachKprobe attaches a pinned program to a kernel function.
 	// If retprobe is true, attaches as a kretprobe instead of kprobe.
 	AttachKprobe(progPinPath, fnName string, offset uint64, retprobe bool, linkPinPath string) (bpfman.ManagedLink, error)
+	// AttachUprobe attaches a pinned program to a user-space function.
+	// target is the path to the binary or library (e.g., /usr/lib/libc.so.6).
+	// If retprobe is true, attaches as a uretprobe instead of uprobe.
+	AttachUprobe(progPinPath, target, fnName string, offset uint64, retprobe bool, linkPinPath string) (bpfman.ManagedLink, error)
 }
 
 // XDPDispatcherResult holds the result of loading an XDP dispatcher.

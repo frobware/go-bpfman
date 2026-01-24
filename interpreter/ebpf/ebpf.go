@@ -1550,6 +1550,85 @@ func (k *kernelAdapter) AttachKprobe(progPinPath, fnName string, offset uint64, 
 	}, nil
 }
 
+// AttachUprobe attaches a pinned program to a user-space function.
+// target is the path to the binary or library (e.g., /usr/lib/libc.so.6).
+// If retprobe is true, attaches as a uretprobe instead of uprobe.
+func (k *kernelAdapter) AttachUprobe(progPinPath, target, fnName string, offset uint64, retprobe bool, linkPinPath string) (bpfman.ManagedLink, error) {
+	prog, err := ebpf.LoadPinnedProgram(progPinPath, nil)
+	if err != nil {
+		return bpfman.ManagedLink{}, fmt.Errorf("load pinned program %s: %w", progPinPath, err)
+	}
+	defer prog.Close()
+
+	// Get program info to find kernel program ID
+	progInfo, err := prog.Info()
+	if err != nil {
+		return bpfman.ManagedLink{}, fmt.Errorf("get program info: %w", err)
+	}
+	progID, _ := progInfo.ID()
+
+	// Open the executable for uprobe attachment
+	ex, err := link.OpenExecutable(target)
+	if err != nil {
+		return bpfman.ManagedLink{}, fmt.Errorf("open executable %s: %w", target, err)
+	}
+
+	// Build uprobe options
+	opts := &link.UprobeOptions{
+		Offset: offset,
+	}
+
+	// Attach as uprobe or uretprobe
+	var lnk link.Link
+	if retprobe {
+		lnk, err = ex.Uretprobe(fnName, prog, opts)
+	} else {
+		lnk, err = ex.Uprobe(fnName, prog, opts)
+	}
+	if err != nil {
+		return bpfman.ManagedLink{}, fmt.Errorf("attach uprobe to %s in %s: %w", fnName, target, err)
+	}
+
+	// Pin the link if a path is provided
+	if linkPinPath != "" {
+		// Ensure parent directory exists
+		if err := os.MkdirAll(filepath.Dir(linkPinPath), 0755); err != nil {
+			lnk.Close()
+			return bpfman.ManagedLink{}, fmt.Errorf("create link pin directory: %w", err)
+		}
+
+		if err := lnk.Pin(linkPinPath); err != nil {
+			lnk.Close()
+			return bpfman.ManagedLink{}, fmt.Errorf("pin link to %s: %w", linkPinPath, err)
+		}
+	}
+
+	// Get link info
+	linkInfo, err := lnk.Info()
+	if err != nil {
+		lnk.Close()
+		return bpfman.ManagedLink{}, fmt.Errorf("get link info: %w", err)
+	}
+
+	// Determine link type based on retprobe flag
+	linkType := bpfman.LinkTypeUprobe
+	if retprobe {
+		linkType = bpfman.LinkTypeUretprobe
+	}
+
+	return bpfman.ManagedLink{
+		Managed: &bpfman.LinkInfo{
+			KernelLinkID:    uint32(linkInfo.ID),
+			KernelProgramID: uint32(progID),
+			Type:            linkType,
+			PinPath:         linkPinPath,
+			CreatedAt:       time.Now(),
+			Details:         bpfman.UprobeDetails{Target: target, FnName: fnName, Offset: offset, Retprobe: retprobe},
+		},
+		Kernel: NewLinkInfo(linkInfo),
+	}, nil
+}
+
 // sanitiseFilename replaces characters that are invalid in filenames.
 func sanitiseFilename(s string) string {
 	var result []byte

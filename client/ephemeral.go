@@ -195,6 +195,11 @@ func (e *ephemeralClient) AttachKprobe(ctx context.Context, programKernelID uint
 	return e.remote.AttachKprobe(ctx, programKernelID, fnName, offset, linkPinPath)
 }
 
+// AttachUprobe attaches a uprobe/uretprobe program to a user-space function via the ephemeral gRPC server.
+func (e *ephemeralClient) AttachUprobe(ctx context.Context, programKernelID uint32, target, fnName string, offset uint64, linkPinPath string) (bpfman.LinkSummary, error) {
+	return e.remote.AttachUprobe(ctx, programKernelID, target, fnName, offset, linkPinPath)
+}
+
 // Detach removes a link via the ephemeral gRPC server.
 func (e *ephemeralClient) Detach(ctx context.Context, kernelLinkID uint32) error {
 	return e.remote.Detach(ctx, kernelLinkID)

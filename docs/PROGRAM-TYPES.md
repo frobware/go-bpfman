@@ -27,8 +27,8 @@ Use the Rust binary to discover CLI flags and behaviour:
 | tcx | Yes | Yes | No | Complete |
 | kprobe | Yes | Yes | No | Complete |
 | kretprobe | Yes | Yes | No | Complete (shares kprobe implementation) |
-| uprobe | Yes | No | No | Not implemented |
-| uretprobe | Yes | No | No | Not implemented |
+| uprobe | Yes | Yes | No | Complete |
+| uretprobe | Yes | Yes | No | Complete (shares uprobe implementation) |
 | fentry | Yes | No | No | Not implemented |
 | fexit | Yes | No | No | Not implemented |
 
@@ -48,6 +48,23 @@ bpfman attach <id> kprobe --fn-name try_to_wake_up
 ```
 
 The server looks up the program type and passes `retprobe=true` to the manager when the program was loaded as `kretprobe`.
+
+### Uprobe / Uretprobe Usage
+
+Uretprobe shares the uprobe implementation. The program type determines whether it attaches as entry or return probe:
+
+```bash
+# Load as uprobe (entry)
+bpfman load image --programs uprobe:uprobe_counter --image-url quay.io/bpfman-bytecode/go-uprobe-counter:latest
+
+# Load as uretprobe (return)
+bpfman load image --programs uretprobe:uprobe_counter --image-url quay.io/bpfman-bytecode/go-uprobe-counter:latest
+
+# Attach using the uprobe command - the retprobe flag is derived from program type
+bpfman attach <id> uprobe --target /lib64/libc.so.6 --fn-name malloc
+```
+
+The server looks up the program type and passes `retprobe=true` to the manager when the program was loaded as `uretprobe`.
 
 ## Implementation Pattern
 
@@ -160,30 +177,6 @@ Create `test-<type>-load-attach.sh` following existing patterns.
 | Examples | `examples/` |
 
 ## Remaining Program Types
-
-### Uprobe / Uretprobe
-
-**Rust CLI flags** (`attach 0 uprobe --help`):
-- `--target` (required): Library name or absolute path to binary
-- `--fn-name` (optional): Function to attach to
-- `--offset` (optional): Offset from target/function
-- `--pid` (optional): Limit to specific PID
-- `--container-pid` (optional, not supported): Container namespace
-
-**Proto definition** (`proto/bpfman.proto`):
-```protobuf
-message UprobeAttachInfo {
-    optional string fn_name = 1;
-    uint64 offset = 2;
-    string target = 3;
-    optional int32 pid = 4;
-    optional int32 container_pid = 5;
-}
-```
-
-**Example image**: `quay.io/bpfman-bytecode/go-uprobe-counter:latest`
-
-**cilium/ebpf API**: `link.Uprobe()`, `link.Uretprobe()`
 
 ### Fentry / Fexit
 

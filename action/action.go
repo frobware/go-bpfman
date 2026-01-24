@@ -79,6 +79,14 @@ type SaveKprobeLink struct {
 
 func (SaveKprobeLink) isAction() {}
 
+// SaveUprobeLink saves a uprobe link to the store.
+type SaveUprobeLink struct {
+	Summary bpfman.LinkSummary
+	Details bpfman.UprobeDetails
+}
+
+func (SaveUprobeLink) isAction() {}
+
 // Kernel actions - operations on the BPF subsystem
 
 // LoadProgram loads a BPF program into the kernel.

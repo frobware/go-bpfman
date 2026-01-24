@@ -12,6 +12,8 @@ const (
 	AttachTracepoint AttachType = "tracepoint"
 	AttachKprobe     AttachType = "kprobe"
 	AttachKretprobe  AttachType = "kretprobe"
+	AttachUprobe     AttachType = "uprobe"
+	AttachUretprobe  AttachType = "uretprobe"
 	AttachXDP        AttachType = "xdp"
 	AttachTC         AttachType = "tc"
 	AttachTCX        AttachType = "tcx"

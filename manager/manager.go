@@ -542,6 +542,86 @@ func computeAttachKprobeAction(programKernelID, kernelLinkID uint32, pinPath, fn
 	}
 }
 
+// AttachUprobe attaches a pinned program to a user-space function.
+// programKernelID is required to associate the link with the program in the store.
+// target is the path to the binary or library (e.g., /usr/lib/libc.so.6).
+// If linkPinPath is empty, a default path is generated in the links directory.
+// If retprobe is true, attaches as a uretprobe instead of uprobe.
+//
+// Pattern: FETCH -> KERNEL I/O -> COMPUTE -> EXECUTE
+func (m *Manager) AttachUprobe(ctx context.Context, programKernelID uint32, target, fnName string, offset uint64, retprobe bool, linkPinPath string) (bpfman.LinkSummary, error) {
+	// FETCH: Verify program exists in store
+	_, err := m.store.Get(ctx, programKernelID)
+	if err != nil {
+		return bpfman.LinkSummary{}, fmt.Errorf("get program %d: %w", programKernelID, err)
+	}
+
+	// COMPUTE: Construct paths from convention (kernel ID + bpffs root)
+	progPinPath := filepath.Join(m.dirs.FS, fmt.Sprintf("prog_%d", programKernelID))
+
+	// COMPUTE: Auto-generate link pin path if not provided
+	if linkPinPath == "" {
+		linkName := sanitiseFilename(fnName)
+		if retprobe {
+			linkName = "ret_" + linkName
+		}
+		linksDir := filepath.Join(m.dirs.FS, "links", fmt.Sprintf("%d", programKernelID))
+		linkPinPath = filepath.Join(linksDir, linkName)
+	}
+
+	// KERNEL I/O: Attach to the kernel (returns ManagedLink with full info)
+	link, err := m.kernel.AttachUprobe(progPinPath, target, fnName, offset, retprobe, linkPinPath)
+	if err != nil {
+		return bpfman.LinkSummary{}, fmt.Errorf("attach uprobe %s to %s: %w", fnName, target, err)
+	}
+
+	// COMPUTE: Build save action from kernel result
+	saveAction := computeAttachUprobeAction(programKernelID, link.Kernel.ID(), link.Managed.PinPath, target, fnName, offset, retprobe)
+
+	// EXECUTE: Save link metadata
+	if err := m.executor.Execute(ctx, saveAction); err != nil {
+		return bpfman.LinkSummary{}, fmt.Errorf("save link metadata: %w", err)
+	}
+
+	probeType := "uprobe"
+	if retprobe {
+		probeType = "uretprobe"
+	}
+	m.logger.Info("attached "+probeType,
+		"kernel_link_id", link.Kernel.ID(),
+		"program_id", programKernelID,
+		"target", target,
+		"fn_name", fnName,
+		"offset", offset,
+		"pin_path", link.Managed.PinPath)
+
+	return saveAction.Summary, nil
+}
+
+// computeAttachUprobeAction is a pure function that builds the save action
+// for a uprobe/uretprobe attachment.
+func computeAttachUprobeAction(programKernelID, kernelLinkID uint32, pinPath, target, fnName string, offset uint64, retprobe bool) action.SaveUprobeLink {
+	linkType := bpfman.LinkTypeUprobe
+	if retprobe {
+		linkType = bpfman.LinkTypeUretprobe
+	}
+	return action.SaveUprobeLink{
+		Summary: bpfman.LinkSummary{
+			KernelLinkID:    kernelLinkID,
+			LinkType:        linkType,
+			KernelProgramID: programKernelID,
+			PinPath:         pinPath,
+			CreatedAt:       time.Now(),
+		},
+		Details: bpfman.UprobeDetails{
+			Target:   target,
+			FnName:   fnName,
+			Offset:   offset,
+			Retprobe: retprobe,
+		},
+	}
+}
+
 // XDP proceed-on action bits (matches XDP return codes).
 const (
 	xdpProceedOnPass = 1 << 2 // Continue to next program on XDP_PASS

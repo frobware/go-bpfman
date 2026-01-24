@@ -37,6 +37,7 @@ type AttachCmd struct {
 	FnName   string `short:"f" name:"fn-name" help:"Function name to attach to."`
 	Offset   uint64 `name:"offset" help:"Offset within the function." default:"0"`
 	RetProbe bool   `name:"retprobe" help:"Attach as return probe instead of entry probe."`
+	Target   string `name:"target" help:"Path to target binary or library (required for uprobe)."`
 
 	// Common flags
 	Metadata []KeyValue `short:"m" name:"metadata" help:"KEY=VALUE metadata (can be repeated)."`
@@ -55,7 +56,9 @@ func (c *AttachCmd) Run(cli *CLI) error {
 		return c.attachTCX(cli)
 	case "kprobe":
 		return c.attachKprobe(cli)
-	case "uprobe", "fentry", "fexit":
+	case "uprobe":
+		return c.attachUprobe(cli)
+	case "fentry", "fexit":
 		return fmt.Errorf("%s attachment not yet implemented", c.Type)
 	default:
 		return fmt.Errorf("unknown attach type: %s", c.Type)
@@ -204,6 +207,26 @@ func (c *AttachCmd) attachKprobe(cli *CLI) error {
 
 	ctx := context.Background()
 	result, err := b.AttachKprobe(ctx, c.ProgramID.Value, c.FnName, c.Offset, "")
+	if err != nil {
+		return err
+	}
+
+	return c.printLinkResult(ctx, b, result.KernelLinkID)
+}
+
+func (c *AttachCmd) attachUprobe(cli *CLI) error {
+	if c.Target == "" {
+		return fmt.Errorf("--target is required for uprobe attachment")
+	}
+
+	b, err := cli.Client()
+	if err != nil {
+		return fmt.Errorf("failed to create client: %w", err)
+	}
+	defer b.Close()
+
+	ctx := context.Background()
+	result, err := b.AttachUprobe(ctx, c.ProgramID.Value, c.Target, c.FnName, c.Offset, "")
 	if err != nil {
 		return err
 	}
