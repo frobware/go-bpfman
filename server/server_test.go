@@ -21,6 +21,7 @@ import (
 	"iter"
 	"log/slog"
 	"os"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -48,12 +49,29 @@ func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
+// kernelOp records an operation performed on the fake kernel.
+type kernelOp struct {
+	Op   string // "load", "unload", "attach", "detach"
+	Name string // program or link name
+	ID   uint32 // kernel ID assigned
+	Err  error  // error if operation failed
+}
+
 // fakeKernel implements interpreter.KernelOperations for testing.
 // It simulates kernel BPF operations without actual syscalls.
 type fakeKernel struct {
 	nextID   atomic.Uint32
 	programs map[uint32]fakeProgram
 	links    map[uint32]*bpfman.AttachedLink
+
+	// Operation recording for verification
+	ops []kernelOp
+	mu  sync.Mutex
+
+	// Error injection - set these to control behaviour
+	failOnProgram map[string]error // fail Load if program name matches
+	failOnNthLoad int              // fail on Nth load (0 = never fail)
+	loadCount     int              // track load count for failOnNthLoad
 }
 
 // fakeProgram stores program data for the fake kernel.
@@ -101,20 +119,83 @@ func (f *fakeKernelLinkInfo) TargetBTFId() uint32 { return 0 }
 
 func newFakeKernel() *fakeKernel {
 	fk := &fakeKernel{
-		programs: make(map[uint32]fakeProgram),
-		links:    make(map[uint32]*bpfman.AttachedLink),
+		programs:      make(map[uint32]fakeProgram),
+		links:         make(map[uint32]*bpfman.AttachedLink),
+		failOnProgram: make(map[string]error),
 	}
 	fk.nextID.Store(100)
 	return fk
 }
 
+// Operations returns a copy of recorded operations for verification.
+func (f *fakeKernel) Operations() []kernelOp {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	ops := make([]kernelOp, len(f.ops))
+	copy(ops, f.ops)
+	return ops
+}
+
+// recordOp records an operation for later verification.
+func (f *fakeKernel) recordOp(op, name string, id uint32, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ops = append(f.ops, kernelOp{Op: op, Name: name, ID: id, Err: err})
+}
+
+// FailOnProgram configures the kernel to fail when loading a specific program.
+func (f *fakeKernel) FailOnProgram(name string, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.failOnProgram[name] = err
+}
+
+// FailOnNthLoad configures the kernel to fail on the Nth load attempt.
+func (f *fakeKernel) FailOnNthLoad(n int, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.failOnNthLoad = n
+}
+
+// Reset clears all recorded operations and error injection settings.
+func (f *fakeKernel) Reset() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ops = nil
+	f.failOnProgram = make(map[string]error)
+	f.failOnNthLoad = 0
+	f.loadCount = 0
+}
+
 func (f *fakeKernel) Load(_ context.Context, spec bpfman.LoadSpec) (bpfman.ManagedProgram, error) {
 	// Validate program type - mirrors real kernel behaviour
 	if spec.ProgramType == bpfman.ProgramTypeUnspecified {
-		return bpfman.ManagedProgram{}, fmt.Errorf("program type must be specified")
+		err := fmt.Errorf("program type must be specified")
+		f.recordOp("load", spec.ProgramName, 0, err)
+		return bpfman.ManagedProgram{}, err
 	}
 	if spec.ProgramType < bpfman.ProgramTypeXDP || spec.ProgramType > bpfman.ProgramTypeFexit {
-		return bpfman.ManagedProgram{}, fmt.Errorf("invalid program type: %d", spec.ProgramType)
+		err := fmt.Errorf("invalid program type: %d", spec.ProgramType)
+		f.recordOp("load", spec.ProgramName, 0, err)
+		return bpfman.ManagedProgram{}, err
+	}
+
+	// Check error injection
+	f.mu.Lock()
+	f.loadCount++
+	loadNum := f.loadCount
+	failErr := f.failOnProgram[spec.ProgramName]
+	failOnNth := f.failOnNthLoad
+	f.mu.Unlock()
+
+	if failErr != nil {
+		f.recordOp("load", spec.ProgramName, 0, failErr)
+		return bpfman.ManagedProgram{}, failErr
+	}
+	if failOnNth > 0 && loadNum == failOnNth {
+		err := fmt.Errorf("injected error on load %d", loadNum)
+		f.recordOp("load", spec.ProgramName, 0, err)
+		return bpfman.ManagedProgram{}, err
 	}
 
 	id := f.nextID.Add(1)
@@ -126,6 +207,7 @@ func (f *fakeKernel) Load(_ context.Context, spec bpfman.LoadSpec) (bpfman.Manag
 		pinDir:      spec.PinPath,
 	}
 	f.programs[id] = fp
+	f.recordOp("load", spec.ProgramName, id, nil)
 	return bpfman.ManagedProgram{
 		Managed: &bpfman.ProgramInfo{
 			Name:    fp.name,
@@ -145,6 +227,7 @@ func (f *fakeKernel) Unload(_ context.Context, pinPath string) error {
 	for id, p := range f.programs {
 		if p.pinDir == pinPath {
 			delete(f.programs, id)
+			f.recordOp("unload", p.name, id, nil)
 			return nil
 		}
 	}
@@ -156,10 +239,16 @@ func (f *fakeKernel) UnloadProgram(_ context.Context, progPinPath, mapsDir strin
 	for id, p := range f.programs {
 		if p.pinPath == progPinPath || p.pinDir == mapsDir {
 			delete(f.programs, id)
+			f.recordOp("unload", p.name, id, nil)
 			return nil
 		}
 	}
 	return nil
+}
+
+// ProgramCount returns the number of programs currently loaded.
+func (f *fakeKernel) ProgramCount() int {
+	return len(f.programs)
 }
 
 func (f *fakeKernel) Programs(_ context.Context) iter.Seq2[kernel.Program, error] {
@@ -472,14 +561,70 @@ func (f *fakeKernel) RepinMap(srcPath, dstPath string) error {
 	return nil // Fake implementation - no-op
 }
 
-// newTestServer creates a server with fake kernel and real in-memory SQLite.
-func newTestServer(t *testing.T) *server.Server {
+// testFixture provides access to all components for verification.
+type testFixture struct {
+	Server *server.Server
+	Kernel *fakeKernel
+	Store  interpreter.Store
+	t      *testing.T
+}
+
+// newTestFixture creates a complete test fixture with accessible components.
+func newTestFixture(t *testing.T) *testFixture {
 	t.Helper()
 	store, err := sqlite.NewInMemory(testLogger())
 	require.NoError(t, err, "failed to create store")
 	t.Cleanup(func() { store.Close() })
 	dirs := config.NewRuntimeDirs(t.TempDir())
-	return server.New(dirs, store, newFakeKernel(), nil, testLogger())
+	kernel := newFakeKernel()
+	srv := server.New(dirs, store, kernel, nil, testLogger())
+	return &testFixture{
+		Server: srv,
+		Kernel: kernel,
+		Store:  store,
+		t:      t,
+	}
+}
+
+// AssertKernelEmpty verifies no programs remain in the kernel.
+func (f *testFixture) AssertKernelEmpty() {
+	f.t.Helper()
+	assert.Equal(f.t, 0, f.Kernel.ProgramCount(), "expected no programs in kernel")
+}
+
+// AssertDatabaseEmpty verifies no programs remain in the database.
+func (f *testFixture) AssertDatabaseEmpty() {
+	f.t.Helper()
+	programs, err := f.Store.List(context.Background())
+	require.NoError(f.t, err, "failed to list programs from store")
+	assert.Empty(f.t, programs, "expected no programs in database")
+}
+
+// AssertCleanState verifies both kernel and database are empty.
+func (f *testFixture) AssertCleanState() {
+	f.t.Helper()
+	f.AssertKernelEmpty()
+	f.AssertDatabaseEmpty()
+}
+
+// AssertKernelOps verifies the sequence of kernel operations.
+func (f *testFixture) AssertKernelOps(expected []string) {
+	f.t.Helper()
+	ops := f.Kernel.Operations()
+	actual := make([]string, len(ops))
+	for i, op := range ops {
+		if op.Err != nil {
+			actual[i] = fmt.Sprintf("%s:%s:error", op.Op, op.Name)
+		} else {
+			actual[i] = fmt.Sprintf("%s:%s:ok", op.Op, op.Name)
+		}
+	}
+	assert.Equal(f.t, expected, actual, "kernel operations mismatch")
+}
+
+// newTestServer creates a server with fake kernel and real in-memory SQLite.
+func newTestServer(t *testing.T) *server.Server {
+	return newTestFixture(t).Server
 }
 
 // TestLoadProgram_WithValidRequest_Succeeds verifies that:
@@ -1051,4 +1196,218 @@ func TestFakeKernel_RejectsInvalidProgramType(t *testing.T) {
 	_, err := fk.Load(ctx, spec)
 	require.Error(t, err, "Load with invalid type should fail")
 	assert.Contains(t, err.Error(), "invalid program type")
+}
+
+// =============================================================================
+// Partial Failure and Rollback Tests
+// =============================================================================
+//
+// These tests verify that when operations fail partway through:
+// 1. Kernel state is properly rolled back (no orphaned programs)
+// 2. Database state is clean (nothing persisted)
+// 3. Error is properly propagated to the caller
+
+// TestLoadProgram_PartialFailure_SecondProgramFails verifies that:
+//
+//	Given a server configured to fail on the second program load,
+//	When I attempt to load two programs in a single request,
+//	Then the first program is unloaded (rolled back),
+//	And neither program exists in the kernel,
+//	And neither program exists in the database.
+func TestLoadProgram_PartialFailure_SecondProgramFails(t *testing.T) {
+	t.Skip("rollback not yet implemented: server leaves orphaned programs in kernel and database on partial failure")
+
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	// Configure kernel to fail on the second program
+	fix.Kernel.FailOnProgram("prog_two", fmt.Errorf("injected failure on prog_two"))
+
+	req := &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_File{File: "/path/to/multi.o"},
+		},
+		Info: []*pb.LoadInfo{
+			{Name: "prog_one", ProgramType: pb.BpfmanProgramType_TRACEPOINT},
+			{Name: "prog_two", ProgramType: pb.BpfmanProgramType_TRACEPOINT},
+		},
+		Metadata: map[string]string{
+			"bpfman.io/ProgramName": "multi-prog",
+		},
+	}
+
+	_, err := fix.Server.Load(ctx, req)
+
+	// Should have failed
+	require.Error(t, err, "Load should fail when second program fails")
+	assert.Contains(t, err.Error(), "injected failure", "error should mention injected failure")
+
+	// Verify kernel operations: load prog_one, fail prog_two, unload prog_one
+	fix.AssertKernelOps([]string{
+		"load:prog_one:ok",
+		"load:prog_two:error",
+		"unload:prog_one:ok",
+	})
+
+	// Verify clean state
+	fix.AssertCleanState()
+}
+
+// TestLoadProgram_PartialFailure_ThirdOfThreeFails verifies that:
+//
+//	Given a server configured to fail on the third program load,
+//	When I attempt to load three programs,
+//	Then the first two programs are unloaded (rolled back),
+//	And no programs exist in the kernel or database.
+func TestLoadProgram_PartialFailure_ThirdOfThreeFails(t *testing.T) {
+	t.Skip("rollback not yet implemented: server leaves orphaned programs in kernel and database on partial failure")
+
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	// Configure kernel to fail on the third program
+	fix.Kernel.FailOnProgram("prog_three", fmt.Errorf("injected failure on prog_three"))
+
+	req := &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_File{File: "/path/to/multi.o"},
+		},
+		Info: []*pb.LoadInfo{
+			{Name: "prog_one", ProgramType: pb.BpfmanProgramType_XDP},
+			{Name: "prog_two", ProgramType: pb.BpfmanProgramType_TC},
+			{Name: "prog_three", ProgramType: pb.BpfmanProgramType_KPROBE},
+		},
+		Metadata: map[string]string{
+			"bpfman.io/ProgramName": "triple-prog",
+		},
+	}
+
+	_, err := fix.Server.Load(ctx, req)
+
+	// Should have failed
+	require.Error(t, err, "Load should fail when third program fails")
+
+	// Verify kernel operations: load 1, load 2, fail 3, unload 2, unload 1
+	fix.AssertKernelOps([]string{
+		"load:prog_one:ok",
+		"load:prog_two:ok",
+		"load:prog_three:error",
+		"unload:prog_two:ok",
+		"unload:prog_one:ok",
+	})
+
+	// Verify clean state
+	fix.AssertCleanState()
+}
+
+// TestLoadProgram_PartialFailure_FirstProgramFails verifies that:
+//
+//	Given a server configured to fail on the first program load,
+//	When I attempt to load two programs,
+//	Then no rollback is needed (nothing succeeded),
+//	And no programs exist in the kernel or database.
+func TestLoadProgram_PartialFailure_FirstProgramFails(t *testing.T) {
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	// Configure kernel to fail on the first program
+	fix.Kernel.FailOnProgram("prog_one", fmt.Errorf("injected failure on prog_one"))
+
+	req := &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_File{File: "/path/to/multi.o"},
+		},
+		Info: []*pb.LoadInfo{
+			{Name: "prog_one", ProgramType: pb.BpfmanProgramType_TRACEPOINT},
+			{Name: "prog_two", ProgramType: pb.BpfmanProgramType_TRACEPOINT},
+		},
+		Metadata: map[string]string{
+			"bpfman.io/ProgramName": "multi-prog",
+		},
+	}
+
+	_, err := fix.Server.Load(ctx, req)
+
+	// Should have failed
+	require.Error(t, err, "Load should fail when first program fails")
+
+	// Verify kernel operations: only the failed load attempt
+	fix.AssertKernelOps([]string{
+		"load:prog_one:error",
+	})
+
+	// Verify clean state
+	fix.AssertCleanState()
+}
+
+// TestLoadProgram_SingleProgram_FailsCleanly verifies that:
+//
+//	Given a server configured to fail on a single program load,
+//	When I attempt to load one program,
+//	Then the error is returned,
+//	And no programs exist in the kernel or database.
+func TestLoadProgram_SingleProgram_FailsCleanly(t *testing.T) {
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	// Configure kernel to fail
+	fix.Kernel.FailOnProgram("single_prog", fmt.Errorf("injected failure"))
+
+	req := &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_File{File: "/path/to/single.o"},
+		},
+		Info: []*pb.LoadInfo{
+			{Name: "single_prog", ProgramType: pb.BpfmanProgramType_XDP},
+		},
+		Metadata: map[string]string{
+			"bpfman.io/ProgramName": "single-prog",
+		},
+	}
+
+	_, err := fix.Server.Load(ctx, req)
+
+	require.Error(t, err, "Load should fail")
+	fix.AssertKernelOps([]string{"load:single_prog:error"})
+	fix.AssertCleanState()
+}
+
+// TestLoadProgram_FailOnNthLoad verifies that:
+//
+//	Given a server configured to fail on the Nth load operation,
+//	When I load multiple programs,
+//	Then the failure occurs at the expected point,
+//	And rollback cleans up all previously loaded programs.
+func TestLoadProgram_FailOnNthLoad(t *testing.T) {
+	t.Skip("rollback not yet implemented: server leaves orphaned programs in kernel and database on partial failure")
+
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	// Configure kernel to fail on the 2nd load attempt
+	fix.Kernel.FailOnNthLoad(2, fmt.Errorf("nth load failure"))
+
+	req := &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_File{File: "/path/to/multi.o"},
+		},
+		Info: []*pb.LoadInfo{
+			{Name: "prog_a", ProgramType: pb.BpfmanProgramType_XDP},
+			{Name: "prog_b", ProgramType: pb.BpfmanProgramType_XDP},
+			{Name: "prog_c", ProgramType: pb.BpfmanProgramType_XDP},
+		},
+		Metadata: map[string]string{
+			"bpfman.io/ProgramName": "nth-fail-test",
+		},
+	}
+
+	_, err := fix.Server.Load(ctx, req)
+
+	require.Error(t, err, "Load should fail on 2nd program")
+	fix.AssertKernelOps([]string{
+		"load:prog_a:ok",
+		"load:prog_b:error",
+		"unload:prog_a:ok",
+	})
+	fix.AssertCleanState()
 }
