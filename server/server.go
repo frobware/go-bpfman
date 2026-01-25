@@ -261,6 +261,12 @@ func (s *Server) Load(ctx context.Context, req *pb.LoadRequest) (*pb.LoadRespons
 	// Load each requested program using the manager (transactional)
 	// Pin paths are computed from kernel ID, following upstream convention
 	for _, info := range req.Info {
+		// Validate program name is not empty
+		if info.Name == "" {
+			rollback()
+			return nil, status.Error(codes.InvalidArgument, "program name is required")
+		}
+
 		progType, err := protoToBpfmanType(info.ProgramType)
 		if err != nil {
 			rollback()
@@ -397,6 +403,9 @@ func (s *Server) attachTracepoint(ctx context.Context, programID uint32, info *p
 	// Call manager with empty linkPinPath to auto-generate
 	summary, err := s.mgr.AttachTracepoint(ctx, programID, group, name, "")
 	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, status.Errorf(codes.NotFound, "program with ID %d not found", programID)
+		}
 		return nil, status.Errorf(codes.Internal, "attach tracepoint: %v", err)
 	}
 
