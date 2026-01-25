@@ -15,28 +15,34 @@ The fake kernel approach enables:
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                      Test Code                          │
-├─────────────────────────────────────────────────────────┤
-│                     testFixture                         │
-│  ┌─────────┐  ┌─────────────┐  ┌───────────────────┐   │
-│  │ Server  │  │ fakeKernel  │  │ SQLite (in-mem)   │   │
-│  └────┬────┘  └──────┬──────┘  └─────────┬─────────┘   │
-│       │              │                   │             │
-│       │   Uses       │   Implements      │  Real DB    │
-│       ▼              ▼                   ▼             │
-│  ┌─────────┐  ┌─────────────┐  ┌───────────────────┐   │
-│  │ Manager │  │ Kernel      │  │ Store interface   │   │
-│  │         │──│ Operations  │  │                   │   │
-│  └─────────┘  │ interface   │  └───────────────────┘   │
-│               └─────────────┘                          │
-└─────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                        Test Code                            │
+├─────────────────────────────────────────────────────────────┤
+│                       testFixture                           │
+│  ┌─────────┐  ┌─────────────┐  ┌───────────────────────┐   │
+│  │ Server  │  │ fakeKernel  │  │ SQLite (in-mem)       │   │
+│  └────┬────┘  └──────┬──────┘  └─────────┬─────────────┘   │
+│       │              │                   │                 │
+│       │   Uses       │   Implements      │  Real DB        │
+│       ▼              ▼                   ▼                 │
+│  ┌─────────┐  ┌─────────────┐  ┌───────────────────────┐   │
+│  │ Manager │──│ Kernel      │  │ Store interface       │   │
+│  │         │  │ Operations  │  │                       │   │
+│  └─────────┘  │ interface   │  └───────────────────────┘   │
+│       │       └─────────────┘                              │
+│       │                                                    │
+│       ▼                                                    │
+│  ┌─────────────────────┐                                   │
+│  │ fakeNetIfaceResolver│  (for XDP/TC/TCX tests)          │
+│  └─────────────────────┘                                   │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 The test fixture combines:
 - **Real server** - Actual gRPC service implementation
 - **Fake kernel** - Simulates BPF operations without syscalls
 - **Real database** - In-memory SQLite with full schema
+- **Fake network resolver** - Mock network interfaces for XDP/TC/TCX tests
 
 This combination catches bugs that mock-heavy approaches miss.
 
@@ -121,6 +127,53 @@ mapsDir := fmt.Sprintf("%s/maps/%d", spec.PinPath, kernelID)
 ```
 
 This ensures Unload operations match loaded programs correctly.
+
+## Network Interface Resolver
+
+For testing XDP, TC, and TCX attachment without real network interfaces, the server uses dependency injection via the `NetIfaceResolver` interface:
+
+```go
+// NetIfaceResolver resolves network interfaces by name.
+type NetIfaceResolver interface {
+    InterfaceByName(name string) (*net.Interface, error)
+}
+
+// Production code uses DefaultNetIfaceResolver
+type DefaultNetIfaceResolver struct{}
+
+func (DefaultNetIfaceResolver) InterfaceByName(name string) (*net.Interface, error) {
+    return net.InterfaceByName(name)
+}
+```
+
+### Fake Network Interface Resolver
+
+Tests use `fakeNetIfaceResolver` which provides mock interfaces:
+
+```go
+type fakeNetIfaceResolver struct {
+    interfaces map[string]*net.Interface
+}
+
+func newFakeNetIfaceResolver() *fakeNetIfaceResolver {
+    return &fakeNetIfaceResolver{
+        interfaces: map[string]*net.Interface{
+            "lo":   {Index: 1, Name: "lo"},
+            "eth0": {Index: 2, Name: "eth0"},
+        },
+    }
+}
+
+func (f *fakeNetIfaceResolver) InterfaceByName(name string) (*net.Interface, error) {
+    iface, ok := f.interfaces[name]
+    if !ok {
+        return nil, fmt.Errorf("interface %q not found", name)
+    }
+    return iface, nil
+}
+```
+
+This enables tests like `TestXDP_AttachToNonExistentInterface` to verify that attachment to unknown interfaces fails correctly.
 
 ## Test Patterns
 
@@ -354,47 +407,87 @@ This section outlines the comprehensive set of scenarios to test using the fake 
 | Max programs per dispatcher | Load MAX_PROGRAMS + 1 | Fails or creates new dispatcher |
 | Simulated memory exhaustion | `FailOnNthLoad` with ENOMEM | Proper error propagation |
 
-### Error Injection Methods Needed
+### Error Injection Methods
 
-To implement all scenarios, the fake kernel needs these injection points:
+The fake kernel supports these error injection points:
 
 ```go
-// Already implemented
-FailOnProgram(name string, err error)
-FailOnNthLoad(n int, err error)
+// Program load failures
+FailOnProgram(name string, err error)    // Fail when loading specific program
+FailOnNthLoad(n int, err error)          // Fail on Nth load attempt
 
-// Needed for attach failures
-FailOnAttach(attachType string, err error)
-FailOnNthAttach(n int, err error)
+// Attach failures
+FailOnAttach(attachType string, err error)  // Fail specific attach type
 
-// Needed for detach failures
-FailOnDetach(linkID uint32, err error)
-
-// Needed for unload failures
-FailOnUnload(kernelID uint32, err error)
-
-// Needed for dispatcher scenarios
-FailOnDispatcherCreate(ifindex int, err error)
-FailOnExtensionAttach(position int, err error)
-FailOnDispatcherCleanup(ifindex int, err error)
+// Detach failures
+FailOnDetach(linkID uint32, err error)   // Fail when detaching specific link
 ```
 
-### Implementation Priority
+### Implementation Status
 
-**High Priority** (core correctness):
-- [ ] Batch load rollback (implemented)
-- [ ] Attach failure after successful load
-- [ ] Unload with active links
-- [ ] Constraint validation (duplicate names, invalid types)
+**Implemented Tests:**
 
-**Medium Priority** (robustness):
-- [ ] DB save failures with kernel rollback
-- [ ] Detach failures
-- [ ] Dispatcher creation/cleanup failures
+| Category | Test | Status |
+|----------|------|--------|
+| **Program Lifecycle** | | |
+| Load single program | `TestLoadProgram_WithValidRequest_Succeeds` | Done |
+| Load with duplicate name | `TestLoadProgram_WithDuplicateName_IsRejected` | Done |
+| Load with empty name | `TestLoadProgram_WithEmptyName_IsRejected` | Done |
+| Unload existing program | `TestUnloadProgram_WhenProgramExists_RemovesIt` | Done |
+| Unload non-existent | `TestUnloadProgram_WhenProgramDoesNotExist_ReturnsNotFound` | Done |
+| Unload with active links | `TestUnloadProgram_WithActiveLinks_DetachesLinksThenUnloads` | Done |
+| **Batch Load Rollback** | | |
+| Fail 2nd of 2 | `TestLoadProgram_PartialFailure_SecondProgramFails` | Done |
+| Fail 3rd of 3 | `TestLoadProgram_PartialFailure_ThirdOfThreeFails` | Done |
+| Fail 1st | `TestLoadProgram_PartialFailure_FirstProgramFails` | Done |
+| Fail Nth | `TestLoadProgram_FailOnNthLoad` | Done |
+| **Attach Failures** | | |
+| Attach after load fails | `TestAttachTracepoint_WhenAttachFails_ProgramRemainsLoaded` | Done |
+| Attach to non-existent program | `TestAttach_ToNonExistentProgram_ReturnsNotFound` | Done |
+| **Detach** | | |
+| Detach non-existent link | `TestDetach_NonExistentLink_ReturnsNotFound` | Done |
+| Detach existing link | `TestDetach_ExistingLink_Succeeds` | Done |
+| Multiple links same program | `TestMultipleLinks_SameProgram_AllDetachable` | Done |
+| Detach kernel failure | `TestDetach_KernelFailure_ReturnsError` | Done |
+| **XDP Lifecycle** | | |
+| First attach | `TestXDPDispatcher_FirstAttachCreatesDispatcher` | Done |
+| Multiple attaches | `TestXDPDispatcher_MultipleAttachesCreateMultipleLinks` | Done |
+| Detach decrements | `TestXDPDispatcher_DetachDecrementsLinkCount` | Done |
+| Full lifecycle | `TestXDPDispatcher_FullLifecycle` | Done |
+| Non-existent interface | `TestXDP_AttachToNonExistentInterface` | Done |
+| **TC Lifecycle** | | |
+| First attach | `TestTC_FirstAttachCreatesLink` | Done |
+| Ingress and egress | `TestTC_IngressAndEgressDirections` | Done |
+| Invalid direction | `TestTC_InvalidDirection` | Done |
+| Non-existent interface | `TestTC_AttachToNonExistentInterface` | Done |
+| Full lifecycle | `TestTC_FullLifecycle` | Done |
+| **TCX Lifecycle** | | |
+| First attach | `TestTCX_FirstAttachCreatesLink` | Done |
+| Ingress and egress | `TestTCX_IngressAndEgressDirections` | Done |
+| Invalid direction | `TestTCX_InvalidDirection` | Done |
+| Non-existent interface | `TestTCX_AttachToNonExistentInterface` | Done |
+| Full lifecycle | `TestTCX_FullLifecycle` | Done |
+| **Fentry Lifecycle** | | |
+| Attach succeeds | `TestFentry_AttachSucceeds` | Done |
+| Attach without FnName | `TestFentry_AttachWithoutFnName_Fails` | Done |
+| Full lifecycle | `TestFentry_FullLifecycle` | Done |
+| **Fexit Lifecycle** | | |
+| Attach succeeds | `TestFexit_AttachSucceeds` | Done |
+| Attach without FnName | `TestFexit_AttachWithoutFnName_Fails` | Done |
+| Full lifecycle | `TestFexit_FullLifecycle` | Done |
+| **Constraint Validation** | | |
+| Invalid program type | `TestLoadProgram_WithInvalidProgramType_IsRejected` | Done |
+| Unspecified program type | `TestLoadProgram_WithUnspecifiedProgramType_IsRejected` | Done |
+| All program types round-trip | `TestLoadProgram_AllProgramTypes_RoundTrip` | Done |
 
-**Lower Priority** (edge cases):
-- [ ] State consistency / reconciliation scenarios
-- [ ] Resource limit scenarios
+**Remaining Scenarios:**
+
+| Priority | Scenario | Status |
+|----------|----------|--------|
+| Medium | DB save failures with kernel rollback | Not implemented |
+| Medium | Dispatcher creation/cleanup failures | Not implemented |
+| Lower | State consistency / reconciliation | Not implemented |
+| Lower | Resource limit scenarios | Not implemented |
 
 ## Related Files
 
