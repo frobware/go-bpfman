@@ -75,6 +75,9 @@ type fakeKernel struct {
 
 	// Attach error injection
 	failOnAttach map[string]error // fail attach by type (e.g., "tracepoint", "kprobe")
+
+	// Detach error injection
+	failOnDetach map[uint32]error // fail detach by link ID
 }
 
 // fakeProgram stores program data for the fake kernel.
@@ -126,6 +129,7 @@ func newFakeKernel() *fakeKernel {
 		links:         make(map[uint32]*bpfman.AttachedLink),
 		failOnProgram: make(map[string]error),
 		failOnAttach:  make(map[string]error),
+		failOnDetach:  make(map[uint32]error),
 	}
 	fk.nextID.Store(100)
 	return fk
@@ -169,6 +173,13 @@ func (f *fakeKernel) FailOnAttach(attachType string, err error) {
 	f.failOnAttach[attachType] = err
 }
 
+// FailOnDetach configures the kernel to fail when detaching a specific link ID.
+func (f *fakeKernel) FailOnDetach(linkID uint32, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.failOnDetach[linkID] = err
+}
+
 // Reset clears all recorded operations and error injection settings.
 func (f *fakeKernel) Reset() {
 	f.mu.Lock()
@@ -176,6 +187,7 @@ func (f *fakeKernel) Reset() {
 	f.ops = nil
 	f.failOnProgram = make(map[string]error)
 	f.failOnAttach = make(map[string]error)
+	f.failOnDetach = make(map[uint32]error)
 	f.failOnNthLoad = 0
 	f.loadCount = 0
 }
@@ -478,6 +490,14 @@ func (f *fakeKernel) AttachFexit(progPinPath, fnName, linkPinPath string) (bpfma
 func (f *fakeKernel) DetachLink(linkPinPath string) error {
 	for id, link := range f.links {
 		if link.PinPath == linkPinPath {
+			// Check error injection
+			f.mu.Lock()
+			failErr := f.failOnDetach[id]
+			f.mu.Unlock()
+			if failErr != nil {
+				f.recordOp("detach", linkPinPath, id, failErr)
+				return failErr
+			}
 			delete(f.links, id)
 			f.recordOp("detach", linkPinPath, id, nil)
 			return nil
@@ -1651,4 +1671,232 @@ func TestLoadProgram_WithEmptyName_IsRejected(t *testing.T) {
 
 	// Verify clean state
 	fix.AssertCleanState()
+}
+
+// =============================================================================
+// Detach Tests
+// =============================================================================
+
+// TestDetach_NonExistentLink_ReturnsNotFound verifies that:
+//
+//	Given an empty server with no links,
+//	When I attempt to detach a non-existent link ID,
+//	Then the server returns a NotFound error.
+func TestDetach_NonExistentLink_ReturnsNotFound(t *testing.T) {
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	// Attempt to detach non-existent link ID 999
+	_, err := fix.Server.Detach(ctx, &pb.DetachRequest{LinkId: 999})
+	require.Error(t, err, "Detach of non-existent link should fail")
+
+	// Verify it's a gRPC NotFound error
+	st, ok := status.FromError(err)
+	require.True(t, ok, "expected gRPC status error")
+	assert.Equal(t, codes.NotFound, st.Code(), "expected NotFound status code")
+
+	// Verify clean state
+	fix.AssertCleanState()
+}
+
+// TestDetach_ExistingLink_Succeeds verifies that:
+//
+//	Given a program with an active link,
+//	When I detach the link,
+//	Then the detach succeeds,
+//	And the link is removed,
+//	And the program remains loaded.
+func TestDetach_ExistingLink_Succeeds(t *testing.T) {
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	// Load a tracepoint program
+	loadReq := &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_File{File: "/path/to/tracepoint.o"},
+		},
+		Info: []*pb.LoadInfo{
+			{Name: "tp_prog", ProgramType: pb.BpfmanProgramType_TRACEPOINT},
+		},
+		Metadata: map[string]string{
+			"bpfman.io/ProgramName": "detach-test",
+		},
+	}
+
+	loadResp, err := fix.Server.Load(ctx, loadReq)
+	require.NoError(t, err, "Load should succeed")
+	kernelID := loadResp.Programs[0].KernelInfo.Id
+
+	// Attach to a tracepoint
+	attachReq := &pb.AttachRequest{
+		Id: kernelID,
+		Attach: &pb.AttachInfo{
+			Info: &pb.AttachInfo_TracepointAttachInfo{
+				TracepointAttachInfo: &pb.TracepointAttachInfo{
+					Tracepoint: "syscalls/sys_enter_read",
+				},
+			},
+		},
+	}
+
+	attachResp, err := fix.Server.Attach(ctx, attachReq)
+	require.NoError(t, err, "Attach should succeed")
+	linkID := attachResp.LinkId
+
+	// Verify we have 1 program and 1 link
+	assert.Equal(t, 1, fix.Kernel.ProgramCount(), "should have 1 program")
+	assert.Equal(t, 1, len(fix.Kernel.links), "should have 1 link")
+
+	// Detach the link
+	_, err = fix.Server.Detach(ctx, &pb.DetachRequest{LinkId: linkID})
+	require.NoError(t, err, "Detach should succeed")
+
+	// Verify link is removed but program remains
+	assert.Equal(t, 1, fix.Kernel.ProgramCount(), "program should still be loaded")
+	assert.Equal(t, 0, len(fix.Kernel.links), "link should be removed")
+
+	// Verify operation sequence
+	ops := fix.Kernel.Operations()
+	assert.Equal(t, "load", ops[0].Op, "first op should be load")
+	assert.Equal(t, "attach", ops[1].Op, "second op should be attach")
+	assert.Equal(t, "detach", ops[2].Op, "third op should be detach")
+}
+
+// TestMultipleLinks_SameProgram_AllDetachable verifies that:
+//
+//	Given a program with multiple active links,
+//	When I detach them one by one,
+//	Then each detach succeeds,
+//	And the program remains loaded until explicitly unloaded.
+func TestMultipleLinks_SameProgram_AllDetachable(t *testing.T) {
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	// Load a tracepoint program
+	loadReq := &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_File{File: "/path/to/tracepoint.o"},
+		},
+		Info: []*pb.LoadInfo{
+			{Name: "tp_prog", ProgramType: pb.BpfmanProgramType_TRACEPOINT},
+		},
+		Metadata: map[string]string{
+			"bpfman.io/ProgramName": "multi-link-test",
+		},
+	}
+
+	loadResp, err := fix.Server.Load(ctx, loadReq)
+	require.NoError(t, err, "Load should succeed")
+	kernelID := loadResp.Programs[0].KernelInfo.Id
+
+	// Attach to multiple tracepoints
+	tracepoints := []string{
+		"syscalls/sys_enter_read",
+		"syscalls/sys_enter_write",
+		"syscalls/sys_enter_open",
+	}
+
+	var linkIDs []uint32
+	for _, tp := range tracepoints {
+		attachReq := &pb.AttachRequest{
+			Id: kernelID,
+			Attach: &pb.AttachInfo{
+				Info: &pb.AttachInfo_TracepointAttachInfo{
+					TracepointAttachInfo: &pb.TracepointAttachInfo{
+						Tracepoint: tp,
+					},
+				},
+			},
+		}
+
+		attachResp, err := fix.Server.Attach(ctx, attachReq)
+		require.NoError(t, err, "Attach to %s should succeed", tp)
+		linkIDs = append(linkIDs, attachResp.LinkId)
+	}
+
+	// Verify we have 1 program and 3 links
+	assert.Equal(t, 1, fix.Kernel.ProgramCount(), "should have 1 program")
+	assert.Equal(t, 3, len(fix.Kernel.links), "should have 3 links")
+
+	// Detach links one by one
+	for i, linkID := range linkIDs {
+		_, err = fix.Server.Detach(ctx, &pb.DetachRequest{LinkId: linkID})
+		require.NoError(t, err, "Detach link %d should succeed", i)
+		assert.Equal(t, 2-i, len(fix.Kernel.links), "should have %d links remaining", 2-i)
+	}
+
+	// Program should still be loaded
+	assert.Equal(t, 1, fix.Kernel.ProgramCount(), "program should still be loaded")
+
+	// Clean up by unloading the program
+	_, err = fix.Server.Unload(ctx, &pb.UnloadRequest{Id: kernelID})
+	require.NoError(t, err, "Unload should succeed")
+
+	// Now verify clean state
+	fix.AssertCleanState()
+}
+
+// TestDetach_KernelFailure_ReturnsError verifies that:
+//
+//	Given a program with an active link,
+//	When I attempt to detach and the kernel fails,
+//	Then the detach operation returns an error,
+//	And the link remains in the kernel (potential inconsistent state).
+//
+// Note: This tests the edge case where kernel detach fails. The link may
+// remain in the database even though the kernel operation failed, which
+// could lead to state inconsistency requiring reconciliation.
+func TestDetach_KernelFailure_ReturnsError(t *testing.T) {
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	// Load a tracepoint program
+	loadReq := &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_File{File: "/path/to/tracepoint.o"},
+		},
+		Info: []*pb.LoadInfo{
+			{Name: "tp_prog", ProgramType: pb.BpfmanProgramType_TRACEPOINT},
+		},
+		Metadata: map[string]string{
+			"bpfman.io/ProgramName": "detach-failure-test",
+		},
+	}
+
+	loadResp, err := fix.Server.Load(ctx, loadReq)
+	require.NoError(t, err, "Load should succeed")
+	kernelID := loadResp.Programs[0].KernelInfo.Id
+
+	// Attach to a tracepoint
+	attachReq := &pb.AttachRequest{
+		Id: kernelID,
+		Attach: &pb.AttachInfo{
+			Info: &pb.AttachInfo_TracepointAttachInfo{
+				TracepointAttachInfo: &pb.TracepointAttachInfo{
+					Tracepoint: "syscalls/sys_enter_close",
+				},
+			},
+		},
+	}
+
+	attachResp, err := fix.Server.Attach(ctx, attachReq)
+	require.NoError(t, err, "Attach should succeed")
+	linkID := attachResp.LinkId
+
+	// Configure kernel to fail on detach for this link
+	fix.Kernel.FailOnDetach(linkID, fmt.Errorf("injected detach failure"))
+
+	// Attempt to detach - should fail
+	_, err = fix.Server.Detach(ctx, &pb.DetachRequest{LinkId: linkID})
+	require.Error(t, err, "Detach should fail due to kernel error")
+	assert.Contains(t, err.Error(), "injected detach failure", "error should mention injected failure")
+
+	// Verify the link still exists in the fake kernel (was not deleted)
+	assert.Equal(t, 1, len(fix.Kernel.links), "link should still exist in kernel after failed detach")
+
+	// Verify operation sequence
+	ops := fix.Kernel.Operations()
+	lastOp := ops[len(ops)-1]
+	assert.Equal(t, "detach", lastOp.Op, "last op should be detach")
+	assert.NotNil(t, lastOp.Err, "last op should have recorded the error")
 }
