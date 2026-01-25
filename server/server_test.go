@@ -3166,3 +3166,492 @@ func TestFexit_FullLifecycle(t *testing.T) {
 	assert.Equal(t, 0, fix.Kernel.LinkCount(), "should have 0 links")
 	t.Log("Step 5: Verified clean state - test passed")
 }
+
+// =============================================================================
+// Kprobe/Kretprobe Lifecycle Tests
+// =============================================================================
+//
+// These tests verify the kprobe lifecycle. Kprobe programs attach to kernel
+// function entry points. The target function is specified at attach time.
+
+// TestKprobe_AttachSucceeds verifies that:
+//
+//	Given a loaded kprobe program,
+//	When I attach it with a function name,
+//	Then a link is created.
+func TestKprobe_AttachSucceeds(t *testing.T) {
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	// Load a kprobe program
+	loadReq := &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_File{File: "/path/to/kprobe.o"},
+		},
+		Info: []*pb.LoadInfo{
+			{
+				Name:        "kprobe_prog",
+				ProgramType: pb.BpfmanProgramType_KPROBE,
+			},
+		},
+		Metadata: map[string]string{
+			"bpfman.io/ProgramName": "kprobe-attach-test",
+		},
+	}
+
+	loadResp, err := fix.Server.Load(ctx, loadReq)
+	require.NoError(t, err, "Load should succeed")
+	programID := loadResp.Programs[0].KernelInfo.Id
+
+	// Attach kprobe with function name
+	attachReq := &pb.AttachRequest{
+		Id: programID,
+		Attach: &pb.AttachInfo{
+			Info: &pb.AttachInfo_KprobeAttachInfo{
+				KprobeAttachInfo: &pb.KprobeAttachInfo{
+					FnName: "do_sys_open",
+				},
+			},
+		},
+	}
+
+	attachResp, err := fix.Server.Attach(ctx, attachReq)
+	require.NoError(t, err, "AttachKprobe should succeed")
+	require.NotZero(t, attachResp.LinkId, "link ID should be non-zero")
+
+	// Verify link exists in fake kernel
+	assert.Equal(t, 1, fix.Kernel.LinkCount(), "should have 1 link in kernel")
+}
+
+// TestKprobe_AttachWithoutFnName_Fails verifies that:
+//
+//	Given a loaded kprobe program,
+//	When I try to attach without a function name,
+//	Then the operation fails.
+func TestKprobe_AttachWithoutFnName_Fails(t *testing.T) {
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	// Load a kprobe program
+	loadReq := &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_File{File: "/path/to/kprobe.o"},
+		},
+		Info: []*pb.LoadInfo{
+			{
+				Name:        "kprobe_prog",
+				ProgramType: pb.BpfmanProgramType_KPROBE,
+			},
+		},
+		Metadata: map[string]string{
+			"bpfman.io/ProgramName": "kprobe-no-fnname-test",
+		},
+	}
+
+	loadResp, err := fix.Server.Load(ctx, loadReq)
+	require.NoError(t, err, "Load should succeed")
+	programID := loadResp.Programs[0].KernelInfo.Id
+
+	// Attempt to attach without function name
+	attachReq := &pb.AttachRequest{
+		Id: programID,
+		Attach: &pb.AttachInfo{
+			Info: &pb.AttachInfo_KprobeAttachInfo{
+				KprobeAttachInfo: &pb.KprobeAttachInfo{
+					// FnName not set
+				},
+			},
+		},
+	}
+
+	_, err = fix.Server.Attach(ctx, attachReq)
+	require.Error(t, err, "Attach should fail without FnName")
+	assert.Contains(t, err.Error(), "fn_name", "error should mention fn_name")
+
+	// No links should exist
+	assert.Equal(t, 0, fix.Kernel.LinkCount(), "no links should exist")
+}
+
+// TestKprobe_FullLifecycle verifies the complete kprobe lifecycle.
+func TestKprobe_FullLifecycle(t *testing.T) {
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	// Step 1: Load kprobe program
+	loadReq := &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_File{File: "/path/to/kprobe.o"},
+		},
+		Info: []*pb.LoadInfo{
+			{
+				Name:        "kprobe_prog",
+				ProgramType: pb.BpfmanProgramType_KPROBE,
+			},
+		},
+		Metadata: map[string]string{
+			"bpfman.io/ProgramName": "kprobe-lifecycle-test",
+		},
+	}
+
+	loadResp, err := fix.Server.Load(ctx, loadReq)
+	require.NoError(t, err, "Load should succeed")
+	programID := loadResp.Programs[0].KernelInfo.Id
+
+	// Step 2: Attach
+	attachReq := &pb.AttachRequest{
+		Id: programID,
+		Attach: &pb.AttachInfo{
+			Info: &pb.AttachInfo_KprobeAttachInfo{
+				KprobeAttachInfo: &pb.KprobeAttachInfo{
+					FnName: "do_sys_open",
+				},
+			},
+		},
+	}
+
+	attachResp, err := fix.Server.Attach(ctx, attachReq)
+	require.NoError(t, err, "Attach should succeed")
+	linkID := attachResp.LinkId
+
+	// Verify state
+	assert.Equal(t, 1, fix.Kernel.ProgramCount(), "should have 1 program")
+	assert.Equal(t, 1, fix.Kernel.LinkCount(), "should have 1 link")
+
+	// Step 3: Detach
+	_, err = fix.Server.Detach(ctx, &pb.DetachRequest{LinkId: linkID})
+	require.NoError(t, err, "Detach should succeed")
+
+	assert.Equal(t, 0, fix.Kernel.LinkCount(), "should have 0 links after detach")
+
+	// Step 4: Unload
+	_, err = fix.Server.Unload(ctx, &pb.UnloadRequest{Id: programID})
+	require.NoError(t, err, "Unload should succeed")
+
+	// Step 5: Verify clean state
+	assert.Equal(t, 0, fix.Kernel.ProgramCount(), "should have 0 programs")
+	assert.Equal(t, 0, fix.Kernel.LinkCount(), "should have 0 links")
+}
+
+// =============================================================================
+// Uprobe/Uretprobe Lifecycle Tests
+// =============================================================================
+//
+// These tests verify the uprobe lifecycle. Uprobe programs attach to user-space
+// function entry points. The target binary is specified at attach time.
+
+// TestUprobe_AttachSucceeds verifies that:
+//
+//	Given a loaded uprobe program,
+//	When I attach it with a target,
+//	Then a link is created.
+func TestUprobe_AttachSucceeds(t *testing.T) {
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	// Load a uprobe program
+	loadReq := &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_File{File: "/path/to/uprobe.o"},
+		},
+		Info: []*pb.LoadInfo{
+			{
+				Name:        "uprobe_prog",
+				ProgramType: pb.BpfmanProgramType_UPROBE,
+			},
+		},
+		Metadata: map[string]string{
+			"bpfman.io/ProgramName": "uprobe-attach-test",
+		},
+	}
+
+	loadResp, err := fix.Server.Load(ctx, loadReq)
+	require.NoError(t, err, "Load should succeed")
+	programID := loadResp.Programs[0].KernelInfo.Id
+
+	// Attach uprobe with target
+	attachReq := &pb.AttachRequest{
+		Id: programID,
+		Attach: &pb.AttachInfo{
+			Info: &pb.AttachInfo_UprobeAttachInfo{
+				UprobeAttachInfo: &pb.UprobeAttachInfo{
+					Target: "/usr/lib/libc.so.6",
+					FnName: stringPtr("malloc"),
+				},
+			},
+		},
+	}
+
+	attachResp, err := fix.Server.Attach(ctx, attachReq)
+	require.NoError(t, err, "AttachUprobe should succeed")
+	require.NotZero(t, attachResp.LinkId, "link ID should be non-zero")
+
+	// Verify link exists in fake kernel
+	assert.Equal(t, 1, fix.Kernel.LinkCount(), "should have 1 link in kernel")
+}
+
+// TestUprobe_AttachWithoutTarget_Fails verifies that:
+//
+//	Given a loaded uprobe program,
+//	When I try to attach without a target,
+//	Then the operation fails.
+func TestUprobe_AttachWithoutTarget_Fails(t *testing.T) {
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	// Load a uprobe program
+	loadReq := &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_File{File: "/path/to/uprobe.o"},
+		},
+		Info: []*pb.LoadInfo{
+			{
+				Name:        "uprobe_prog",
+				ProgramType: pb.BpfmanProgramType_UPROBE,
+			},
+		},
+		Metadata: map[string]string{
+			"bpfman.io/ProgramName": "uprobe-no-target-test",
+		},
+	}
+
+	loadResp, err := fix.Server.Load(ctx, loadReq)
+	require.NoError(t, err, "Load should succeed")
+	programID := loadResp.Programs[0].KernelInfo.Id
+
+	// Attempt to attach without target
+	attachReq := &pb.AttachRequest{
+		Id: programID,
+		Attach: &pb.AttachInfo{
+			Info: &pb.AttachInfo_UprobeAttachInfo{
+				UprobeAttachInfo: &pb.UprobeAttachInfo{
+					// Target not set
+				},
+			},
+		},
+	}
+
+	_, err = fix.Server.Attach(ctx, attachReq)
+	require.Error(t, err, "Attach should fail without target")
+	assert.Contains(t, err.Error(), "target", "error should mention target")
+
+	// No links should exist
+	assert.Equal(t, 0, fix.Kernel.LinkCount(), "no links should exist")
+}
+
+// TestUprobe_FullLifecycle verifies the complete uprobe lifecycle.
+func TestUprobe_FullLifecycle(t *testing.T) {
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	// Step 1: Load uprobe program
+	loadReq := &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_File{File: "/path/to/uprobe.o"},
+		},
+		Info: []*pb.LoadInfo{
+			{
+				Name:        "uprobe_prog",
+				ProgramType: pb.BpfmanProgramType_UPROBE,
+			},
+		},
+		Metadata: map[string]string{
+			"bpfman.io/ProgramName": "uprobe-lifecycle-test",
+		},
+	}
+
+	loadResp, err := fix.Server.Load(ctx, loadReq)
+	require.NoError(t, err, "Load should succeed")
+	programID := loadResp.Programs[0].KernelInfo.Id
+
+	// Step 2: Attach
+	attachReq := &pb.AttachRequest{
+		Id: programID,
+		Attach: &pb.AttachInfo{
+			Info: &pb.AttachInfo_UprobeAttachInfo{
+				UprobeAttachInfo: &pb.UprobeAttachInfo{
+					Target: "/usr/lib/libc.so.6",
+					FnName: stringPtr("malloc"),
+				},
+			},
+		},
+	}
+
+	attachResp, err := fix.Server.Attach(ctx, attachReq)
+	require.NoError(t, err, "Attach should succeed")
+	linkID := attachResp.LinkId
+
+	// Verify state
+	assert.Equal(t, 1, fix.Kernel.ProgramCount(), "should have 1 program")
+	assert.Equal(t, 1, fix.Kernel.LinkCount(), "should have 1 link")
+
+	// Step 3: Detach
+	_, err = fix.Server.Detach(ctx, &pb.DetachRequest{LinkId: linkID})
+	require.NoError(t, err, "Detach should succeed")
+
+	assert.Equal(t, 0, fix.Kernel.LinkCount(), "should have 0 links after detach")
+
+	// Step 4: Unload
+	_, err = fix.Server.Unload(ctx, &pb.UnloadRequest{Id: programID})
+	require.NoError(t, err, "Unload should succeed")
+
+	// Step 5: Verify clean state
+	assert.Equal(t, 0, fix.Kernel.ProgramCount(), "should have 0 programs")
+	assert.Equal(t, 0, fix.Kernel.LinkCount(), "should have 0 links")
+}
+
+// stringPtr is a helper to create a pointer to a string.
+func stringPtr(s string) *string {
+	return &s
+}
+
+// =============================================================================
+// Link Listing Tests
+// =============================================================================
+//
+// These tests verify the ListLinks and GetLink operations.
+
+// TestListLinks_ReturnsAllLinks verifies that:
+//
+//	Given multiple attached links,
+//	When I list links,
+//	Then all links are returned.
+func TestListLinks_ReturnsAllLinks(t *testing.T) {
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	// Load a tracepoint program
+	loadReq := &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_File{File: "/path/to/tracepoint.o"},
+		},
+		Info: []*pb.LoadInfo{
+			{Name: "tp_prog", ProgramType: pb.BpfmanProgramType_TRACEPOINT},
+		},
+		Metadata: map[string]string{
+			"bpfman.io/ProgramName": "list-links-test",
+		},
+	}
+
+	loadResp, err := fix.Server.Load(ctx, loadReq)
+	require.NoError(t, err, "Load should succeed")
+	programID := loadResp.Programs[0].KernelInfo.Id
+
+	// Attach multiple times to different tracepoints
+	tracepoints := []string{
+		"syscalls/sys_enter_open",
+		"syscalls/sys_enter_close",
+		"syscalls/sys_enter_read",
+	}
+
+	var linkIDs []uint32
+	for _, tp := range tracepoints {
+		attachReq := &pb.AttachRequest{
+			Id: programID,
+			Attach: &pb.AttachInfo{
+				Info: &pb.AttachInfo_TracepointAttachInfo{
+					TracepointAttachInfo: &pb.TracepointAttachInfo{
+						Tracepoint: tp,
+					},
+				},
+			},
+		}
+		attachResp, err := fix.Server.Attach(ctx, attachReq)
+		require.NoError(t, err, "Attach to %s should succeed", tp)
+		linkIDs = append(linkIDs, attachResp.LinkId)
+	}
+
+	// List all links
+	listResp, err := fix.Server.ListLinks(ctx, &pb.ListLinksRequest{})
+	require.NoError(t, err, "ListLinks should succeed")
+	assert.Len(t, listResp.Links, 3, "should have 3 links")
+
+	// Verify all link IDs are present
+	returnedIDs := make(map[uint32]bool)
+	for _, link := range listResp.Links {
+		returnedIDs[link.Summary.KernelLinkId] = true
+	}
+	for _, expectedID := range linkIDs {
+		assert.True(t, returnedIDs[expectedID], "link ID %d should be in response", expectedID)
+	}
+}
+
+// TestListLinks_EmptyWhenNoLinks verifies that:
+//
+//	Given no attached links,
+//	When I list links,
+//	Then an empty list is returned.
+func TestListLinks_EmptyWhenNoLinks(t *testing.T) {
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	// List links without any attachments
+	listResp, err := fix.Server.ListLinks(ctx, &pb.ListLinksRequest{})
+	require.NoError(t, err, "ListLinks should succeed")
+	assert.Empty(t, listResp.Links, "should have 0 links")
+}
+
+// TestGetLink_ReturnsLinkDetails verifies that:
+//
+//	Given an attached link,
+//	When I get link details,
+//	Then the correct details are returned.
+func TestGetLink_ReturnsLinkDetails(t *testing.T) {
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	// Load and attach a tracepoint program
+	loadReq := &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_File{File: "/path/to/tracepoint.o"},
+		},
+		Info: []*pb.LoadInfo{
+			{Name: "tp_prog", ProgramType: pb.BpfmanProgramType_TRACEPOINT},
+		},
+		Metadata: map[string]string{
+			"bpfman.io/ProgramName": "get-link-test",
+		},
+	}
+
+	loadResp, err := fix.Server.Load(ctx, loadReq)
+	require.NoError(t, err, "Load should succeed")
+	programID := loadResp.Programs[0].KernelInfo.Id
+
+	attachReq := &pb.AttachRequest{
+		Id: programID,
+		Attach: &pb.AttachInfo{
+			Info: &pb.AttachInfo_TracepointAttachInfo{
+				TracepointAttachInfo: &pb.TracepointAttachInfo{
+					Tracepoint: "syscalls/sys_enter_open",
+				},
+			},
+		},
+	}
+
+	attachResp, err := fix.Server.Attach(ctx, attachReq)
+	require.NoError(t, err, "Attach should succeed")
+	linkID := attachResp.LinkId
+
+	// Get link details
+	getResp, err := fix.Server.GetLink(ctx, &pb.GetLinkRequest{KernelLinkId: linkID})
+	require.NoError(t, err, "GetLink should succeed")
+	assert.Equal(t, linkID, getResp.Link.Summary.KernelLinkId, "link ID should match")
+	assert.Equal(t, pb.BpfmanLinkType_LINK_TYPE_TRACEPOINT, getResp.Link.Summary.LinkType, "link type should be tracepoint")
+}
+
+// TestGetLink_NonExistentLink_ReturnsNotFound verifies that:
+//
+//	Given no attached links,
+//	When I try to get a non-existent link,
+//	Then NotFound is returned.
+func TestGetLink_NonExistentLink_ReturnsNotFound(t *testing.T) {
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	// Try to get non-existent link
+	_, err := fix.Server.GetLink(ctx, &pb.GetLinkRequest{KernelLinkId: 99999})
+	require.Error(t, err, "GetLink should fail for non-existent link")
+
+	st, ok := status.FromError(err)
+	require.True(t, ok, "error should be a gRPC status")
+	assert.Equal(t, codes.NotFound, st.Code(), "should return NotFound")
+}
