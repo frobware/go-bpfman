@@ -1063,7 +1063,11 @@ func (k *kernelAdapter) AttachXDPDispatcherWithPaths(ifindex int, progPinPath, l
 // specifically as BPF_PROG_TYPE_EXT with the dispatcher as the attach target.
 // The same ELF bytecode used for direct XDP attachment is reloaded with
 // different type settings.
-func (k *kernelAdapter) AttachXDPExtension(dispatcherPinPath, objectPath, programName string, position int, linkPinPath string) (bpfman.ManagedLink, error) {
+//
+// The mapPinDir parameter specifies the directory containing the program's
+// pinned maps. These maps are loaded and passed as MapReplacements so the
+// extension program shares the same maps as the original loaded program.
+func (k *kernelAdapter) AttachXDPExtension(dispatcherPinPath, objectPath, programName string, position int, linkPinPath, mapPinDir string) (bpfman.ManagedLink, error) {
 	// Load the pinned dispatcher to use as attach target
 	dispatcherProg, err := ebpf.LoadPinnedProgram(dispatcherPinPath, nil)
 	if err != nil {
@@ -1088,19 +1092,57 @@ func (k *kernelAdapter) AttachXDPExtension(dispatcherPinPath, objectPath, progra
 	progSpec.AttachTarget = dispatcherProg
 	progSpec.AttachTo = dispatcher.SlotName(position)
 
-	// Clear map pinning flags - we don't need to pin maps for extensions
-	// as the main program already has them pinned.
+	// Load pinned maps from the original program's map directory.
+	// This ensures the extension program uses the same maps that were
+	// created during the initial Load and are exposed via CSI.
+	mapReplacements := make(map[string]*ebpf.Map)
+	if mapPinDir != "" {
+		entries, err := os.ReadDir(mapPinDir)
+		if err != nil {
+			k.logger.Warn("failed to read map pin directory", "dir", mapPinDir, "error", err)
+		} else {
+			for _, entry := range entries {
+				if entry.IsDir() {
+					continue
+				}
+				mapPath := filepath.Join(mapPinDir, entry.Name())
+				m, err := ebpf.LoadPinnedMap(mapPath, nil)
+				if err != nil {
+					k.logger.Warn("failed to load pinned map", "path", mapPath, "error", err)
+					continue
+				}
+				// Use the original map name (entry.Name() may be sanitised)
+				mapReplacements[entry.Name()] = m
+				k.logger.Debug("loaded pinned map for extension", "name", entry.Name(), "path", mapPath)
+			}
+		}
+	}
+
+	// Ensure we close loaded maps on error or when done
+	closeMapReplacements := func() {
+		for _, m := range mapReplacements {
+			m.Close()
+		}
+	}
+
+	// Clear map pinning flags - maps will come from MapReplacements
 	for _, mapSpec := range collSpec.Maps {
 		mapSpec.Pinning = ebpf.PinNone
 	}
 
-	// Load the collection with the modified program spec.
-	// This ensures any maps the program depends on are also loaded.
-	coll, err := ebpf.NewCollection(collSpec)
+	// Load the collection with map replacements from the original program.
+	// This ensures the extension uses the same maps that were pinned during Load.
+	coll, err := ebpf.NewCollectionWithOptions(collSpec, ebpf.CollectionOptions{
+		MapReplacements: mapReplacements,
+	})
 	if err != nil {
+		closeMapReplacements()
 		return bpfman.ManagedLink{}, fmt.Errorf("load extension collection: %w", err)
 	}
 	defer coll.Close()
+	// Note: maps in mapReplacements are now owned by the collection or
+	// were used as replacements. We don't close them here as the collection
+	// manages their lifecycle.
 
 	// Get the loaded extension program
 	extensionProg := coll.Programs[programName]
@@ -1299,7 +1341,11 @@ func (k *kernelAdapter) AttachTCDispatcherWithPaths(ifindex int, progPinPath, li
 
 // AttachTCExtension loads a program from ELF as Extension type and attaches
 // it to a TC dispatcher slot. This follows the same pattern as XDP extension.
-func (k *kernelAdapter) AttachTCExtension(dispatcherPinPath, objectPath, programName string, position int, linkPinPath string) (bpfman.ManagedLink, error) {
+//
+// The mapPinDir parameter specifies the directory containing the program's
+// pinned maps. These maps are loaded and passed as MapReplacements so the
+// extension program shares the same maps as the original loaded program.
+func (k *kernelAdapter) AttachTCExtension(dispatcherPinPath, objectPath, programName string, position int, linkPinPath, mapPinDir string) (bpfman.ManagedLink, error) {
 	// Load the pinned dispatcher to use as attach target
 	dispatcherProg, err := ebpf.LoadPinnedProgram(dispatcherPinPath, nil)
 	if err != nil {
@@ -1324,15 +1370,49 @@ func (k *kernelAdapter) AttachTCExtension(dispatcherPinPath, objectPath, program
 	progSpec.AttachTarget = dispatcherProg
 	progSpec.AttachTo = dispatcher.SlotName(position)
 
-	// Clear map pinning flags - we don't need to pin maps for extensions
-	// as the main program already has them pinned.
+	// Load pinned maps from the original program's map directory.
+	// This ensures the extension program uses the same maps that were
+	// created during the initial Load and are exposed via CSI.
+	mapReplacements := make(map[string]*ebpf.Map)
+	if mapPinDir != "" {
+		entries, err := os.ReadDir(mapPinDir)
+		if err != nil {
+			k.logger.Warn("failed to read map pin directory", "dir", mapPinDir, "error", err)
+		} else {
+			for _, entry := range entries {
+				if entry.IsDir() {
+					continue
+				}
+				mapPath := filepath.Join(mapPinDir, entry.Name())
+				m, err := ebpf.LoadPinnedMap(mapPath, nil)
+				if err != nil {
+					k.logger.Warn("failed to load pinned map", "path", mapPath, "error", err)
+					continue
+				}
+				mapReplacements[entry.Name()] = m
+				k.logger.Debug("loaded pinned map for TC extension", "name", entry.Name(), "path", mapPath)
+			}
+		}
+	}
+
+	// Ensure we close loaded maps on error
+	closeMapReplacements := func() {
+		for _, m := range mapReplacements {
+			m.Close()
+		}
+	}
+
+	// Clear map pinning flags - maps will come from MapReplacements
 	for _, mapSpec := range collSpec.Maps {
 		mapSpec.Pinning = ebpf.PinNone
 	}
 
-	// Load the collection with the modified program spec
-	coll, err := ebpf.NewCollection(collSpec)
+	// Load the collection with map replacements from the original program
+	coll, err := ebpf.NewCollectionWithOptions(collSpec, ebpf.CollectionOptions{
+		MapReplacements: mapReplacements,
+	})
 	if err != nil {
+		closeMapReplacements()
 		return bpfman.ManagedLink{}, fmt.Errorf("load TC extension collection: %w", err)
 	}
 	defer coll.Close()

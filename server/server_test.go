@@ -558,7 +558,7 @@ func (f *fakeKernel) AttachXDPDispatcherWithPaths(ifindex int, progPinPath, link
 	}, nil
 }
 
-func (f *fakeKernel) AttachXDPExtension(dispatcherPinPath, objectPath, programName string, position int, linkPinPath string) (bpfman.ManagedLink, error) {
+func (f *fakeKernel) AttachXDPExtension(dispatcherPinPath, objectPath, programName string, position int, linkPinPath, mapPinDir string) (bpfman.ManagedLink, error) {
 	id := f.nextID.Add(1)
 	// Store for DetachLink lookup
 	f.links[id] = &bpfman.AttachedLink{
@@ -590,7 +590,7 @@ func (f *fakeKernel) AttachTCDispatcherWithPaths(ifindex int, progPinPath, linkP
 	}, nil
 }
 
-func (f *fakeKernel) AttachTCExtension(dispatcherPinPath, objectPath, programName string, position int, linkPinPath string) (bpfman.ManagedLink, error) {
+func (f *fakeKernel) AttachTCExtension(dispatcherPinPath, objectPath, programName string, position int, linkPinPath, mapPinDir string) (bpfman.ManagedLink, error) {
 	id := f.nextID.Add(1)
 	// Store for DetachLink lookup
 	f.links[id] = &bpfman.AttachedLink{
@@ -958,12 +958,15 @@ func TestListPrograms_ReturnsAllFields(t *testing.T) {
 	assert.Equal(t, uint32(bpfman.ProgramTypeXDP), r2.KernelInfo.ProgramType, "program-two KernelInfo.ProgramType")
 }
 
-// TestLoadProgram_WithDuplicateName_IsRejected verifies that:
+// TestLoadProgram_WithDuplicateName_BothSucceed verifies that:
 //
 //	Given a server with one program already loaded using a name,
 //	When I attempt to load another program with the same name,
-//	Then the load fails with a unique constraint error.
-func TestLoadProgram_WithDuplicateName_IsRejected(t *testing.T) {
+//	Then both programs load successfully (duplicates are allowed).
+//
+// Multiple programs can share the same bpfman.io/ProgramName, e.g., when
+// loading multiple BPF programs from a single OCI image via the operator.
+func TestLoadProgram_WithDuplicateName_BothSucceed(t *testing.T) {
 	srv := newTestServer(t)
 	ctx := context.Background()
 
@@ -978,8 +981,9 @@ func TestLoadProgram_WithDuplicateName_IsRejected(t *testing.T) {
 			"bpfman.io/ProgramName": "shared-name",
 		},
 	}
-	_, err := srv.Load(ctx, firstReq)
+	resp1, err := srv.Load(ctx, firstReq)
 	require.NoError(t, err, "first Load failed")
+	require.Len(t, resp1.Programs, 1)
 
 	secondReq := &pb.LoadRequest{
 		Bytecode: &pb.BytecodeLocation{
@@ -992,12 +996,12 @@ func TestLoadProgram_WithDuplicateName_IsRejected(t *testing.T) {
 			"bpfman.io/ProgramName": "shared-name",
 		},
 	}
-	_, err = srv.Load(ctx, secondReq)
+	resp2, err := srv.Load(ctx, secondReq)
+	require.NoError(t, err, "second Load should succeed (duplicates allowed)")
+	require.Len(t, resp2.Programs, 1)
 
-	require.Error(t, err, "expected duplicate name to be rejected")
-	st, ok := status.FromError(err)
-	require.True(t, ok, "expected gRPC status error")
-	assert.Equal(t, codes.Internal, st.Code(), "expected Internal code")
+	// Verify both programs exist with different IDs
+	assert.NotEqual(t, resp1.Programs[0].KernelInfo.Id, resp2.Programs[0].KernelInfo.Id, "should be different programs")
 }
 
 // TestLoadProgram_WithDifferentNames_BothSucceed verifies that:

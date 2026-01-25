@@ -135,7 +135,9 @@ func TestForeignKey_CascadeDeleteRemovesMetadataIndex(t *testing.T) {
 	assert.Error(t, err, "expected error after CASCADE delete")
 }
 
-func TestUniqueIndex_ProgramNameEnforcesUniqueness(t *testing.T) {
+func TestProgramName_DuplicatesAllowed(t *testing.T) {
+	// Multiple programs can share the same bpfman.io/ProgramName, e.g., when
+	// loading multiple BPF programs from a single OCI image via the operator.
 	store, err := sqlite.NewInMemory(testLogger())
 	require.NoError(t, err, "failed to create store")
 	defer store.Close()
@@ -150,15 +152,14 @@ func TestUniqueIndex_ProgramNameEnforcesUniqueness(t *testing.T) {
 
 	require.NoError(t, store.Save(ctx, 100, prog1), "Save prog1 failed")
 
-	// Attempt to create second program with the same name.
+	// Create second program with the same name - this should succeed.
 	prog2 := testProgram()
 	prog2.UserMetadata = map[string]string{
-		"bpfman.io/ProgramName": "my-program", // duplicate
+		"bpfman.io/ProgramName": "my-program", // same name, allowed
 	}
 
 	err = store.Save(ctx, 200, prog2)
-	require.Error(t, err, "expected unique constraint violation")
-	assert.True(t, strings.Contains(err.Error(), "UNIQUE constraint failed"), "expected UNIQUE constraint error, got: %v", err)
+	require.NoError(t, err, "duplicate program names should be allowed")
 }
 
 func TestUniqueIndex_DifferentNamesAllowed(t *testing.T) {

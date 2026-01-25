@@ -842,6 +842,9 @@ func (m *Manager) AttachXDP(ctx context.Context, spec bpfman.XDPAttachSpec, opts
 		linkPinPath = extensionLinkPath
 	}
 
+	// COMPUTE: Calculate map pin directory for the original program
+	mapPinDir := filepath.Join(m.dirs.FS_MAPS, fmt.Sprintf("%d", programKernelID))
+
 	// KERNEL I/O: Attach user program as extension (returns ManagedLink)
 	link, err := m.kernel.AttachXDPExtension(
 		dispState.ProgPinPath,
@@ -849,6 +852,7 @@ func (m *Manager) AttachXDP(ctx context.Context, spec bpfman.XDPAttachSpec, opts
 		prog.ProgramName,
 		position,
 		linkPinPath,
+		mapPinDir,
 	)
 	if err != nil {
 		return bpfman.LinkSummary{}, fmt.Errorf("attach XDP extension to %s slot %d: %w", ifname, position, err)
@@ -1089,6 +1093,9 @@ func (m *Manager) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts b
 		linkPinPath = extensionLinkPath
 	}
 
+	// COMPUTE: Calculate map pin directory for the original program
+	mapPinDir := filepath.Join(m.dirs.FS_MAPS, fmt.Sprintf("%d", programKernelID))
+
 	// KERNEL I/O: Attach user program as extension (returns ManagedLink)
 	link, err := m.kernel.AttachTCExtension(
 		dispState.ProgPinPath,
@@ -1096,6 +1103,7 @@ func (m *Manager) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts b
 		prog.ProgramName,
 		position,
 		linkPinPath,
+		mapPinDir,
 	)
 	if err != nil {
 		return bpfman.LinkSummary{}, fmt.Errorf("attach TC extension to %s %s slot %d: %w", ifname, direction, position, err)
