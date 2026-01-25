@@ -10,6 +10,7 @@ import (
 
 	"github.com/frobware/go-bpfman"
 	"github.com/frobware/go-bpfman/interpreter"
+	"github.com/frobware/go-bpfman/manager"
 	pb "github.com/frobware/go-bpfman/server/pb"
 )
 
@@ -168,4 +169,166 @@ func TestLoadImage_PerProgramGlobalDataOverridesOpts(t *testing.T) {
 	require.NotNil(t, mock.lastLoadRequest, "Load should have been called")
 	assert.Equal(t, perProgramGlobalData, mock.lastLoadRequest.GlobalData,
 		"Per-program GlobalData should override opts GlobalData")
+}
+
+// TestLoad_PassesGlobalDataFromSpec verifies that LoadSpec.GlobalData()
+// is correctly passed to the pb.LoadRequest.
+func TestLoad_PassesGlobalDataFromSpec(t *testing.T) {
+	mock := &mockBpfmanClient{}
+	client := &remoteClient{
+		client: mock,
+	}
+
+	globalData := map[string][]byte{
+		"GLOBAL_u8":  {0x42},
+		"GLOBAL_u32": {0xDE, 0xAD, 0xBE, 0xEF},
+	}
+
+	spec, err := bpfman.NewLoadSpec("/path/to/prog.o", "test_prog", bpfman.ProgramTypeXDP)
+	require.NoError(t, err)
+	spec = spec.WithGlobalData(globalData)
+
+	_, err = client.Load(context.Background(), spec, manager.LoadOpts{})
+	require.NoError(t, err)
+
+	require.NotNil(t, mock.lastLoadRequest, "Load should have been called")
+	assert.Equal(t, globalData, mock.lastLoadRequest.GlobalData,
+		"LoadRequest.GlobalData should match LoadSpec.GlobalData()")
+}
+
+// TestLoad_PassesUserMetadataFromOpts verifies that LoadOpts.UserMetadata
+// is correctly passed to the pb.LoadRequest.
+func TestLoad_PassesUserMetadataFromOpts(t *testing.T) {
+	mock := &mockBpfmanClient{}
+	client := &remoteClient{
+		client: mock,
+	}
+
+	metadata := map[string]string{
+		"owner":       "test-team",
+		"environment": "testing",
+	}
+
+	spec, err := bpfman.NewLoadSpec("/path/to/prog.o", "test_prog", bpfman.ProgramTypeXDP)
+	require.NoError(t, err)
+
+	_, err = client.Load(context.Background(), spec, manager.LoadOpts{
+		UserMetadata: metadata,
+	})
+	require.NoError(t, err)
+
+	require.NotNil(t, mock.lastLoadRequest, "Load should have been called")
+	assert.Equal(t, metadata, mock.lastLoadRequest.Metadata,
+		"LoadRequest.Metadata should match LoadOpts.UserMetadata")
+}
+
+// TestLoad_PassesBothMetadataAndGlobalData verifies that both metadata
+// and global data are correctly passed when both are provided.
+func TestLoad_PassesBothMetadataAndGlobalData(t *testing.T) {
+	mock := &mockBpfmanClient{}
+	client := &remoteClient{
+		client: mock,
+	}
+
+	metadata := map[string]string{
+		"app": "test-app",
+	}
+	globalData := map[string][]byte{
+		"config": {0x01, 0x02, 0x03},
+	}
+
+	spec, err := bpfman.NewLoadSpec("/path/to/prog.o", "test_prog", bpfman.ProgramTypeTracepoint)
+	require.NoError(t, err)
+	spec = spec.WithGlobalData(globalData)
+
+	_, err = client.Load(context.Background(), spec, manager.LoadOpts{
+		UserMetadata: metadata,
+	})
+	require.NoError(t, err)
+
+	require.NotNil(t, mock.lastLoadRequest, "Load should have been called")
+	assert.Equal(t, metadata, mock.lastLoadRequest.Metadata,
+		"LoadRequest.Metadata should match")
+	assert.Equal(t, globalData, mock.lastLoadRequest.GlobalData,
+		"LoadRequest.GlobalData should match")
+}
+
+// TestLoad_PassesProgramInfo verifies that LoadSpec fields are correctly
+// mapped to the pb.LoadRequest.
+func TestLoad_PassesProgramInfo(t *testing.T) {
+	mock := &mockBpfmanClient{}
+	client := &remoteClient{
+		client: mock,
+	}
+
+	spec, err := bpfman.NewLoadSpec("/path/to/my_prog.o", "my_xdp_func", bpfman.ProgramTypeXDP)
+	require.NoError(t, err)
+
+	_, err = client.Load(context.Background(), spec, manager.LoadOpts{})
+	require.NoError(t, err)
+
+	require.NotNil(t, mock.lastLoadRequest, "Load should have been called")
+
+	// Verify bytecode location
+	require.NotNil(t, mock.lastLoadRequest.Bytecode)
+	file, ok := mock.lastLoadRequest.Bytecode.Location.(*pb.BytecodeLocation_File)
+	require.True(t, ok, "expected BytecodeLocation_File")
+	assert.Equal(t, "/path/to/my_prog.o", file.File, "object path should match")
+
+	// Verify program info
+	require.Len(t, mock.lastLoadRequest.Info, 1)
+	assert.Equal(t, "my_xdp_func", mock.lastLoadRequest.Info[0].Name, "program name should match")
+	assert.Equal(t, pb.BpfmanProgramType_XDP, mock.lastLoadRequest.Info[0].ProgramType, "program type should match")
+}
+
+// TestLoad_FentryIncludesAttachFunc verifies that fentry programs include
+// the attach function in the request.
+func TestLoad_FentryIncludesAttachFunc(t *testing.T) {
+	mock := &mockBpfmanClient{}
+	client := &remoteClient{
+		client: mock,
+	}
+
+	spec, err := bpfman.NewAttachLoadSpec("/path/to/prog.o", "test_fentry", bpfman.ProgramTypeFentry, "do_unlinkat")
+	require.NoError(t, err)
+
+	_, err = client.Load(context.Background(), spec, manager.LoadOpts{})
+	require.NoError(t, err)
+
+	require.NotNil(t, mock.lastLoadRequest, "Load should have been called")
+	require.Len(t, mock.lastLoadRequest.Info, 1)
+
+	info := mock.lastLoadRequest.Info[0]
+	assert.Equal(t, pb.BpfmanProgramType_FENTRY, info.ProgramType)
+	require.NotNil(t, info.Info, "fentry should have ProgSpecificInfo")
+
+	fentryInfo, ok := info.Info.Info.(*pb.ProgSpecificInfo_FentryLoadInfo)
+	require.True(t, ok, "expected FentryLoadInfo")
+	assert.Equal(t, "do_unlinkat", fentryInfo.FentryLoadInfo.FnName, "attach function should match")
+}
+
+// TestLoad_FexitIncludesAttachFunc verifies that fexit programs include
+// the attach function in the request.
+func TestLoad_FexitIncludesAttachFunc(t *testing.T) {
+	mock := &mockBpfmanClient{}
+	client := &remoteClient{
+		client: mock,
+	}
+
+	spec, err := bpfman.NewAttachLoadSpec("/path/to/prog.o", "test_fexit", bpfman.ProgramTypeFexit, "do_unlinkat")
+	require.NoError(t, err)
+
+	_, err = client.Load(context.Background(), spec, manager.LoadOpts{})
+	require.NoError(t, err)
+
+	require.NotNil(t, mock.lastLoadRequest, "Load should have been called")
+	require.Len(t, mock.lastLoadRequest.Info, 1)
+
+	info := mock.lastLoadRequest.Info[0]
+	assert.Equal(t, pb.BpfmanProgramType_FEXIT, info.ProgramType)
+	require.NotNil(t, info.Info, "fexit should have ProgSpecificInfo")
+
+	fexitInfo, ok := info.Info.Info.(*pb.ProgSpecificInfo_FexitLoadInfo)
+	require.True(t, ok, "expected FexitLoadInfo")
+	assert.Equal(t, "do_unlinkat", fexitInfo.FexitLoadInfo.FnName, "attach function should match")
 }
