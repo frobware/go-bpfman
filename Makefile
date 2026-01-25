@@ -4,9 +4,16 @@ help:
 	@echo "Build:"
 	@echo "  build-all                   Build all binaries"
 	@echo "  clean                       Remove all build artifacts"
-	@echo "  e2e-test                    Run e2e tests (requires root)"
 	@echo "  docker-build-all            Build all container images"
+	@echo ""
+	@echo "Testing:"
 	@echo "  test                        Run all tests"
+	@echo "  e2e-test                    Run e2e tests (requires root)"
+	@echo "  coverage                    Generate coverage profile and show total"
+	@echo "  coverage-func               Show coverage by function"
+	@echo "  coverage-html               Generate HTML coverage report"
+	@echo "  coverage-open               Generate and open HTML coverage report"
+	@echo "  coverage-clean              Remove coverage artifacts"
 	@echo ""
 	@echo "bpfman (with integrated CSI):"
 	@echo "  bpfman-build                Build bpfman binary"
@@ -56,11 +63,35 @@ build-all: bpfman-build
 
 docker-build-all: docker-build-bpfman docker-build-stats-reader docker-build-csi-sanity
 
-clean: bpfman-clean dispatchers-clean
+clean: bpfman-clean dispatchers-clean coverage-clean
 	$(RM) -r $(BIN_DIR)
 
 test:
 	go test -v ./...
+
+# Coverage targets
+COVERAGE_DIR ?= .coverage
+COVERAGE_PROFILE ?= $(COVERAGE_DIR)/coverage.out
+COVERAGE_HTML ?= $(COVERAGE_DIR)/coverage.html
+
+coverage:
+	@mkdir -p $(COVERAGE_DIR)
+	@go test -coverprofile=$(COVERAGE_PROFILE) ./server/... ./client/... ./compute/... ./bpffs/... ./config/... ./dispatcher/... 2>&1 | grep -v "no such tool"
+	@echo "Coverage profile written to $(COVERAGE_PROFILE)"
+	@go tool cover -func=$(COVERAGE_PROFILE) 2>/dev/null | grep total
+
+coverage-html: coverage
+	go tool cover -html=$(COVERAGE_PROFILE) -o $(COVERAGE_HTML)
+	@echo "Coverage report written to $(COVERAGE_HTML)"
+
+coverage-func: coverage
+	go tool cover -func=$(COVERAGE_PROFILE)
+
+coverage-open: coverage-html
+	xdg-open $(COVERAGE_HTML) 2>/dev/null || open $(COVERAGE_HTML) 2>/dev/null || echo "Open $(COVERAGE_HTML) in your browser"
+
+coverage-clean:
+	$(RM) -r $(COVERAGE_DIR)
 
 e2e-test:
 	@echo "Running e2e tests (requires root)..."
@@ -196,7 +227,6 @@ kind-undeploy-all: stats-reader-delete bpfman-delete
 
 .PHONY: \
 	bpfman-build \
-	e2e-test \
 	bpfman-clean \
 	bpfman-delete \
 	bpfman-delete-test \
@@ -208,6 +238,11 @@ kind-undeploy-all: stats-reader-delete bpfman-delete
 	bpfman-test-grpc \
 	build-all \
 	clean \
+	coverage \
+	coverage-clean \
+	coverage-func \
+	coverage-html \
+	coverage-open \
 	dispatchers-build \
 	dispatchers-clean \
 	doc \
@@ -219,6 +254,7 @@ kind-undeploy-all: stats-reader-delete bpfman-delete
 	docker-build-csi-sanity \
 	docker-build-stats-reader \
 	docker-clean-bpfman-builder \
+	e2e-test \
 	help \
 	kind-create \
 	kind-delete \
