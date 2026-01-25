@@ -4,10 +4,28 @@
 
 -- Programs table for managed BPF programs
 -- A row exists only after successful load - no reservation/loading states.
+-- Schema is normalised: individual columns for queryable fields, JSON only for opaque data.
 CREATE TABLE IF NOT EXISTS managed_programs (
     kernel_id INTEGER PRIMARY KEY,
-    metadata TEXT NOT NULL,
+    program_name TEXT NOT NULL,
+    program_type TEXT NOT NULL,
+    object_path TEXT NOT NULL,
+    pin_path TEXT NOT NULL,
+    attach_func TEXT,
+    global_data TEXT,            -- JSON map<string, bytes>, opaque
+    map_owner_id INTEGER,
+    image_source TEXT,           -- JSON ImageSource struct, NULL if file-loaded
+    owner TEXT,
+    description TEXT,
     created_at TEXT NOT NULL
+) STRICT;
+
+-- Tags table for program tags (one-to-many)
+CREATE TABLE IF NOT EXISTS program_tags (
+    kernel_id INTEGER NOT NULL,
+    tag TEXT NOT NULL,
+    PRIMARY KEY (kernel_id, tag),
+    FOREIGN KEY (kernel_id) REFERENCES managed_programs(kernel_id) ON DELETE CASCADE
 ) STRICT;
 
 -- Index table for fast metadata key/value lookups (used by CSI)

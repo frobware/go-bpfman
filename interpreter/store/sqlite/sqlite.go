@@ -118,6 +118,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -158,6 +159,10 @@ type sqliteStore struct {
 	stmtListPrograms               *sql.Stmt
 	stmtFindProgramByMetadata      *sql.Stmt
 	stmtFindAllProgramsByMetadata  *sql.Stmt
+
+	// Prepared statements for program tags
+	stmtInsertTag  *sql.Stmt
+	stmtDeleteTags *sql.Stmt
 
 	// Prepared statements for link registry operations
 	stmtDeleteLink         *sql.Stmt
@@ -281,12 +286,23 @@ func (s *sqliteStore) prepareStatements() error {
 func (s *sqliteStore) prepareProgramStatements() error {
 	var err error
 
-	const sqlGetProgram = "SELECT metadata FROM managed_programs WHERE kernel_id = ?"
+	const sqlGetProgram = `
+		SELECT m.program_name, m.program_type, m.object_path, m.pin_path, m.attach_func,
+		       m.global_data, m.map_owner_id, m.image_source, m.owner, m.description, m.created_at,
+		       GROUP_CONCAT(t.tag) as tags
+		FROM managed_programs m
+		LEFT JOIN program_tags t ON m.kernel_id = t.kernel_id
+		WHERE m.kernel_id = ?
+		GROUP BY m.kernel_id`
 	if s.stmtGetProgram, err = s.db.Prepare(sqlGetProgram); err != nil {
 		return fmt.Errorf("prepare GetProgram: %w", err)
 	}
 
-	const sqlSaveProgram = "INSERT OR REPLACE INTO managed_programs (kernel_id, metadata, created_at) VALUES (?, ?, ?)"
+	const sqlSaveProgram = `
+		INSERT OR REPLACE INTO managed_programs
+		(kernel_id, program_name, program_type, object_path, pin_path, attach_func,
+		 global_data, map_owner_id, image_source, owner, description, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	if s.stmtSaveProgram, err = s.db.Prepare(sqlSaveProgram); err != nil {
 		return fmt.Errorf("prepare SaveProgram: %w", err)
 	}
@@ -306,28 +322,53 @@ func (s *sqliteStore) prepareProgramStatements() error {
 		return fmt.Errorf("prepare DeleteProgram: %w", err)
 	}
 
-	const sqlListPrograms = "SELECT kernel_id, metadata FROM managed_programs"
+	const sqlListPrograms = `
+		SELECT m.kernel_id, m.program_name, m.program_type, m.object_path, m.pin_path, m.attach_func,
+		       m.global_data, m.map_owner_id, m.image_source, m.owner, m.description, m.created_at,
+		       GROUP_CONCAT(t.tag) as tags
+		FROM managed_programs m
+		LEFT JOIN program_tags t ON m.kernel_id = t.kernel_id
+		GROUP BY m.kernel_id`
 	if s.stmtListPrograms, err = s.db.Prepare(sqlListPrograms); err != nil {
 		return fmt.Errorf("prepare ListPrograms: %w", err)
 	}
 
 	const sqlFindProgramByMetadata = `
-		SELECT m.kernel_id, m.metadata
+		SELECT m.kernel_id, m.program_name, m.program_type, m.object_path, m.pin_path, m.attach_func,
+		       m.global_data, m.map_owner_id, m.image_source, m.owner, m.description, m.created_at,
+		       GROUP_CONCAT(t.tag) as tags
 		FROM managed_programs m
 		JOIN program_metadata_index i ON m.kernel_id = i.kernel_id
+		LEFT JOIN program_tags t ON m.kernel_id = t.kernel_id
 		WHERE i.key = ? AND i.value = ?
+		GROUP BY m.kernel_id
 		LIMIT 1`
 	if s.stmtFindProgramByMetadata, err = s.db.Prepare(sqlFindProgramByMetadata); err != nil {
 		return fmt.Errorf("prepare FindProgramByMetadata: %w", err)
 	}
 
 	const sqlFindAllProgramsByMetadata = `
-		SELECT m.kernel_id, m.metadata
+		SELECT m.kernel_id, m.program_name, m.program_type, m.object_path, m.pin_path, m.attach_func,
+		       m.global_data, m.map_owner_id, m.image_source, m.owner, m.description, m.created_at,
+		       GROUP_CONCAT(t.tag) as tags
 		FROM managed_programs m
 		JOIN program_metadata_index i ON m.kernel_id = i.kernel_id
-		WHERE i.key = ? AND i.value = ?`
+		LEFT JOIN program_tags t ON m.kernel_id = t.kernel_id
+		WHERE i.key = ? AND i.value = ?
+		GROUP BY m.kernel_id`
 	if s.stmtFindAllProgramsByMetadata, err = s.db.Prepare(sqlFindAllProgramsByMetadata); err != nil {
 		return fmt.Errorf("prepare FindAllProgramsByMetadata: %w", err)
+	}
+
+	// Tag statements
+	const sqlInsertTag = "INSERT INTO program_tags (kernel_id, tag) VALUES (?, ?)"
+	if s.stmtInsertTag, err = s.db.Prepare(sqlInsertTag); err != nil {
+		return fmt.Errorf("prepare InsertTag: %w", err)
+	}
+
+	const sqlDeleteTags = "DELETE FROM program_tags WHERE kernel_id = ?"
+	if s.stmtDeleteTags, err = s.db.Prepare(sqlDeleteTags); err != nil {
+		return fmt.Errorf("prepare DeleteTags: %w", err)
 	}
 
 	return nil
@@ -535,8 +576,7 @@ func (s *sqliteStore) Get(ctx context.Context, kernelID uint32) (bpfman.Program,
 	start := time.Now()
 	row := s.stmtGetProgram.QueryRowContext(ctx, kernelID)
 
-	var metadataJSON string
-	err := row.Scan(&metadataJSON)
+	prog, err := s.scanProgram(row)
 	if err == sql.ErrNoRows {
 		s.logger.Debug("sql", "stmt", "GetProgram", "args", []any{kernelID}, "duration_ms", msec(time.Since(start)), "rows", 0)
 		return bpfman.Program{}, fmt.Errorf("program %d: %w", kernelID, store.ErrNotFound)
@@ -547,31 +587,184 @@ func (s *sqliteStore) Get(ctx context.Context, kernelID uint32) (bpfman.Program,
 	}
 	s.logger.Debug("sql", "stmt", "GetProgram", "args", []any{kernelID}, "duration_ms", msec(time.Since(start)), "rows", 1)
 
-	var metadata bpfman.Program
-	if err := json.Unmarshal([]byte(metadataJSON), &metadata); err != nil {
-		return bpfman.Program{}, fmt.Errorf("failed to unmarshal metadata: %w", err)
+	// Get user metadata (tags are already included via JOIN)
+	metadata, err := s.getUserMetadata(ctx, kernelID)
+	if err != nil {
+		return bpfman.Program{}, err
+	}
+	prog.UserMetadata = metadata
+
+	return prog, nil
+}
+
+// scanProgram scans a single row into a Program struct.
+// The row must include the tags column from GROUP_CONCAT.
+func (s *sqliteStore) scanProgram(row *sql.Row) (bpfman.Program, error) {
+	var prog bpfman.Program
+	var programType string
+	var attachFunc, globalDataJSON, imageSourceJSON, owner, description, tagsStr sql.NullString
+	var mapOwnerID sql.NullInt64
+	var createdAtStr string
+
+	err := row.Scan(
+		&prog.LoadSpec.ProgramName,
+		&programType,
+		&prog.LoadSpec.ObjectPath,
+		&prog.LoadSpec.PinPath,
+		&attachFunc,
+		&globalDataJSON,
+		&mapOwnerID,
+		&imageSourceJSON,
+		&owner,
+		&description,
+		&createdAtStr,
+		&tagsStr,
+	)
+	if err != nil {
+		return bpfman.Program{}, err
 	}
 
-	return metadata, nil
+	// Parse program type
+	pt, _ := bpfman.ParseProgramType(programType)
+	prog.LoadSpec.ProgramType = pt
+
+	// Parse nullable fields
+	if attachFunc.Valid {
+		prog.LoadSpec.AttachFunc = attachFunc.String
+	}
+	if mapOwnerID.Valid {
+		prog.LoadSpec.MapOwnerID = uint32(mapOwnerID.Int64)
+	}
+	if owner.Valid {
+		prog.Owner = owner.String
+	}
+	if description.Valid {
+		prog.Description = description.String
+	}
+
+	// Parse JSON fields
+	if globalDataJSON.Valid {
+		if err := json.Unmarshal([]byte(globalDataJSON.String), &prog.LoadSpec.GlobalData); err != nil {
+			return bpfman.Program{}, fmt.Errorf("failed to unmarshal global_data: %w", err)
+		}
+	}
+	if imageSourceJSON.Valid {
+		if err := json.Unmarshal([]byte(imageSourceJSON.String), &prog.LoadSpec.ImageSource); err != nil {
+			return bpfman.Program{}, fmt.Errorf("failed to unmarshal image_source: %w", err)
+		}
+	}
+
+	// Parse tags from GROUP_CONCAT result
+	if tagsStr.Valid && tagsStr.String != "" {
+		prog.Tags = strings.Split(tagsStr.String, ",")
+	}
+
+	// Parse timestamp
+	prog.CreatedAt, _ = time.Parse(time.RFC3339, createdAtStr)
+
+	return prog, nil
+}
+
+// getUserMetadata retrieves user metadata for a program from the metadata index.
+func (s *sqliteStore) getUserMetadata(ctx context.Context, kernelID uint32) (map[string]string, error) {
+	// We need a separate query for this since we don't have a prepared statement
+	start := time.Now()
+	rows, err := s.conn.QueryContext(ctx, "SELECT key, value FROM program_metadata_index WHERE kernel_id = ?", kernelID)
+	if err != nil {
+		s.logger.Debug("sql", "stmt", "GetUserMetadata", "args", []any{kernelID}, "duration_ms", msec(time.Since(start)), "error", err)
+		return nil, err
+	}
+	defer rows.Close()
+
+	metadata := make(map[string]string)
+	for rows.Next() {
+		var key, value string
+		if err := rows.Scan(&key, &value); err != nil {
+			return nil, err
+		}
+		metadata[key] = value
+	}
+	s.logger.Debug("sql", "stmt", "GetUserMetadata", "args", []any{kernelID}, "duration_ms", msec(time.Since(start)), "rows", len(metadata))
+	return metadata, rows.Err()
 }
 
 // Save stores program metadata.
 // For atomicity with other operations, wrap in RunInTransaction.
 func (s *sqliteStore) Save(ctx context.Context, kernelID uint32, metadata bpfman.Program) error {
-	metadataJSON, err := json.Marshal(metadata)
-	if err != nil {
-		return fmt.Errorf("failed to marshal metadata: %w", err)
+	// Marshal only opaque fields to JSON
+	var globalDataJSON, imageSourceJSON sql.NullString
+	if metadata.LoadSpec.GlobalData != nil {
+		data, err := json.Marshal(metadata.LoadSpec.GlobalData)
+		if err != nil {
+			return fmt.Errorf("failed to marshal global_data: %w", err)
+		}
+		globalDataJSON = sql.NullString{String: string(data), Valid: true}
+	}
+	if metadata.LoadSpec.ImageSource != nil {
+		data, err := json.Marshal(metadata.LoadSpec.ImageSource)
+		if err != nil {
+			return fmt.Errorf("failed to marshal image_source: %w", err)
+		}
+		imageSourceJSON = sql.NullString{String: string(data), Valid: true}
+	}
+
+	// Handle nullable fields
+	var mapOwnerID sql.NullInt64
+	if metadata.LoadSpec.MapOwnerID != 0 {
+		mapOwnerID = sql.NullInt64{Int64: int64(metadata.LoadSpec.MapOwnerID), Valid: true}
+	}
+	var attachFunc, owner, description sql.NullString
+	if metadata.LoadSpec.AttachFunc != "" {
+		attachFunc = sql.NullString{String: metadata.LoadSpec.AttachFunc, Valid: true}
+	}
+	if metadata.Owner != "" {
+		owner = sql.NullString{String: metadata.Owner, Valid: true}
+	}
+	if metadata.Description != "" {
+		description = sql.NullString{String: metadata.Description, Valid: true}
 	}
 
 	start := time.Now()
 	result, err := s.stmtSaveProgram.ExecContext(ctx,
-		kernelID, string(metadataJSON), time.Now().Format(time.RFC3339))
+		kernelID,
+		metadata.LoadSpec.ProgramName,
+		metadata.LoadSpec.ProgramType.String(),
+		metadata.LoadSpec.ObjectPath,
+		metadata.LoadSpec.PinPath,
+		attachFunc,
+		globalDataJSON,
+		mapOwnerID,
+		imageSourceJSON,
+		owner,
+		description,
+		metadata.CreatedAt.Format(time.RFC3339),
+	)
 	if err != nil {
-		s.logger.Debug("sql", "stmt", "SaveProgram", "args", []any{kernelID, "(json)", "(timestamp)"}, "duration_ms", msec(time.Since(start)), "error", err)
+		s.logger.Debug("sql", "stmt", "SaveProgram", "args", []any{kernelID, metadata.LoadSpec.ProgramName, "(columns)"}, "duration_ms", msec(time.Since(start)), "error", err)
 		return fmt.Errorf("failed to insert program: %w", err)
 	}
 	rows, _ := result.RowsAffected()
-	s.logger.Debug("sql", "stmt", "SaveProgram", "args", []any{kernelID, "(json)", "(timestamp)"}, "duration_ms", msec(time.Since(start)), "rows_affected", rows)
+	s.logger.Debug("sql", "stmt", "SaveProgram", "args", []any{kernelID, metadata.LoadSpec.ProgramName, "(columns)"}, "duration_ms", msec(time.Since(start)), "rows_affected", rows)
+
+	// Clear old tags and insert new ones
+	start = time.Now()
+	result, err = s.stmtDeleteTags.ExecContext(ctx, kernelID)
+	if err != nil {
+		s.logger.Debug("sql", "stmt", "DeleteTags", "args", []any{kernelID}, "duration_ms", msec(time.Since(start)), "error", err)
+		return fmt.Errorf("failed to clear tags: %w", err)
+	}
+	rows, _ = result.RowsAffected()
+	s.logger.Debug("sql", "stmt", "DeleteTags", "args", []any{kernelID}, "duration_ms", msec(time.Since(start)), "rows_affected", rows)
+
+	for _, tag := range metadata.Tags {
+		start = time.Now()
+		_, err = s.stmtInsertTag.ExecContext(ctx, kernelID, tag)
+		if err != nil {
+			s.logger.Debug("sql", "stmt", "InsertTag", "args", []any{kernelID, tag}, "duration_ms", msec(time.Since(start)), "error", err)
+			return fmt.Errorf("failed to insert tag: %w", err)
+		}
+		s.logger.Debug("sql", "stmt", "InsertTag", "args", []any{kernelID, tag}, "duration_ms", msec(time.Since(start)), "rows_affected", 1)
+	}
 
 	// Clear old metadata index entries for this program
 	start = time.Now()
@@ -622,49 +815,133 @@ func (s *sqliteStore) List(ctx context.Context) (map[uint32]bpfman.Program, erro
 
 	result := make(map[uint32]bpfman.Program)
 	for rows.Next() {
-		var kernelID uint32
-		var metadataJSON string
-		if err := rows.Scan(&kernelID, &metadataJSON); err != nil {
+		kernelID, prog, err := s.scanProgramFromRows(rows)
+		if err != nil {
 			return nil, err
 		}
+		result[kernelID] = prog
+	}
 
-		var metadata bpfman.Program
-		if err := json.Unmarshal([]byte(metadataJSON), &metadata); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal metadata for %d: %w", kernelID, err)
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Fetch metadata for each program (tags are already included via JOIN)
+	for kernelID, prog := range result {
+		metadata, err := s.getUserMetadata(ctx, kernelID)
+		if err != nil {
+			return nil, err
 		}
-
-		result[kernelID] = metadata
+		prog.UserMetadata = metadata
+		result[kernelID] = prog
 	}
 
 	s.logger.Debug("sql", "stmt", "ListPrograms", "duration_ms", msec(time.Since(start)), "rows", len(result))
-	return result, rows.Err()
+	return result, nil
+}
+
+// scanProgramFromRows scans a single row from *sql.Rows into a Program struct.
+// The row must include the tags column from GROUP_CONCAT.
+func (s *sqliteStore) scanProgramFromRows(rows *sql.Rows) (uint32, bpfman.Program, error) {
+	var kernelID uint32
+	var prog bpfman.Program
+	var programType string
+	var attachFunc, globalDataJSON, imageSourceJSON, owner, description, tagsStr sql.NullString
+	var mapOwnerID sql.NullInt64
+	var createdAtStr string
+
+	err := rows.Scan(
+		&kernelID,
+		&prog.LoadSpec.ProgramName,
+		&programType,
+		&prog.LoadSpec.ObjectPath,
+		&prog.LoadSpec.PinPath,
+		&attachFunc,
+		&globalDataJSON,
+		&mapOwnerID,
+		&imageSourceJSON,
+		&owner,
+		&description,
+		&createdAtStr,
+		&tagsStr,
+	)
+	if err != nil {
+		return 0, bpfman.Program{}, err
+	}
+
+	// Parse program type
+	pt, _ := bpfman.ParseProgramType(programType)
+	prog.LoadSpec.ProgramType = pt
+
+	// Parse nullable fields
+	if attachFunc.Valid {
+		prog.LoadSpec.AttachFunc = attachFunc.String
+	}
+	if mapOwnerID.Valid {
+		prog.LoadSpec.MapOwnerID = uint32(mapOwnerID.Int64)
+	}
+	if owner.Valid {
+		prog.Owner = owner.String
+	}
+	if description.Valid {
+		prog.Description = description.String
+	}
+
+	// Parse JSON fields
+	if globalDataJSON.Valid {
+		if err := json.Unmarshal([]byte(globalDataJSON.String), &prog.LoadSpec.GlobalData); err != nil {
+			return 0, bpfman.Program{}, fmt.Errorf("failed to unmarshal global_data for %d: %w", kernelID, err)
+		}
+	}
+	if imageSourceJSON.Valid {
+		if err := json.Unmarshal([]byte(imageSourceJSON.String), &prog.LoadSpec.ImageSource); err != nil {
+			return 0, bpfman.Program{}, fmt.Errorf("failed to unmarshal image_source for %d: %w", kernelID, err)
+		}
+	}
+
+	// Parse tags from GROUP_CONCAT result
+	if tagsStr.Valid && tagsStr.String != "" {
+		prog.Tags = strings.Split(tagsStr.String, ",")
+	}
+
+	// Parse timestamp
+	prog.CreatedAt, _ = time.Parse(time.RFC3339, createdAtStr)
+
+	return kernelID, prog, nil
 }
 
 // FindProgramByMetadata finds a program by a specific metadata key/value pair.
 // Returns store.ErrNotFound if no program matches.
 func (s *sqliteStore) FindProgramByMetadata(ctx context.Context, key, value string) (bpfman.Program, uint32, error) {
 	start := time.Now()
-	row := s.stmtFindProgramByMetadata.QueryRowContext(ctx, key, value)
+	rows, err := s.stmtFindProgramByMetadata.QueryContext(ctx, key, value)
+	if err != nil {
+		s.logger.Debug("sql", "stmt", "FindProgramByMetadata", "args", []any{key, value}, "duration_ms", msec(time.Since(start)), "error", err)
+		return bpfman.Program{}, 0, err
+	}
 
-	var kernelID uint32
-	var metadataJSON string
-	err := row.Scan(&kernelID, &metadataJSON)
-	if err == sql.ErrNoRows {
+	if !rows.Next() {
+		rows.Close()
 		s.logger.Debug("sql", "stmt", "FindProgramByMetadata", "args", []any{key, value}, "duration_ms", msec(time.Since(start)), "rows", 0)
 		return bpfman.Program{}, 0, fmt.Errorf("program with %s=%s: %w", key, value, store.ErrNotFound)
 	}
+
+	kernelID, prog, err := s.scanProgramFromRows(rows)
+	rows.Close() // Close rows before making additional queries
 	if err != nil {
 		s.logger.Debug("sql", "stmt", "FindProgramByMetadata", "args", []any{key, value}, "duration_ms", msec(time.Since(start)), "error", err)
 		return bpfman.Program{}, 0, err
 	}
 	s.logger.Debug("sql", "stmt", "FindProgramByMetadata", "args", []any{key, value}, "duration_ms", msec(time.Since(start)), "rows", 1)
 
-	var metadata bpfman.Program
-	if err := json.Unmarshal([]byte(metadataJSON), &metadata); err != nil {
-		return bpfman.Program{}, 0, fmt.Errorf("failed to unmarshal metadata: %w", err)
+	// Get user metadata (tags are already included via JOIN)
+	metadata, err := s.getUserMetadata(ctx, kernelID)
+	if err != nil {
+		return bpfman.Program{}, 0, err
 	}
+	prog.UserMetadata = metadata
 
-	return metadata, kernelID, nil
+	return prog, kernelID, nil
 }
 
 // FindAllProgramsByMetadata finds all programs with a specific metadata key/value pair.
@@ -686,25 +963,31 @@ func (s *sqliteStore) FindAllProgramsByMetadata(ctx context.Context, key, value 
 	}
 
 	for rows.Next() {
-		var kernelID uint32
-		var metadataJSON string
-		if err := rows.Scan(&kernelID, &metadataJSON); err != nil {
+		kernelID, prog, err := s.scanProgramFromRows(rows)
+		if err != nil {
 			return nil, err
 		}
-
-		var metadata bpfman.Program
-		if err := json.Unmarshal([]byte(metadataJSON), &metadata); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal metadata for %d: %w", kernelID, err)
-		}
-
 		result = append(result, struct {
 			KernelID uint32
 			Metadata bpfman.Program
-		}{KernelID: kernelID, Metadata: metadata})
+		}{KernelID: kernelID, Metadata: prog})
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Fetch metadata for each program (tags are already included via JOIN)
+	for i := range result {
+		metadata, err := s.getUserMetadata(ctx, result[i].KernelID)
+		if err != nil {
+			return nil, err
+		}
+		result[i].Metadata.UserMetadata = metadata
 	}
 
 	s.logger.Debug("sql", "stmt", "FindAllProgramsByMetadata", "args", []any{key, value}, "duration_ms", msec(time.Since(start)), "rows", len(result))
-	return result, rows.Err()
+	return result, nil
 }
 
 // ----------------------------------------------------------------------------
@@ -1387,6 +1670,9 @@ func (s *sqliteStore) RunInTransaction(ctx context.Context, fn func(interpreter.
 		stmtListPrograms:               tx.StmtContext(ctx, s.stmtListPrograms),
 		stmtFindProgramByMetadata:      tx.StmtContext(ctx, s.stmtFindProgramByMetadata),
 		stmtFindAllProgramsByMetadata:  tx.StmtContext(ctx, s.stmtFindAllProgramsByMetadata),
+		// Tag statements
+		stmtInsertTag:  tx.StmtContext(ctx, s.stmtInsertTag),
+		stmtDeleteTags: tx.StmtContext(ctx, s.stmtDeleteTags),
 		// Link registry statements
 		stmtDeleteLink:         tx.StmtContext(ctx, s.stmtDeleteLink),
 		stmtGetLinkRegistry:    tx.StmtContext(ctx, s.stmtGetLinkRegistry),
