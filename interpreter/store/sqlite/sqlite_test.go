@@ -26,11 +26,15 @@ func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-// testLoadSpec returns a valid LoadSpec for testing.
-// Uses the constructor to ensure the test data passes validation.
-func testLoadSpec() bpfman.LoadSpec {
-	spec, _ := bpfman.NewLoadSpec("/test/path/program.o", "test_program", bpfman.ProgramTypeTracepoint)
-	return spec
+// testProgram returns a valid Program for testing.
+func testProgram() bpfman.Program {
+	return bpfman.Program{
+		ProgramName: "test_program",
+		ProgramType: bpfman.ProgramTypeTracepoint,
+		ObjectPath:  "/test/path/program.o",
+		PinPath:     "/sys/fs/bpf/test",
+		CreatedAt:   time.Now(),
+	}
 }
 
 func TestForeignKey_LinkRequiresProgram(t *testing.T) {
@@ -66,10 +70,7 @@ func TestForeignKey_CascadeDeleteRemovesLinks(t *testing.T) {
 
 	// Create a program directly.
 	kernelID := uint32(42)
-	prog := bpfman.Program{
-		LoadSpec:  testLoadSpec(),
-		CreatedAt: time.Now(),
-	}
+	prog := testProgram()
 
 	require.NoError(t, store.Save(ctx, kernelID, prog), "Save failed")
 
@@ -112,13 +113,10 @@ func TestForeignKey_CascadeDeleteRemovesMetadataIndex(t *testing.T) {
 
 	// Create a program with metadata.
 	kernelID := uint32(42)
-	prog := bpfman.Program{
-		LoadSpec:  testLoadSpec(),
-		CreatedAt: time.Now(),
-		UserMetadata: map[string]string{
-			"app":     "test",
-			"version": "1.0",
-		},
+	prog := testProgram()
+	prog.UserMetadata = map[string]string{
+		"app":     "test",
+		"version": "1.0",
 	}
 
 	require.NoError(t, store.Save(ctx, kernelID, prog), "Save failed")
@@ -145,23 +143,17 @@ func TestUniqueIndex_ProgramNameEnforcesUniqueness(t *testing.T) {
 	ctx := context.Background()
 
 	// Create first program with a name.
-	prog1 := bpfman.Program{
-		LoadSpec:  testLoadSpec(),
-		CreatedAt: time.Now(),
-		UserMetadata: map[string]string{
-			"bpfman.io/ProgramName": "my-program",
-		},
+	prog1 := testProgram()
+	prog1.UserMetadata = map[string]string{
+		"bpfman.io/ProgramName": "my-program",
 	}
 
 	require.NoError(t, store.Save(ctx, 100, prog1), "Save prog1 failed")
 
 	// Attempt to create second program with the same name.
-	prog2 := bpfman.Program{
-		LoadSpec:  testLoadSpec(),
-		CreatedAt: time.Now(),
-		UserMetadata: map[string]string{
-			"bpfman.io/ProgramName": "my-program", // duplicate
-		},
+	prog2 := testProgram()
+	prog2.UserMetadata = map[string]string{
+		"bpfman.io/ProgramName": "my-program", // duplicate
 	}
 
 	err = store.Save(ctx, 200, prog2)
@@ -178,12 +170,9 @@ func TestUniqueIndex_DifferentNamesAllowed(t *testing.T) {
 
 	// Create two programs with different names.
 	for i, name := range []string{"program-a", "program-b"} {
-		prog := bpfman.Program{
-			LoadSpec:  testLoadSpec(),
-			CreatedAt: time.Now(),
-			UserMetadata: map[string]string{
-				"bpfman.io/ProgramName": name,
-			},
+		prog := testProgram()
+		prog.UserMetadata = map[string]string{
+			"bpfman.io/ProgramName": name,
 		}
 
 		require.NoError(t, store.Save(ctx, uint32(100+i), prog), "Save %s failed", name)
@@ -203,12 +192,9 @@ func TestUniqueIndex_NameCanBeReusedAfterDelete(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a program with a name.
-	prog := bpfman.Program{
-		LoadSpec:  testLoadSpec(),
-		CreatedAt: time.Now(),
-		UserMetadata: map[string]string{
-			"bpfman.io/ProgramName": "reusable-name",
-		},
+	prog := testProgram()
+	prog.UserMetadata = map[string]string{
+		"bpfman.io/ProgramName": "reusable-name",
 	}
 
 	require.NoError(t, store.Save(ctx, 100, prog), "Save failed")
@@ -217,12 +203,9 @@ func TestUniqueIndex_NameCanBeReusedAfterDelete(t *testing.T) {
 	require.NoError(t, store.Delete(ctx, 100), "Delete failed")
 
 	// Create a new program with the same name.
-	prog2 := bpfman.Program{
-		LoadSpec:  testLoadSpec(),
-		CreatedAt: time.Now(),
-		UserMetadata: map[string]string{
-			"bpfman.io/ProgramName": "reusable-name", // same name, should work
-		},
+	prog2 := testProgram()
+	prog2.UserMetadata = map[string]string{
+		"bpfman.io/ProgramName": "reusable-name", // same name, should work
 	}
 
 	require.NoError(t, store.Save(ctx, 200, prog2), "Save prog2 failed")
@@ -242,10 +225,7 @@ func TestLinkRegistry_TracepointRoundTrip(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a program first
-	prog := bpfman.Program{
-		LoadSpec:  testLoadSpec(),
-		CreatedAt: time.Now(),
-	}
+	prog := testProgram()
 	require.NoError(t, store.Save(ctx, 42, prog), "Save failed")
 
 	// Create a tracepoint link
@@ -287,7 +267,7 @@ func TestLinkRegistry_KernelLinkIDUniqueness(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a program first
-	prog := bpfman.Program{LoadSpec: testLoadSpec(), CreatedAt: time.Now()}
+	prog := testProgram()
 	require.NoError(t, store.Save(ctx, 42, prog), "Save failed")
 
 	// Create first link
@@ -325,7 +305,7 @@ func TestLinkRegistry_CascadeDeleteFromRegistry(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a program first
-	prog := bpfman.Program{LoadSpec: testLoadSpec(), CreatedAt: time.Now()}
+	prog := testProgram()
 	require.NoError(t, store.Save(ctx, 42, prog), "Save failed")
 
 	// Create a tracepoint link

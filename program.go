@@ -105,8 +105,24 @@ func ParseProgramType(s string) (ProgramType, bool) {
 // Program contains metadata for programs managed by bpfman.
 // This is what we store - the kernel is the source of truth for runtime state.
 // A Program only exists in the store after successful load.
+//
+// Note: Program is distinct from LoadSpec. LoadSpec describes how to load a
+// program (validated input), while Program describes a loaded program's state
+// (stored output). They share some fields but serve different purposes.
 type Program struct {
-	LoadSpec     LoadSpec          `json:"load_spec"`
+	// Core identity - what was loaded
+	ProgramName string      `json:"program_name"`
+	ProgramType ProgramType `json:"program_type"`
+	ObjectPath  string      `json:"object_path,omitempty"`
+	PinPath     string      `json:"pin_path"`
+
+	// Load-time configuration (stored for reference/potential reload)
+	GlobalData  map[string][]byte `json:"global_data,omitempty"`
+	ImageSource *ImageSource      `json:"image_source,omitempty"`
+	AttachFunc  string            `json:"attach_func,omitempty"` // For fentry/fexit
+	MapOwnerID  uint32            `json:"map_owner_id,omitempty"`
+
+	// Management metadata
 	Tags         []string          `json:"tags,omitempty"`
 	UserMetadata map[string]string `json:"user_metadata,omitempty"`
 	Description  string            `json:"description,omitempty"`
@@ -116,26 +132,21 @@ type Program struct {
 
 // WithTag returns a new Program with the tag added.
 func (p Program) WithTag(tag string) Program {
-	return Program{
-		LoadSpec:     p.LoadSpec,
-		Tags:         append(slices.Clone(p.Tags), tag),
-		UserMetadata: cloneMap(p.UserMetadata),
-		Description:  p.Description,
-		Owner:        p.Owner,
-		CreatedAt:    p.CreatedAt,
-	}
+	cp := p
+	cp.Tags = append(slices.Clone(p.Tags), tag)
+	cp.UserMetadata = cloneMap(p.UserMetadata)
+	cp.GlobalData = cloneMap(p.GlobalData)
+	return cp
 }
 
 // WithDescription returns a new Program with the description set.
 func (p Program) WithDescription(desc string) Program {
-	return Program{
-		LoadSpec:     p.LoadSpec,
-		Tags:         slices.Clone(p.Tags),
-		UserMetadata: cloneMap(p.UserMetadata),
-		Description:  desc,
-		Owner:        p.Owner,
-		CreatedAt:    p.CreatedAt,
-	}
+	cp := p
+	cp.Description = desc
+	cp.Tags = slices.Clone(p.Tags)
+	cp.UserMetadata = cloneMap(p.UserMetadata)
+	cp.GlobalData = cloneMap(p.GlobalData)
+	return cp
 }
 
 func cloneMap[K comparable, V any](m map[K]V) map[K]V {

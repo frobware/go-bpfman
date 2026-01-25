@@ -110,8 +110,8 @@ func (d *Driver) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolu
 		return nil, status.Errorf(codes.NotFound, "program %q not found: %v", programName, err)
 	}
 
-	// 2. Get the pin path from the program's LoadSpec
-	mapPinPath := metadata.LoadSpec.PinPath()
+	// 2. Get the pin path from the program
+	mapPinPath := metadata.PinPath
 	if mapPinPath == "" {
 		return nil, status.Errorf(codes.Internal, "program %q has no pin path", programName)
 	}

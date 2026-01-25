@@ -100,30 +100,6 @@ func NewAttachLoadSpec(objectPath, programName string, programType ProgramType, 
 	}, nil
 }
 
-// NewObservedLoadSpec creates a LoadSpec for describing an already-loaded program.
-//
-// Unlike NewLoadSpec and NewAttachLoadSpec, this constructor doesn't require
-// attachFunc for fentry/fexit programs. This is appropriate when reconstructing
-// a LoadSpec from stored/observed data (e.g., proto responses, database records)
-// where the attachFunc information is not available because it was only needed
-// at load time.
-//
-// Validates that programName is non-empty and programType is valid.
-// objectPath may be empty for image-loaded programs.
-func NewObservedLoadSpec(objectPath, programName string, programType ProgramType) (LoadSpec, error) {
-	if programName == "" {
-		return LoadSpec{}, errors.New("programName is required")
-	}
-	if !programType.Valid() && programType != ProgramTypeUnspecified {
-		return LoadSpec{}, fmt.Errorf("invalid program type: %s", programType)
-	}
-	return LoadSpec{
-		objectPath:  objectPath,
-		programName: programName,
-		programType: programType,
-	}, nil
-}
-
 // Getters for LoadSpec fields
 
 func (s LoadSpec) ObjectPath() string            { return s.objectPath }

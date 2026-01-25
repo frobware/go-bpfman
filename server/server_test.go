@@ -1252,28 +1252,11 @@ func TestLoadProgram_WithUnspecifiedProgramType_IsRejected(t *testing.T) {
 //	When Load is called with ProgramTypeUnspecified,
 //	Then it returns an error.
 //
-// Note: Through the normal gRPC flow, Unspecified cannot reach the kernel
-// because the proto enum doesn't have an unspecified value (XDP=0).
-// This test verifies the fake kernel's validation matches real kernel behaviour.
-func TestFakeKernel_RejectsUnspecifiedProgramType(t *testing.T) {
-	fk := newFakeKernel()
-	ctx := context.Background()
-
-	// NewObservedLoadSpec allows Unspecified type since it's for describing
-	// already-loaded programs where the type might not be known.
-	spec, err := bpfman.NewObservedLoadSpec("", "test_prog", bpfman.ProgramTypeUnspecified)
-	require.NoError(t, err)
-	spec = spec.WithPinPath("/test/path")
-
-	_, err = fk.Load(ctx, spec)
-	require.Error(t, err, "Load with Unspecified type should fail")
-	assert.Contains(t, err.Error(), "program type must be specified")
-}
-
-// Note: TestFakeKernel_RejectsInvalidProgramType was removed because with
-// proper constructors (NewLoadSpec, NewAttachLoadSpec, NewObservedLoadSpec),
-// it's impossible to create a LoadSpec with an out-of-range program type.
-// The validation now happens at construction time, making this scenario
+// Note: TestFakeKernel_RejectsUnspecifiedProgramType and
+// TestFakeKernel_RejectsInvalidProgramType were removed because with
+// proper constructors (NewLoadSpec, NewAttachLoadSpec), it's impossible
+// to create a LoadSpec with an unspecified or out-of-range program type.
+// The validation now happens at construction time, making these scenarios
 // unreachable in production code.
 
 // =============================================================================

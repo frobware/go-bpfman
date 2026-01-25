@@ -47,7 +47,7 @@ func TestTracepoint_LoadAttachDetachUnload(t *testing.T) {
 	imageRef := interpreter.ImageRef{
 		URL: "quay.io/bpfman-bytecode/go-tracepoint-counter:latest",
 	}
-	programs, err := env.Client.LoadImage(ctx, imageRef, []bpfman.LoadSpec{
+	programs, err := env.Client.LoadImage(ctx, imageRef, []client.ImageProgramSpec{
 		{
 			ProgramType: bpfman.ProgramTypeTracepoint,
 			ProgramName: "tracepoint_kill_recorder",
@@ -81,8 +81,8 @@ func TestTracepoint_LoadAttachDetachUnload(t *testing.T) {
 	// Verify bpfman-managed metadata has full name and pin path
 	require.NotNil(t, gotProg.Bpfman)
 	require.NotNil(t, gotProg.Bpfman.Program)
-	require.Equal(t, "tracepoint_kill_recorder", gotProg.Bpfman.Program.LoadSpec.ProgramName)
-	require.NotEmpty(t, gotProg.Bpfman.Program.LoadSpec.PinPath, "program should have pin path")
+	require.Equal(t, "tracepoint_kill_recorder", gotProg.Bpfman.Program.ProgramName)
+	require.NotEmpty(t, gotProg.Bpfman.Program.PinPath, "program should have pin path")
 	// Kernel-reported name is truncated (16 chars max), verify it's a prefix of the full name
 	kernelName := prog.Kernel.Name()
 	require.True(t, strings.HasPrefix("tracepoint_kill_recorder", kernelName),
@@ -100,8 +100,8 @@ func TestTracepoint_LoadAttachDetachUnload(t *testing.T) {
 	require.False(t, listedProgs[0].KernelProgram.LoadedAt.IsZero())
 	// Metadata has full name
 	require.NotNil(t, listedProgs[0].Metadata)
-	require.Equal(t, "tracepoint_kill_recorder", listedProgs[0].Metadata.LoadSpec.ProgramName)
-	require.NotEmpty(t, listedProgs[0].Metadata.LoadSpec.PinPath)
+	require.Equal(t, "tracepoint_kill_recorder", listedProgs[0].Metadata.ProgramName)
+	require.NotEmpty(t, listedProgs[0].Metadata.PinPath)
 
 	// When: attach via client
 	link, err := env.Client.AttachTracepoint(ctx, prog.Kernel.ID(), "syscalls", "sys_enter_kill", "")
@@ -172,7 +172,7 @@ func TestKprobe_LoadAttachDetachUnload(t *testing.T) {
 	imageRef := interpreter.ImageRef{
 		URL: "quay.io/bpfman-bytecode/go-kprobe-counter:latest",
 	}
-	programs, err := env.Client.LoadImage(ctx, imageRef, []bpfman.LoadSpec{
+	programs, err := env.Client.LoadImage(ctx, imageRef, []client.ImageProgramSpec{
 		{
 			ProgramType: bpfman.ProgramTypeKprobe,
 			ProgramName: "kprobe_counter",
@@ -203,8 +203,8 @@ func TestKprobe_LoadAttachDetachUnload(t *testing.T) {
 	require.False(t, gotProg.Kernel.Program.LoadedAt.IsZero(), "kernel should track LoadedAt")
 	require.NotNil(t, gotProg.Bpfman)
 	require.NotNil(t, gotProg.Bpfman.Program)
-	require.Equal(t, "kprobe_counter", gotProg.Bpfman.Program.LoadSpec.ProgramName)
-	require.NotEmpty(t, gotProg.Bpfman.Program.LoadSpec.PinPath, "program should have pin path")
+	require.Equal(t, "kprobe_counter", gotProg.Bpfman.Program.ProgramName)
+	require.NotEmpty(t, gotProg.Bpfman.Program.PinPath, "program should have pin path")
 
 	// Round-trip: List should include our program
 	listedProgs, err := env.Client.List(ctx)
@@ -215,8 +215,8 @@ func TestKprobe_LoadAttachDetachUnload(t *testing.T) {
 	require.NotEmpty(t, listedProgs[0].KernelProgram.Tag)
 	require.False(t, listedProgs[0].KernelProgram.LoadedAt.IsZero())
 	require.NotNil(t, listedProgs[0].Metadata)
-	require.Equal(t, "kprobe_counter", listedProgs[0].Metadata.LoadSpec.ProgramName)
-	require.NotEmpty(t, listedProgs[0].Metadata.LoadSpec.PinPath)
+	require.Equal(t, "kprobe_counter", listedProgs[0].Metadata.ProgramName)
+	require.NotEmpty(t, listedProgs[0].Metadata.PinPath)
 
 	// When: attach via client
 	link, err := env.Client.AttachKprobe(ctx, prog.Kernel.ID(), "try_to_wake_up", 0, "")
@@ -287,7 +287,7 @@ func TestKretprobe_LoadAttachDetachUnload(t *testing.T) {
 	imageRef := interpreter.ImageRef{
 		URL: "quay.io/bpfman-bytecode/go-kprobe-counter:latest",
 	}
-	programs, err := env.Client.LoadImage(ctx, imageRef, []bpfman.LoadSpec{
+	programs, err := env.Client.LoadImage(ctx, imageRef, []client.ImageProgramSpec{
 		{
 			ProgramType: bpfman.ProgramTypeKretprobe,
 			ProgramName: "kprobe_counter", // Same program as kprobe, loaded as kretprobe
@@ -318,8 +318,8 @@ func TestKretprobe_LoadAttachDetachUnload(t *testing.T) {
 	require.False(t, gotProg.Kernel.Program.LoadedAt.IsZero(), "kernel should track LoadedAt")
 	require.NotNil(t, gotProg.Bpfman)
 	require.NotNil(t, gotProg.Bpfman.Program)
-	require.Equal(t, "kprobe_counter", gotProg.Bpfman.Program.LoadSpec.ProgramName)
-	require.NotEmpty(t, gotProg.Bpfman.Program.LoadSpec.PinPath, "program should have pin path")
+	require.Equal(t, "kprobe_counter", gotProg.Bpfman.Program.ProgramName)
+	require.NotEmpty(t, gotProg.Bpfman.Program.PinPath, "program should have pin path")
 
 	// Round-trip: List should include our program
 	listedProgs, err := env.Client.List(ctx)
@@ -330,8 +330,8 @@ func TestKretprobe_LoadAttachDetachUnload(t *testing.T) {
 	require.NotEmpty(t, listedProgs[0].KernelProgram.Tag)
 	require.False(t, listedProgs[0].KernelProgram.LoadedAt.IsZero())
 	require.NotNil(t, listedProgs[0].Metadata)
-	require.Equal(t, "kprobe_counter", listedProgs[0].Metadata.LoadSpec.ProgramName)
-	require.NotEmpty(t, listedProgs[0].Metadata.LoadSpec.PinPath)
+	require.Equal(t, "kprobe_counter", listedProgs[0].Metadata.ProgramName)
+	require.NotEmpty(t, listedProgs[0].Metadata.PinPath)
 
 	// When: attach via client (kretprobe uses AttachKprobe API)
 	link, err := env.Client.AttachKprobe(ctx, prog.Kernel.ID(), "try_to_wake_up", 0, "")
@@ -406,7 +406,7 @@ func TestUprobe_LoadAttachDetachUnload(t *testing.T) {
 	imageRef := interpreter.ImageRef{
 		URL: "quay.io/bpfman-bytecode/go-uprobe-counter:latest",
 	}
-	programs, err := env.Client.LoadImage(ctx, imageRef, []bpfman.LoadSpec{
+	programs, err := env.Client.LoadImage(ctx, imageRef, []client.ImageProgramSpec{
 		{
 			ProgramType: bpfman.ProgramTypeUprobe,
 			ProgramName: "uprobe_counter",
@@ -437,8 +437,8 @@ func TestUprobe_LoadAttachDetachUnload(t *testing.T) {
 	require.False(t, gotProg.Kernel.Program.LoadedAt.IsZero(), "kernel should track LoadedAt")
 	require.NotNil(t, gotProg.Bpfman)
 	require.NotNil(t, gotProg.Bpfman.Program)
-	require.Equal(t, "uprobe_counter", gotProg.Bpfman.Program.LoadSpec.ProgramName)
-	require.NotEmpty(t, gotProg.Bpfman.Program.LoadSpec.PinPath, "program should have pin path")
+	require.Equal(t, "uprobe_counter", gotProg.Bpfman.Program.ProgramName)
+	require.NotEmpty(t, gotProg.Bpfman.Program.PinPath, "program should have pin path")
 
 	// Round-trip: List should include our program
 	listedProgs, err := env.Client.List(ctx)
@@ -449,8 +449,8 @@ func TestUprobe_LoadAttachDetachUnload(t *testing.T) {
 	require.NotEmpty(t, listedProgs[0].KernelProgram.Tag)
 	require.False(t, listedProgs[0].KernelProgram.LoadedAt.IsZero())
 	require.NotNil(t, listedProgs[0].Metadata)
-	require.Equal(t, "uprobe_counter", listedProgs[0].Metadata.LoadSpec.ProgramName)
-	require.NotEmpty(t, listedProgs[0].Metadata.LoadSpec.PinPath)
+	require.Equal(t, "uprobe_counter", listedProgs[0].Metadata.ProgramName)
+	require.NotEmpty(t, listedProgs[0].Metadata.PinPath)
 
 	// When: attach via client to malloc in libc
 	link, err := env.Client.AttachUprobe(ctx, prog.Kernel.ID(), target, fnName, 0, "")
@@ -525,7 +525,7 @@ func TestUretprobe_LoadAttachDetachUnload(t *testing.T) {
 	imageRef := interpreter.ImageRef{
 		URL: "quay.io/bpfman-bytecode/go-uprobe-counter:latest",
 	}
-	programs, err := env.Client.LoadImage(ctx, imageRef, []bpfman.LoadSpec{
+	programs, err := env.Client.LoadImage(ctx, imageRef, []client.ImageProgramSpec{
 		{
 			ProgramType: bpfman.ProgramTypeUretprobe,
 			ProgramName: "uprobe_counter", // Same program as uprobe, loaded as uretprobe
@@ -556,8 +556,8 @@ func TestUretprobe_LoadAttachDetachUnload(t *testing.T) {
 	require.False(t, gotProg.Kernel.Program.LoadedAt.IsZero(), "kernel should track LoadedAt")
 	require.NotNil(t, gotProg.Bpfman)
 	require.NotNil(t, gotProg.Bpfman.Program)
-	require.Equal(t, "uprobe_counter", gotProg.Bpfman.Program.LoadSpec.ProgramName)
-	require.NotEmpty(t, gotProg.Bpfman.Program.LoadSpec.PinPath, "program should have pin path")
+	require.Equal(t, "uprobe_counter", gotProg.Bpfman.Program.ProgramName)
+	require.NotEmpty(t, gotProg.Bpfman.Program.PinPath, "program should have pin path")
 
 	// Round-trip: List should include our program
 	listedProgs, err := env.Client.List(ctx)
@@ -568,8 +568,8 @@ func TestUretprobe_LoadAttachDetachUnload(t *testing.T) {
 	require.NotEmpty(t, listedProgs[0].KernelProgram.Tag)
 	require.False(t, listedProgs[0].KernelProgram.LoadedAt.IsZero())
 	require.NotNil(t, listedProgs[0].Metadata)
-	require.Equal(t, "uprobe_counter", listedProgs[0].Metadata.LoadSpec.ProgramName)
-	require.NotEmpty(t, listedProgs[0].Metadata.LoadSpec.PinPath)
+	require.Equal(t, "uprobe_counter", listedProgs[0].Metadata.ProgramName)
+	require.NotEmpty(t, listedProgs[0].Metadata.PinPath)
 
 	// When: attach via client to malloc in libc (uretprobe uses AttachUprobe API)
 	link, err := env.Client.AttachUprobe(ctx, prog.Kernel.ID(), target, fnName, 0, "")
@@ -646,12 +646,9 @@ func TestFentry_LoadAttachDetachUnload(t *testing.T) {
 	}
 
 	// When: load from file via client
-	prog, err := env.Client.Load(ctx, bpfman.LoadSpec{
-		ObjectPath:  bytecodeFile,
-		ProgramName: "test_fentry",
-		ProgramType: bpfman.ProgramTypeFentry,
-		AttachFunc:  "do_unlinkat",
-	}, manager.LoadOpts{})
+	spec, err := bpfman.NewAttachLoadSpec(bytecodeFile, "test_fentry", bpfman.ProgramTypeFentry, "do_unlinkat")
+	require.NoError(t, err)
+	prog, err := env.Client.Load(ctx, spec, manager.LoadOpts{})
 	require.NoError(t, err)
 
 	// Then: program has expected properties
@@ -674,8 +671,8 @@ func TestFentry_LoadAttachDetachUnload(t *testing.T) {
 	require.False(t, gotProg.Kernel.Program.LoadedAt.IsZero(), "kernel should track LoadedAt")
 	require.NotNil(t, gotProg.Bpfman)
 	require.NotNil(t, gotProg.Bpfman.Program)
-	require.Equal(t, "test_fentry", gotProg.Bpfman.Program.LoadSpec.ProgramName)
-	require.NotEmpty(t, gotProg.Bpfman.Program.LoadSpec.PinPath, "program should have pin path")
+	require.Equal(t, "test_fentry", gotProg.Bpfman.Program.ProgramName)
+	require.NotEmpty(t, gotProg.Bpfman.Program.PinPath, "program should have pin path")
 
 	// Round-trip: List should include our program
 	listedProgs, err := env.Client.List(ctx)
@@ -686,8 +683,8 @@ func TestFentry_LoadAttachDetachUnload(t *testing.T) {
 	require.NotEmpty(t, listedProgs[0].KernelProgram.Tag)
 	require.False(t, listedProgs[0].KernelProgram.LoadedAt.IsZero())
 	require.NotNil(t, listedProgs[0].Metadata)
-	require.Equal(t, "test_fentry", listedProgs[0].Metadata.LoadSpec.ProgramName)
-	require.NotEmpty(t, listedProgs[0].Metadata.LoadSpec.PinPath)
+	require.Equal(t, "test_fentry", listedProgs[0].Metadata.ProgramName)
+	require.NotEmpty(t, listedProgs[0].Metadata.PinPath)
 
 	// When: attach via client (fentry doesn't need additional params - target is in program)
 	link, err := env.Client.AttachFentry(ctx, prog.Kernel.ID(), "")
@@ -759,12 +756,9 @@ func TestFexit_LoadAttachDetachUnload(t *testing.T) {
 	}
 
 	// When: load from file via client
-	prog, err := env.Client.Load(ctx, bpfman.LoadSpec{
-		ObjectPath:  bytecodeFile,
-		ProgramName: "test_fexit",
-		ProgramType: bpfman.ProgramTypeFexit,
-		AttachFunc:  "do_unlinkat",
-	}, manager.LoadOpts{})
+	spec, err := bpfman.NewAttachLoadSpec(bytecodeFile, "test_fexit", bpfman.ProgramTypeFexit, "do_unlinkat")
+	require.NoError(t, err)
+	prog, err := env.Client.Load(ctx, spec, manager.LoadOpts{})
 	require.NoError(t, err)
 
 	// Then: program has expected properties
@@ -787,8 +781,8 @@ func TestFexit_LoadAttachDetachUnload(t *testing.T) {
 	require.False(t, gotProg.Kernel.Program.LoadedAt.IsZero(), "kernel should track LoadedAt")
 	require.NotNil(t, gotProg.Bpfman)
 	require.NotNil(t, gotProg.Bpfman.Program)
-	require.Equal(t, "test_fexit", gotProg.Bpfman.Program.LoadSpec.ProgramName)
-	require.NotEmpty(t, gotProg.Bpfman.Program.LoadSpec.PinPath, "program should have pin path")
+	require.Equal(t, "test_fexit", gotProg.Bpfman.Program.ProgramName)
+	require.NotEmpty(t, gotProg.Bpfman.Program.PinPath, "program should have pin path")
 
 	// Round-trip: List should include our program
 	listedProgs, err := env.Client.List(ctx)
@@ -799,8 +793,8 @@ func TestFexit_LoadAttachDetachUnload(t *testing.T) {
 	require.NotEmpty(t, listedProgs[0].KernelProgram.Tag)
 	require.False(t, listedProgs[0].KernelProgram.LoadedAt.IsZero())
 	require.NotNil(t, listedProgs[0].Metadata)
-	require.Equal(t, "test_fexit", listedProgs[0].Metadata.LoadSpec.ProgramName)
-	require.NotEmpty(t, listedProgs[0].Metadata.LoadSpec.PinPath)
+	require.Equal(t, "test_fexit", listedProgs[0].Metadata.ProgramName)
+	require.NotEmpty(t, listedProgs[0].Metadata.PinPath)
 
 	// When: attach via client
 	link, err := env.Client.AttachFexit(ctx, prog.Kernel.ID(), "")
@@ -868,7 +862,7 @@ func TestTC_LoadAttachDetachUnload(t *testing.T) {
 	imageRef := interpreter.ImageRef{
 		URL: "quay.io/bpfman-bytecode/go-tc-counter:latest",
 	}
-	programs, err := env.Client.LoadImage(ctx, imageRef, []bpfman.LoadSpec{
+	programs, err := env.Client.LoadImage(ctx, imageRef, []client.ImageProgramSpec{
 		{
 			ProgramType: bpfman.ProgramTypeTC,
 			ProgramName: "stats",
@@ -899,8 +893,8 @@ func TestTC_LoadAttachDetachUnload(t *testing.T) {
 	require.False(t, gotProg.Kernel.Program.LoadedAt.IsZero(), "kernel should track LoadedAt")
 	require.NotNil(t, gotProg.Bpfman)
 	require.NotNil(t, gotProg.Bpfman.Program)
-	require.Equal(t, "stats", gotProg.Bpfman.Program.LoadSpec.ProgramName)
-	require.NotEmpty(t, gotProg.Bpfman.Program.LoadSpec.PinPath, "program should have pin path")
+	require.Equal(t, "stats", gotProg.Bpfman.Program.ProgramName)
+	require.NotEmpty(t, gotProg.Bpfman.Program.PinPath, "program should have pin path")
 
 	// Round-trip: List should include our program
 	listedProgs, err := env.Client.List(ctx)
@@ -911,8 +905,8 @@ func TestTC_LoadAttachDetachUnload(t *testing.T) {
 	require.NotEmpty(t, listedProgs[0].KernelProgram.Tag)
 	require.False(t, listedProgs[0].KernelProgram.LoadedAt.IsZero())
 	require.NotNil(t, listedProgs[0].Metadata)
-	require.Equal(t, "stats", listedProgs[0].Metadata.LoadSpec.ProgramName)
-	require.NotEmpty(t, listedProgs[0].Metadata.LoadSpec.PinPath)
+	require.Equal(t, "stats", listedProgs[0].Metadata.ProgramName)
+	require.NotEmpty(t, listedProgs[0].Metadata.PinPath)
 
 	// When: attach via client to lo interface (always available)
 	// TC uses dispatchers and supports both ingress and egress
@@ -987,7 +981,7 @@ func TestTCX_LoadAttachDetachUnload(t *testing.T) {
 	imageRef := interpreter.ImageRef{
 		URL: "quay.io/bpfman-bytecode/go-tc-counter:latest",
 	}
-	programs, err := env.Client.LoadImage(ctx, imageRef, []bpfman.LoadSpec{
+	programs, err := env.Client.LoadImage(ctx, imageRef, []client.ImageProgramSpec{
 		{
 			ProgramType: bpfman.ProgramTypeTCX,
 			ProgramName: "stats",
@@ -1018,8 +1012,8 @@ func TestTCX_LoadAttachDetachUnload(t *testing.T) {
 	require.False(t, gotProg.Kernel.Program.LoadedAt.IsZero(), "kernel should track LoadedAt")
 	require.NotNil(t, gotProg.Bpfman)
 	require.NotNil(t, gotProg.Bpfman.Program)
-	require.Equal(t, "stats", gotProg.Bpfman.Program.LoadSpec.ProgramName)
-	require.NotEmpty(t, gotProg.Bpfman.Program.LoadSpec.PinPath, "program should have pin path")
+	require.Equal(t, "stats", gotProg.Bpfman.Program.ProgramName)
+	require.NotEmpty(t, gotProg.Bpfman.Program.PinPath, "program should have pin path")
 
 	// Round-trip: List should include our program
 	listedProgs, err := env.Client.List(ctx)
@@ -1030,8 +1024,8 @@ func TestTCX_LoadAttachDetachUnload(t *testing.T) {
 	require.NotEmpty(t, listedProgs[0].KernelProgram.Tag)
 	require.False(t, listedProgs[0].KernelProgram.LoadedAt.IsZero())
 	require.NotNil(t, listedProgs[0].Metadata)
-	require.Equal(t, "stats", listedProgs[0].Metadata.LoadSpec.ProgramName)
-	require.NotEmpty(t, listedProgs[0].Metadata.LoadSpec.PinPath)
+	require.Equal(t, "stats", listedProgs[0].Metadata.ProgramName)
+	require.NotEmpty(t, listedProgs[0].Metadata.PinPath)
 
 	// When: attach via client to lo interface
 	link, err := env.Client.AttachTCX(ctx, prog.Kernel.ID(), 1, "lo", "ingress", 50, "")
@@ -1103,7 +1097,7 @@ func TestXDP_LoadAttachDetachUnload(t *testing.T) {
 	imageRef := interpreter.ImageRef{
 		URL: "quay.io/bpfman-bytecode/xdp_pass:latest",
 	}
-	programs, err := env.Client.LoadImage(ctx, imageRef, []bpfman.LoadSpec{
+	programs, err := env.Client.LoadImage(ctx, imageRef, []client.ImageProgramSpec{
 		{
 			ProgramType: bpfman.ProgramTypeXDP,
 			ProgramName: "pass",
@@ -1134,8 +1128,8 @@ func TestXDP_LoadAttachDetachUnload(t *testing.T) {
 	require.False(t, gotProg.Kernel.Program.LoadedAt.IsZero(), "kernel should track LoadedAt")
 	require.NotNil(t, gotProg.Bpfman)
 	require.NotNil(t, gotProg.Bpfman.Program)
-	require.Equal(t, "pass", gotProg.Bpfman.Program.LoadSpec.ProgramName)
-	require.NotEmpty(t, gotProg.Bpfman.Program.LoadSpec.PinPath, "program should have pin path")
+	require.Equal(t, "pass", gotProg.Bpfman.Program.ProgramName)
+	require.NotEmpty(t, gotProg.Bpfman.Program.PinPath, "program should have pin path")
 
 	// Round-trip: List should include our program
 	listedProgs, err := env.Client.List(ctx)
@@ -1146,8 +1140,8 @@ func TestXDP_LoadAttachDetachUnload(t *testing.T) {
 	require.NotEmpty(t, listedProgs[0].KernelProgram.Tag)
 	require.False(t, listedProgs[0].KernelProgram.LoadedAt.IsZero())
 	require.NotNil(t, listedProgs[0].Metadata)
-	require.Equal(t, "pass", listedProgs[0].Metadata.LoadSpec.ProgramName)
-	require.NotEmpty(t, listedProgs[0].Metadata.LoadSpec.PinPath)
+	require.Equal(t, "pass", listedProgs[0].Metadata.ProgramName)
+	require.NotEmpty(t, listedProgs[0].Metadata.PinPath)
 
 	// When: attach via client to lo interface
 	link, err := env.Client.AttachXDP(ctx, prog.Kernel.ID(), 1, "lo", "")

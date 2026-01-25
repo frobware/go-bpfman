@@ -650,34 +650,16 @@ func (s *sqliteStore) scanProgram(row *sql.Row) (bpfman.Program, error) {
 		}
 	}
 
-	// Construct LoadSpec using the appropriate constructor
-	// This re-validates the data, providing defense in depth against corruption
-	var loadSpec bpfman.LoadSpec
-	var constructErr error
-	if programType.RequiresAttachFunc() {
-		loadSpec, constructErr = bpfman.NewAttachLoadSpec(objectPath, programName, programType, attachFuncVal)
-	} else {
-		loadSpec, constructErr = bpfman.NewLoadSpec(objectPath, programName, programType)
-	}
-	if constructErr != nil {
-		return bpfman.Program{}, fmt.Errorf("invalid program data in store: %w", constructErr)
-	}
-
-	// Apply optional fields
-	loadSpec = loadSpec.WithPinPath(pinPath)
-	if globalData != nil {
-		loadSpec = loadSpec.WithGlobalData(globalData)
-	}
-	if imageSource != nil {
-		loadSpec = loadSpec.WithImageSource(imageSource)
-	}
-	if mapOwnerIDVal != 0 {
-		loadSpec = loadSpec.WithMapOwnerID(mapOwnerIDVal)
-	}
-
-	// Build the Program
+	// Build the Program directly from the stored fields
 	prog := bpfman.Program{
-		LoadSpec: loadSpec,
+		ProgramName: programName,
+		ProgramType: programType,
+		ObjectPath:  objectPath,
+		PinPath:     pinPath,
+		GlobalData:  globalData,
+		ImageSource: imageSource,
+		AttachFunc:  attachFuncVal,
+		MapOwnerID:  mapOwnerIDVal,
 	}
 	if owner.Valid {
 		prog.Owner = owner.String
@@ -725,15 +707,15 @@ func (s *sqliteStore) getUserMetadata(ctx context.Context, kernelID uint32) (map
 func (s *sqliteStore) Save(ctx context.Context, kernelID uint32, metadata bpfman.Program) error {
 	// Marshal only opaque fields to JSON
 	var globalDataJSON, imageSourceJSON sql.NullString
-	if metadata.LoadSpec.GlobalData() != nil {
-		data, err := json.Marshal(metadata.LoadSpec.GlobalData())
+	if metadata.GlobalData != nil {
+		data, err := json.Marshal(metadata.GlobalData)
 		if err != nil {
 			return fmt.Errorf("failed to marshal global_data: %w", err)
 		}
 		globalDataJSON = sql.NullString{String: string(data), Valid: true}
 	}
-	if metadata.LoadSpec.ImageSource() != nil {
-		data, err := json.Marshal(metadata.LoadSpec.ImageSource())
+	if metadata.ImageSource != nil {
+		data, err := json.Marshal(metadata.ImageSource)
 		if err != nil {
 			return fmt.Errorf("failed to marshal image_source: %w", err)
 		}
@@ -742,12 +724,12 @@ func (s *sqliteStore) Save(ctx context.Context, kernelID uint32, metadata bpfman
 
 	// Handle nullable fields
 	var mapOwnerID sql.NullInt64
-	if metadata.LoadSpec.MapOwnerID() != 0 {
-		mapOwnerID = sql.NullInt64{Int64: int64(metadata.LoadSpec.MapOwnerID()), Valid: true}
+	if metadata.MapOwnerID != 0 {
+		mapOwnerID = sql.NullInt64{Int64: int64(metadata.MapOwnerID), Valid: true}
 	}
 	var attachFunc, owner, description sql.NullString
-	if metadata.LoadSpec.AttachFunc() != "" {
-		attachFunc = sql.NullString{String: metadata.LoadSpec.AttachFunc(), Valid: true}
+	if metadata.AttachFunc != "" {
+		attachFunc = sql.NullString{String: metadata.AttachFunc, Valid: true}
 	}
 	if metadata.Owner != "" {
 		owner = sql.NullString{String: metadata.Owner, Valid: true}
@@ -759,10 +741,10 @@ func (s *sqliteStore) Save(ctx context.Context, kernelID uint32, metadata bpfman
 	start := time.Now()
 	result, err := s.stmtSaveProgram.ExecContext(ctx,
 		kernelID,
-		metadata.LoadSpec.ProgramName(),
-		metadata.LoadSpec.ProgramType().String(),
-		metadata.LoadSpec.ObjectPath(),
-		metadata.LoadSpec.PinPath(),
+		metadata.ProgramName,
+		metadata.ProgramType.String(),
+		metadata.ObjectPath,
+		metadata.PinPath,
 		attachFunc,
 		globalDataJSON,
 		mapOwnerID,
@@ -772,11 +754,11 @@ func (s *sqliteStore) Save(ctx context.Context, kernelID uint32, metadata bpfman
 		metadata.CreatedAt.Format(time.RFC3339),
 	)
 	if err != nil {
-		s.logger.Debug("sql", "stmt", "SaveProgram", "args", []any{kernelID, metadata.LoadSpec.ProgramName(), "(columns)"}, "duration_ms", msec(time.Since(start)), "error", err)
+		s.logger.Debug("sql", "stmt", "SaveProgram", "args", []any{kernelID, metadata.ProgramName, "(columns)"}, "duration_ms", msec(time.Since(start)), "error", err)
 		return fmt.Errorf("failed to insert program: %w", err)
 	}
 	rows, _ := result.RowsAffected()
-	s.logger.Debug("sql", "stmt", "SaveProgram", "args", []any{kernelID, metadata.LoadSpec.ProgramName(), "(columns)"}, "duration_ms", msec(time.Since(start)), "rows_affected", rows)
+	s.logger.Debug("sql", "stmt", "SaveProgram", "args", []any{kernelID, metadata.ProgramName, "(columns)"}, "duration_ms", msec(time.Since(start)), "rows_affected", rows)
 
 	// Clear old tags and insert new ones
 	start = time.Now()
@@ -927,34 +909,16 @@ func (s *sqliteStore) scanProgramFromRows(rows *sql.Rows) (uint32, bpfman.Progra
 		}
 	}
 
-	// Construct LoadSpec using the appropriate constructor
-	// This re-validates the data, providing defense in depth against corruption
-	var loadSpec bpfman.LoadSpec
-	var constructErr error
-	if programType.RequiresAttachFunc() {
-		loadSpec, constructErr = bpfman.NewAttachLoadSpec(objectPath, programName, programType, attachFuncVal)
-	} else {
-		loadSpec, constructErr = bpfman.NewLoadSpec(objectPath, programName, programType)
-	}
-	if constructErr != nil {
-		return 0, bpfman.Program{}, fmt.Errorf("invalid program data in store for %d: %w", kernelID, constructErr)
-	}
-
-	// Apply optional fields
-	loadSpec = loadSpec.WithPinPath(pinPath)
-	if globalData != nil {
-		loadSpec = loadSpec.WithGlobalData(globalData)
-	}
-	if imageSource != nil {
-		loadSpec = loadSpec.WithImageSource(imageSource)
-	}
-	if mapOwnerIDVal != 0 {
-		loadSpec = loadSpec.WithMapOwnerID(mapOwnerIDVal)
-	}
-
-	// Build the Program
+	// Build the Program directly from the stored fields
 	prog := bpfman.Program{
-		LoadSpec: loadSpec,
+		ProgramName: programName,
+		ProgramType: programType,
+		ObjectPath:  objectPath,
+		PinPath:     pinPath,
+		GlobalData:  globalData,
+		ImageSource: imageSource,
+		AttachFunc:  attachFuncVal,
+		MapOwnerID:  mapOwnerIDVal,
 	}
 	if owner.Valid {
 		prog.Owner = owner.String

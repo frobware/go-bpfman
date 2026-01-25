@@ -148,8 +148,8 @@ func formatProgramInfoTree(info manager.ProgramInfo) string {
 		if !p.CreatedAt.IsZero() {
 			fmt.Fprintf(&b, "   ├─ created:    %s\n", p.CreatedAt.Format("2006-01-02T15:04:05Z"))
 		}
-		fmt.Fprintf(&b, "   ├─ source:     %s\n", p.LoadSpec.ObjectPath())
-		fmt.Fprintf(&b, "   └─ pin_path:   %s\n", p.LoadSpec.PinPath())
+		fmt.Fprintf(&b, "   ├─ source:     %s\n", p.ObjectPath)
+		fmt.Fprintf(&b, "   └─ pin_path:   %s\n", p.PinPath)
 	}
 
 	return b.String()
@@ -163,12 +163,12 @@ func formatProgramInfoTable(info manager.ProgramInfo) string {
 		p := info.Bpfman.Program
 		b.WriteString(" Bpfman State\n")
 		bw := tabwriter.NewWriter(&b, 0, 0, 1, ' ', 0)
-		fmt.Fprintf(bw, " BPF Function:\t%s\n", p.LoadSpec.ProgramName())
-		fmt.Fprintf(bw, " Program Type:\t%s\n", p.LoadSpec.ProgramType())
-		fmt.Fprintf(bw, " Path:\t%s\n", p.LoadSpec.ObjectPath())
+		fmt.Fprintf(bw, " BPF Function:\t%s\n", p.ProgramName)
+		fmt.Fprintf(bw, " Program Type:\t%s\n", p.ProgramType)
+		fmt.Fprintf(bw, " Path:\t%s\n", p.ObjectPath)
 		fmt.Fprintf(bw, " Global:\tNone\n")
 		fmt.Fprintf(bw, " Metadata:\tNone\n")
-		fmt.Fprintf(bw, " Map Pin Path:\t%s\n", p.LoadSpec.PinPath())
+		fmt.Fprintf(bw, " Map Pin Path:\t%s\n", p.PinPath)
 		fmt.Fprintf(bw, " Map Owner ID:\tNone\n")
 		fmt.Fprintf(bw, " Maps Used By:\tNone\n")
 
@@ -297,10 +297,10 @@ func formatProgramListTable(programs []manager.ManagedProgram) string {
 
 		// Prefer full name from metadata over kernel-truncated name
 		if p.Metadata != nil {
-			if p.Metadata.LoadSpec.ProgramName() != "" {
-				name = p.Metadata.LoadSpec.ProgramName()
+			if p.Metadata.ProgramName != "" {
+				name = p.Metadata.ProgramName
 			}
-			source = p.Metadata.LoadSpec.ObjectPath()
+			source = p.Metadata.ObjectPath
 		}
 
 		fmt.Fprintf(w, "%d\t%s\t%s\t%s\n", id, progType, name, source)

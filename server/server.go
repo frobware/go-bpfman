@@ -547,7 +547,7 @@ func (s *Server) attachKprobe(ctx context.Context, programID uint32, info *pb.Kp
 	// Determine retprobe from program type stored in bpfman metadata
 	var retprobe bool
 	if prog.Bpfman != nil && prog.Bpfman.Program != nil {
-		retprobe = prog.Bpfman.Program.LoadSpec.ProgramType() == bpfman.ProgramTypeKretprobe
+		retprobe = prog.Bpfman.Program.ProgramType == bpfman.ProgramTypeKretprobe
 	}
 
 	// Call manager with empty linkPinPath to auto-generate
@@ -576,7 +576,7 @@ func (s *Server) attachUprobe(ctx context.Context, programID uint32, info *pb.Up
 	// Determine retprobe from program type stored in bpfman metadata
 	var retprobe bool
 	if prog.Bpfman != nil && prog.Bpfman.Program != nil {
-		retprobe = prog.Bpfman.Program.LoadSpec.ProgramType() == bpfman.ProgramTypeUretprobe
+		retprobe = prog.Bpfman.Program.ProgramType == bpfman.ProgramTypeUretprobe
 	}
 
 	// Call manager with empty linkPinPath to auto-generate
@@ -649,7 +649,7 @@ func (s *Server) List(ctx context.Context, req *pb.ListRequest) (*pb.ListRespons
 
 	for kernelID, metadata := range stored {
 		// Filter by program type if specified
-		if req.ProgramType != nil && *req.ProgramType != uint32(metadata.LoadSpec.ProgramType()) {
+		if req.ProgramType != nil && *req.ProgramType != uint32(metadata.ProgramType) {
 			continue
 		}
 
@@ -677,16 +677,16 @@ func (s *Server) List(ctx context.Context, req *pb.ListRequest) (*pb.ListRespons
 
 		results = append(results, &pb.ListResponse_ListResult{
 			Info: &pb.ProgramInfo{
-				Name:       metadata.LoadSpec.ProgramName(),
-				Bytecode:   &pb.BytecodeLocation{Location: &pb.BytecodeLocation_File{File: metadata.LoadSpec.ObjectPath()}},
+				Name:       metadata.ProgramName,
+				Bytecode:   &pb.BytecodeLocation{Location: &pb.BytecodeLocation_File{File: metadata.ObjectPath}},
 				Metadata:   metadata.UserMetadata,
-				GlobalData: metadata.LoadSpec.GlobalData(),
-				MapPinPath: metadata.LoadSpec.PinPath(),
+				GlobalData: metadata.GlobalData,
+				MapPinPath: metadata.PinPath,
 			},
 			KernelInfo: &pb.KernelProgramInfo{
 				Id:          kernelID,
 				Name:        kp.Name,
-				ProgramType: uint32(metadata.LoadSpec.ProgramType()),
+				ProgramType: uint32(metadata.ProgramType),
 				Tag:         kp.Tag,
 				LoadedAt:    kp.LoadedAt.Format(time.RFC3339),
 				MapIds:      kp.MapIDs,
@@ -731,17 +731,17 @@ func (s *Server) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, 
 
 	return &pb.GetResponse{
 		Info: &pb.ProgramInfo{
-			Name:       metadata.LoadSpec.ProgramName(),
-			Bytecode:   &pb.BytecodeLocation{Location: &pb.BytecodeLocation_File{File: metadata.LoadSpec.ObjectPath()}},
+			Name:       metadata.ProgramName,
+			Bytecode:   &pb.BytecodeLocation{Location: &pb.BytecodeLocation_File{File: metadata.ObjectPath}},
 			Metadata:   metadata.UserMetadata,
-			GlobalData: metadata.LoadSpec.GlobalData(),
-			MapPinPath: metadata.LoadSpec.PinPath(),
+			GlobalData: metadata.GlobalData,
+			MapPinPath: metadata.PinPath,
 			Links:      linkIDs,
 		},
 		KernelInfo: &pb.KernelProgramInfo{
 			Id:          req.Id,
 			Name:        kp.Name,
-			ProgramType: uint32(metadata.LoadSpec.ProgramType()),
+			ProgramType: uint32(metadata.ProgramType),
 			Tag:         kp.Tag,
 			LoadedAt:    kp.LoadedAt.Format(time.RFC3339),
 			MapIds:      kp.MapIDs,

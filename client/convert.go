@@ -230,16 +230,12 @@ func protoListResponseToPrograms(resp *pb.ListResponse) ([]manager.ManagedProgra
 				}
 			}
 
-			loadSpec, err := bpfman.NewObservedLoadSpec(objectPath, r.Info.Name, progType)
-			if err != nil {
-				return nil, fmt.Errorf("invalid program data for ID %d: %w", r.KernelInfo.Id, err)
-			}
-			loadSpec = loadSpec.WithPinPath(r.Info.MapPinPath)
-			if r.Info.GlobalData != nil {
-				loadSpec = loadSpec.WithGlobalData(r.Info.GlobalData)
-			}
 			mp.Metadata = &bpfman.Program{
-				LoadSpec:     loadSpec,
+				ProgramName:  r.Info.Name,
+				ProgramType:  progType,
+				ObjectPath:   objectPath,
+				PinPath:      r.Info.MapPinPath,
+				GlobalData:   r.Info.GlobalData,
 				UserMetadata: r.Info.Metadata,
 			}
 		}
@@ -290,16 +286,12 @@ func protoGetResponseToInfo(resp *pb.GetResponse, kernelID uint32) (manager.Prog
 			}
 		}
 
-		loadSpec, err := bpfman.NewObservedLoadSpec(objectPath, resp.Info.Name, progType)
-		if err != nil {
-			return manager.ProgramInfo{}, fmt.Errorf("invalid program data: %w", err)
-		}
-		loadSpec = loadSpec.WithPinPath(resp.Info.MapPinPath)
-		if resp.Info.GlobalData != nil {
-			loadSpec = loadSpec.WithGlobalData(resp.Info.GlobalData)
-		}
 		prog := &bpfman.Program{
-			LoadSpec:     loadSpec,
+			ProgramName:  resp.Info.Name,
+			ProgramType:  progType,
+			ObjectPath:   objectPath,
+			PinPath:      resp.Info.MapPinPath,
+			GlobalData:   resp.Info.GlobalData,
 			UserMetadata: resp.Info.Metadata,
 		}
 

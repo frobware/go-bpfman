@@ -154,7 +154,7 @@ func (m *Manager) planOrphanPins(ctx context.Context, cfg GCConfig) ([]GCItem, e
 	// Build set of known pin paths
 	knownPaths := make(map[string]bool)
 	for _, meta := range loaded {
-		knownPaths[meta.LoadSpec.PinPath()] = true
+		knownPaths[meta.PinPath] = true
 	}
 
 	// Scan bpfman root for directories
@@ -214,7 +214,7 @@ func (m *Manager) planOrphanDBEntries(ctx context.Context, cfg GCConfig) ([]GCIt
 	// some other program now has the same kernel ID).
 	var items []GCItem
 	for kernelID, meta := range stored {
-		pinPath := meta.LoadSpec.PinPath()
+		pinPath := meta.PinPath
 		if _, err := os.Stat(pinPath); err == nil {
 			continue // Pin path exists, not an orphan
 		}
