@@ -66,7 +66,14 @@ func (c *GetLinkCmd) Run(cli *CLI) error {
 		return err
 	}
 
-	output, err := FormatLinkInfo(summary, details, &c.OutputFlags)
+	// Fetch program info to get the BPF function name
+	var bpfFunction string
+	progInfo, err := b.Get(ctx, summary.KernelProgramID)
+	if err == nil && progInfo.Bpfman != nil && progInfo.Bpfman.Program != nil {
+		bpfFunction = progInfo.Bpfman.Program.ProgramName
+	}
+
+	output, err := FormatLinkInfo(bpfFunction, summary, details, &c.OutputFlags)
 	if err != nil {
 		return err
 	}
