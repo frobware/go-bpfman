@@ -14,10 +14,11 @@ import (
 	pb "github.com/frobware/go-bpfman/server/pb"
 )
 
-// mockBpfmanClient records the LoadRequest for verification.
+// mockBpfmanClient records requests for verification.
 type mockBpfmanClient struct {
 	pb.BpfmanClient
-	lastLoadRequest *pb.LoadRequest
+	lastLoadRequest   *pb.LoadRequest
+	lastAttachRequest *pb.AttachRequest
 }
 
 func (m *mockBpfmanClient) Load(ctx context.Context, req *pb.LoadRequest, opts ...grpc.CallOption) (*pb.LoadResponse, error) {
@@ -37,6 +38,13 @@ func (m *mockBpfmanClient) Load(ctx context.Context, req *pb.LoadRequest, opts .
 				},
 			},
 		},
+	}, nil
+}
+
+func (m *mockBpfmanClient) Attach(ctx context.Context, req *pb.AttachRequest, opts ...grpc.CallOption) (*pb.AttachResponse, error) {
+	m.lastAttachRequest = req
+	return &pb.AttachResponse{
+		LinkId: 456,
 	}, nil
 }
 
@@ -331,4 +339,262 @@ func TestLoad_FexitIncludesAttachFunc(t *testing.T) {
 	fexitInfo, ok := info.Info.Info.(*pb.ProgSpecificInfo_FexitLoadInfo)
 	require.True(t, ok, "expected FexitLoadInfo")
 	assert.Equal(t, "do_unlinkat", fexitInfo.FexitLoadInfo.FnName, "attach function should match")
+}
+
+// --- Attach method tests ---
+
+// TestAttachTracepoint_BuildsCorrectRequest verifies that AttachTracepoint
+// correctly builds the proto request from the spec.
+func TestAttachTracepoint_BuildsCorrectRequest(t *testing.T) {
+	mock := &mockBpfmanClient{}
+	client := &remoteClient{client: mock}
+
+	spec, err := bpfman.NewTracepointAttachSpec(123, "syscalls", "sys_enter_kill")
+	require.NoError(t, err)
+
+	summary, err := client.AttachTracepoint(context.Background(), spec, bpfman.AttachOpts{})
+	require.NoError(t, err)
+
+	// Verify request
+	require.NotNil(t, mock.lastAttachRequest)
+	assert.Equal(t, uint32(123), mock.lastAttachRequest.Id, "program ID should match")
+
+	tpInfo, ok := mock.lastAttachRequest.Attach.Info.(*pb.AttachInfo_TracepointAttachInfo)
+	require.True(t, ok, "expected TracepointAttachInfo")
+	assert.Equal(t, "syscalls/sys_enter_kill", tpInfo.TracepointAttachInfo.Tracepoint,
+		"tracepoint should be group/name format")
+
+	// Verify response mapping
+	assert.Equal(t, bpfman.LinkTypeTracepoint, summary.LinkType)
+	assert.Equal(t, uint32(123), summary.KernelProgramID)
+	assert.Equal(t, uint32(456), summary.KernelLinkID)
+}
+
+// TestAttachXDP_BuildsCorrectRequest verifies that AttachXDP
+// correctly builds the proto request from the spec.
+func TestAttachXDP_BuildsCorrectRequest(t *testing.T) {
+	mock := &mockBpfmanClient{}
+	client := &remoteClient{client: mock}
+
+	spec, err := bpfman.NewXDPAttachSpec(123, "eth0", 50)
+	require.NoError(t, err)
+
+	summary, err := client.AttachXDP(context.Background(), spec, bpfman.AttachOpts{})
+	require.NoError(t, err)
+
+	// Verify request
+	require.NotNil(t, mock.lastAttachRequest)
+	assert.Equal(t, uint32(123), mock.lastAttachRequest.Id)
+
+	xdpInfo, ok := mock.lastAttachRequest.Attach.Info.(*pb.AttachInfo_XdpAttachInfo)
+	require.True(t, ok, "expected XdpAttachInfo")
+	assert.Equal(t, "eth0", xdpInfo.XdpAttachInfo.Iface)
+	assert.Equal(t, int32(50), xdpInfo.XdpAttachInfo.Priority)
+
+	// Verify response mapping
+	assert.Equal(t, bpfman.LinkTypeXDP, summary.LinkType)
+	assert.Equal(t, uint32(123), summary.KernelProgramID)
+	assert.Equal(t, uint32(456), summary.KernelLinkID)
+}
+
+// TestAttachTC_BuildsCorrectRequest verifies that AttachTC
+// correctly builds the proto request from the spec.
+func TestAttachTC_BuildsCorrectRequest(t *testing.T) {
+	mock := &mockBpfmanClient{}
+	client := &remoteClient{client: mock}
+
+	spec, err := bpfman.NewTCAttachSpec(123, "eth0", 1, "ingress")
+	require.NoError(t, err)
+	spec = spec.WithPriority(100).WithProceedOn([]int32{0, 2})
+
+	summary, err := client.AttachTC(context.Background(), spec, bpfman.AttachOpts{})
+	require.NoError(t, err)
+
+	// Verify request
+	require.NotNil(t, mock.lastAttachRequest)
+	assert.Equal(t, uint32(123), mock.lastAttachRequest.Id)
+
+	tcInfo, ok := mock.lastAttachRequest.Attach.Info.(*pb.AttachInfo_TcAttachInfo)
+	require.True(t, ok, "expected TcAttachInfo")
+	assert.Equal(t, "eth0", tcInfo.TcAttachInfo.Iface)
+	assert.Equal(t, "ingress", tcInfo.TcAttachInfo.Direction)
+	assert.Equal(t, int32(100), tcInfo.TcAttachInfo.Priority)
+	assert.Equal(t, []int32{0, 2}, tcInfo.TcAttachInfo.ProceedOn)
+
+	// Verify response mapping
+	assert.Equal(t, bpfman.LinkTypeTC, summary.LinkType)
+	assert.Equal(t, uint32(123), summary.KernelProgramID)
+	assert.Equal(t, uint32(456), summary.KernelLinkID)
+}
+
+// TestAttachTCX_BuildsCorrectRequest verifies that AttachTCX
+// correctly builds the proto request from the spec.
+func TestAttachTCX_BuildsCorrectRequest(t *testing.T) {
+	mock := &mockBpfmanClient{}
+	client := &remoteClient{client: mock}
+
+	spec, err := bpfman.NewTCXAttachSpec(123, "eth0", 1, "egress")
+	require.NoError(t, err)
+	spec = spec.WithPriority(75)
+
+	summary, err := client.AttachTCX(context.Background(), spec, bpfman.AttachOpts{})
+	require.NoError(t, err)
+
+	// Verify request
+	require.NotNil(t, mock.lastAttachRequest)
+	assert.Equal(t, uint32(123), mock.lastAttachRequest.Id)
+
+	tcxInfo, ok := mock.lastAttachRequest.Attach.Info.(*pb.AttachInfo_TcxAttachInfo)
+	require.True(t, ok, "expected TcxAttachInfo")
+	assert.Equal(t, "eth0", tcxInfo.TcxAttachInfo.Iface)
+	assert.Equal(t, "egress", tcxInfo.TcxAttachInfo.Direction)
+	assert.Equal(t, int32(75), tcxInfo.TcxAttachInfo.Priority)
+
+	// Verify response mapping
+	assert.Equal(t, bpfman.LinkTypeTCX, summary.LinkType)
+	assert.Equal(t, uint32(123), summary.KernelProgramID)
+	assert.Equal(t, uint32(456), summary.KernelLinkID)
+}
+
+// TestAttachKprobe_BuildsCorrectRequest verifies that AttachKprobe
+// correctly builds the proto request from the spec.
+func TestAttachKprobe_BuildsCorrectRequest(t *testing.T) {
+	mock := &mockBpfmanClient{}
+	client := &remoteClient{client: mock}
+
+	spec, err := bpfman.NewKprobeAttachSpec(123, "do_sys_open")
+	require.NoError(t, err)
+
+	summary, err := client.AttachKprobe(context.Background(), spec, bpfman.AttachOpts{})
+	require.NoError(t, err)
+
+	// Verify request
+	require.NotNil(t, mock.lastAttachRequest)
+	assert.Equal(t, uint32(123), mock.lastAttachRequest.Id)
+
+	kprobeInfo, ok := mock.lastAttachRequest.Attach.Info.(*pb.AttachInfo_KprobeAttachInfo)
+	require.True(t, ok, "expected KprobeAttachInfo")
+	assert.Equal(t, "do_sys_open", kprobeInfo.KprobeAttachInfo.FnName)
+	assert.Equal(t, uint64(0), kprobeInfo.KprobeAttachInfo.Offset)
+
+	// Verify response mapping
+	assert.Equal(t, bpfman.LinkTypeKprobe, summary.LinkType)
+	assert.Equal(t, uint32(123), summary.KernelProgramID)
+	assert.Equal(t, uint32(456), summary.KernelLinkID)
+}
+
+// TestAttachKprobe_WithOffset verifies that AttachKprobe includes the offset.
+func TestAttachKprobe_WithOffset(t *testing.T) {
+	mock := &mockBpfmanClient{}
+	client := &remoteClient{client: mock}
+
+	spec, err := bpfman.NewKprobeAttachSpec(123, "do_sys_open")
+	require.NoError(t, err)
+	spec = spec.WithOffset(0x10)
+
+	_, err = client.AttachKprobe(context.Background(), spec, bpfman.AttachOpts{})
+	require.NoError(t, err)
+
+	kprobeInfo, ok := mock.lastAttachRequest.Attach.Info.(*pb.AttachInfo_KprobeAttachInfo)
+	require.True(t, ok)
+	assert.Equal(t, uint64(0x10), kprobeInfo.KprobeAttachInfo.Offset)
+}
+
+// TestAttachUprobe_BuildsCorrectRequest verifies that AttachUprobe
+// correctly builds the proto request from the spec.
+func TestAttachUprobe_BuildsCorrectRequest(t *testing.T) {
+	mock := &mockBpfmanClient{}
+	client := &remoteClient{client: mock}
+
+	spec, err := bpfman.NewUprobeAttachSpec(123, "/usr/lib/libc.so.6")
+	require.NoError(t, err)
+	spec = spec.WithFnName("malloc")
+
+	summary, err := client.AttachUprobe(context.Background(), spec, bpfman.AttachOpts{})
+	require.NoError(t, err)
+
+	// Verify request
+	require.NotNil(t, mock.lastAttachRequest)
+	assert.Equal(t, uint32(123), mock.lastAttachRequest.Id)
+
+	uprobeInfo, ok := mock.lastAttachRequest.Attach.Info.(*pb.AttachInfo_UprobeAttachInfo)
+	require.True(t, ok, "expected UprobeAttachInfo")
+	assert.Equal(t, "/usr/lib/libc.so.6", uprobeInfo.UprobeAttachInfo.Target)
+	assert.Equal(t, "malloc", *uprobeInfo.UprobeAttachInfo.FnName)
+	assert.Equal(t, uint64(0), uprobeInfo.UprobeAttachInfo.Offset)
+
+	// Verify response mapping
+	assert.Equal(t, bpfman.LinkTypeUprobe, summary.LinkType)
+	assert.Equal(t, uint32(123), summary.KernelProgramID)
+	assert.Equal(t, uint32(456), summary.KernelLinkID)
+}
+
+// TestAttachFentry_BuildsCorrectRequest verifies that AttachFentry
+// correctly builds the proto request from the spec.
+func TestAttachFentry_BuildsCorrectRequest(t *testing.T) {
+	mock := &mockBpfmanClient{}
+	client := &remoteClient{client: mock}
+
+	spec, err := bpfman.NewFentryAttachSpec(123)
+	require.NoError(t, err)
+
+	summary, err := client.AttachFentry(context.Background(), spec, bpfman.AttachOpts{})
+	require.NoError(t, err)
+
+	// Verify request
+	require.NotNil(t, mock.lastAttachRequest)
+	assert.Equal(t, uint32(123), mock.lastAttachRequest.Id)
+
+	fentryInfo, ok := mock.lastAttachRequest.Attach.Info.(*pb.AttachInfo_FentryAttachInfo)
+	require.True(t, ok, "expected FentryAttachInfo")
+	_ = fentryInfo // Fentry attach info is empty - function is specified at load time
+
+	// Verify response mapping
+	assert.Equal(t, bpfman.LinkTypeFentry, summary.LinkType)
+	assert.Equal(t, uint32(123), summary.KernelProgramID)
+	assert.Equal(t, uint32(456), summary.KernelLinkID)
+}
+
+// TestAttachFexit_BuildsCorrectRequest verifies that AttachFexit
+// correctly builds the proto request from the spec.
+func TestAttachFexit_BuildsCorrectRequest(t *testing.T) {
+	mock := &mockBpfmanClient{}
+	client := &remoteClient{client: mock}
+
+	spec, err := bpfman.NewFexitAttachSpec(123)
+	require.NoError(t, err)
+
+	summary, err := client.AttachFexit(context.Background(), spec, bpfman.AttachOpts{})
+	require.NoError(t, err)
+
+	// Verify request
+	require.NotNil(t, mock.lastAttachRequest)
+	assert.Equal(t, uint32(123), mock.lastAttachRequest.Id)
+
+	fexitInfo, ok := mock.lastAttachRequest.Attach.Info.(*pb.AttachInfo_FexitAttachInfo)
+	require.True(t, ok, "expected FexitAttachInfo")
+	_ = fexitInfo // Fexit attach info is empty - function is specified at load time
+
+	// Verify response mapping
+	assert.Equal(t, bpfman.LinkTypeFexit, summary.LinkType)
+	assert.Equal(t, uint32(123), summary.KernelProgramID)
+	assert.Equal(t, uint32(456), summary.KernelLinkID)
+}
+
+// TestAttach_LinkPinPathFromOpts verifies that AttachOpts.LinkPinPath
+// is correctly returned in the LinkSummary.
+func TestAttach_LinkPinPathFromOpts(t *testing.T) {
+	mock := &mockBpfmanClient{}
+	client := &remoteClient{client: mock}
+
+	spec, err := bpfman.NewXDPAttachSpec(123, "eth0", 50)
+	require.NoError(t, err)
+
+	summary, err := client.AttachXDP(context.Background(), spec, bpfman.AttachOpts{
+		LinkPinPath: "/run/bpfman/links/my-link",
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, "/run/bpfman/links/my-link", summary.PinPath,
+		"LinkPinPath from opts should be in summary")
 }
