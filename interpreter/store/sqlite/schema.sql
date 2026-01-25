@@ -39,10 +39,9 @@ CREATE TABLE IF NOT EXISTS program_metadata_index (
 
 CREATE INDEX IF NOT EXISTS idx_program_metadata_key_value ON program_metadata_index(key, value);
 
--- Enforce uniqueness for bpfman.io/ProgramName metadata
-CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_program_name
-    ON program_metadata_index(value)
-    WHERE key = 'bpfman.io/ProgramName';
+-- Note: No uniqueness constraint on bpfman.io/ProgramName.
+-- Multiple programs can share the same application name (e.g., when loading
+-- multiple BPF programs from a single image via the operator).
 
 --------------------------------------------------------------------------------
 -- Link Registry (Polymorphic Core)
