@@ -1068,9 +1068,9 @@ func TestLoadProgram_AllProgramTypes_RoundTrip(t *testing.T) {
 	// Test all program types that can be loaded via the proto API.
 	// Note: proto enum doesn't distinguish kretprobe/uretprobe from kprobe/uprobe.
 	tests := []struct {
-		name        string
-		protoType   pb.BpfmanProgramType
-		domainType  bpfman.ProgramType
+		name       string
+		protoType  pb.BpfmanProgramType
+		domainType bpfman.ProgramType
 	}{
 		{"XDP", pb.BpfmanProgramType_XDP, bpfman.ProgramTypeXDP},
 		{"TC", pb.BpfmanProgramType_TC, bpfman.ProgramTypeTC},
