@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
@@ -11,6 +12,9 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+// mapsMode is the permission mode for CSI-exposed maps (owner+group read/write).
+const mapsMode = 0o0660
 
 // CSI volume attribute keys matching upstream Rust bpfman.
 const (
@@ -50,7 +54,15 @@ func (d *Driver) NodeGetCapabilities(ctx context.Context, req *csi.NodeGetCapabi
 	)
 
 	resp := &csi.NodeGetCapabilitiesResponse{
-		Capabilities: []*csi.NodeServiceCapability{},
+		Capabilities: []*csi.NodeServiceCapability{
+			{
+				Type: &csi.NodeServiceCapability_Rpc{
+					Rpc: &csi.NodeServiceCapability_RPC{
+						Type: csi.NodeServiceCapability_RPC_VOLUME_MOUNT_GROUP,
+					},
+				},
+			},
+		},
 	}
 
 	d.logger.Info("NodeGetCapabilities response",
@@ -72,12 +84,26 @@ func (d *Driver) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolu
 	volumeContext := req.GetVolumeContext()
 	readonly := req.GetReadonly()
 
+	// Extract fsGroup from volume capability if present.
+	// This allows unprivileged containers to access the maps.
+	var fsGroup int = -1
+	if volCap := req.GetVolumeCapability(); volCap != nil {
+		if mount := volCap.GetMount(); mount != nil {
+			if groupStr := mount.GetVolumeMountGroup(); groupStr != "" {
+				if gid, err := strconv.Atoi(groupStr); err == nil {
+					fsGroup = gid
+				}
+			}
+		}
+	}
+
 	d.logger.Info("NodePublishVolume request",
 		"method", "Node.NodePublishVolume",
 		"volumeID", volumeID,
 		"targetPath", targetPath,
 		"volumeContext", volumeContext,
 		"readonly", readonly,
+		"fsGroup", fsGroup,
 	)
 
 	if volumeID == "" {
@@ -135,7 +161,18 @@ func (d *Driver) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolu
 		return nil, status.Errorf(codes.Internal, "failed to mount bpffs at %q: %v", podBpffs, err)
 	}
 
-	// 5. Re-pin each requested map
+	// 5. Set group ownership on the bpffs directory if fsGroup is specified
+	if fsGroup >= 0 {
+		if err := unix.Chown(podBpffs, -1, fsGroup); err != nil {
+			d.logger.Warn("failed to chown bpffs directory",
+				"path", podBpffs,
+				"gid", fsGroup,
+				"error", err,
+			)
+		}
+	}
+
+	// 6. Re-pin each requested map
 	mapNames := strings.Split(mapsStr, ",")
 	for _, mapName := range mapNames {
 		mapName = strings.TrimSpace(mapName)
@@ -160,9 +197,28 @@ func (d *Driver) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolu
 			}
 			return nil, status.Errorf(codes.Internal, "failed to re-pin map %q: %v", mapName, err)
 		}
+
+		// Set group ownership and permissions on the map if fsGroup is specified.
+		// This allows unprivileged containers to access the maps.
+		if fsGroup >= 0 {
+			if err := unix.Chown(dstPath, -1, fsGroup); err != nil {
+				d.logger.Warn("failed to chown map",
+					"path", dstPath,
+					"gid", fsGroup,
+					"error", err,
+				)
+			}
+			if err := os.Chmod(dstPath, mapsMode); err != nil {
+				d.logger.Warn("failed to chmod map",
+					"path", dstPath,
+					"mode", mapsMode,
+					"error", err,
+				)
+			}
+		}
 	}
 
-	// 6. Create target directory and bind-mount
+	// 7. Create target directory and bind-mount
 	if err := os.MkdirAll(targetPath, 0755); err != nil {
 		unix.Unmount(podBpffs, 0)
 		if rmErr := os.RemoveAll(podBpffs); rmErr != nil {
@@ -192,6 +248,7 @@ func (d *Driver) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolu
 		"podBpffs", podBpffs,
 		"targetPath", targetPath,
 		"readonly", readonly,
+		"fsGroup", fsGroup,
 	)
 
 	return &csi.NodePublishVolumeResponse{}, nil
