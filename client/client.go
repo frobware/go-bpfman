@@ -107,14 +107,14 @@ type Client interface {
 	Get(ctx context.Context, kernelID uint32) (manager.ProgramInfo, error)
 
 	// Attach/detach operations
-	AttachTracepoint(ctx context.Context, programKernelID uint32, group, name, linkPinPath string) (bpfman.LinkSummary, error)
-	AttachXDP(ctx context.Context, programKernelID uint32, ifindex int, ifname, linkPinPath string) (bpfman.LinkSummary, error)
-	AttachTC(ctx context.Context, programKernelID uint32, ifindex int, ifname, direction string, priority int, proceedOn []int32, linkPinPath string) (bpfman.LinkSummary, error)
-	AttachTCX(ctx context.Context, programKernelID uint32, ifindex int, ifname, direction string, priority int, linkPinPath string) (bpfman.LinkSummary, error)
-	AttachKprobe(ctx context.Context, programKernelID uint32, fnName string, offset uint64, linkPinPath string) (bpfman.LinkSummary, error)
-	AttachUprobe(ctx context.Context, programKernelID uint32, target, fnName string, offset uint64, linkPinPath string) (bpfman.LinkSummary, error)
-	AttachFentry(ctx context.Context, programKernelID uint32, linkPinPath string) (bpfman.LinkSummary, error)
-	AttachFexit(ctx context.Context, programKernelID uint32, linkPinPath string) (bpfman.LinkSummary, error)
+	AttachTracepoint(ctx context.Context, spec bpfman.TracepointAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error)
+	AttachXDP(ctx context.Context, spec bpfman.XDPAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error)
+	AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error)
+	AttachTCX(ctx context.Context, spec bpfman.TCXAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error)
+	AttachKprobe(ctx context.Context, spec bpfman.KprobeAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error)
+	AttachUprobe(ctx context.Context, spec bpfman.UprobeAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error)
+	AttachFentry(ctx context.Context, spec bpfman.FentryAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error)
+	AttachFexit(ctx context.Context, spec bpfman.FexitAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error)
 	Detach(ctx context.Context, kernelLinkID uint32) error
 
 	// Link operations

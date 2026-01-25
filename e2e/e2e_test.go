@@ -104,7 +104,9 @@ func TestTracepoint_LoadAttachDetachUnload(t *testing.T) {
 	require.NotEmpty(t, listedProgs[0].Metadata.PinPath)
 
 	// When: attach via client
-	link, err := env.Client.AttachTracepoint(ctx, prog.Kernel.ID(), "syscalls", "sys_enter_kill", "")
+	tpSpec, err := bpfman.NewTracepointAttachSpec(prog.Kernel.ID(), "syscalls", "sys_enter_kill")
+	require.NoError(t, err)
+	link, err := env.Client.AttachTracepoint(ctx, tpSpec, bpfman.AttachOpts{})
 	require.NoError(t, err)
 
 	// Then: link has expected properties
@@ -219,7 +221,9 @@ func TestKprobe_LoadAttachDetachUnload(t *testing.T) {
 	require.NotEmpty(t, listedProgs[0].Metadata.PinPath)
 
 	// When: attach via client
-	link, err := env.Client.AttachKprobe(ctx, prog.Kernel.ID(), "try_to_wake_up", 0, "")
+	kpSpec, err := bpfman.NewKprobeAttachSpec(prog.Kernel.ID(), "try_to_wake_up")
+	require.NoError(t, err)
+	link, err := env.Client.AttachKprobe(ctx, kpSpec, bpfman.AttachOpts{})
 	require.NoError(t, err)
 
 	// Then: link has expected properties
@@ -334,7 +338,9 @@ func TestKretprobe_LoadAttachDetachUnload(t *testing.T) {
 	require.NotEmpty(t, listedProgs[0].Metadata.PinPath)
 
 	// When: attach via client (kretprobe uses AttachKprobe API)
-	link, err := env.Client.AttachKprobe(ctx, prog.Kernel.ID(), "try_to_wake_up", 0, "")
+	kpSpec, err := bpfman.NewKprobeAttachSpec(prog.Kernel.ID(), "try_to_wake_up")
+	require.NoError(t, err)
+	link, err := env.Client.AttachKprobe(ctx, kpSpec, bpfman.AttachOpts{})
 	require.NoError(t, err)
 
 	// Then: link has expected properties
@@ -453,7 +459,10 @@ func TestUprobe_LoadAttachDetachUnload(t *testing.T) {
 	require.NotEmpty(t, listedProgs[0].Metadata.PinPath)
 
 	// When: attach via client to malloc in libc
-	link, err := env.Client.AttachUprobe(ctx, prog.Kernel.ID(), target, fnName, 0, "")
+	upSpec, err := bpfman.NewUprobeAttachSpec(prog.Kernel.ID(), target)
+	require.NoError(t, err)
+	upSpec = upSpec.WithFnName(fnName)
+	link, err := env.Client.AttachUprobe(ctx, upSpec, bpfman.AttachOpts{})
 	require.NoError(t, err)
 
 	// Then: link has expected properties
@@ -572,7 +581,10 @@ func TestUretprobe_LoadAttachDetachUnload(t *testing.T) {
 	require.NotEmpty(t, listedProgs[0].Metadata.PinPath)
 
 	// When: attach via client to malloc in libc (uretprobe uses AttachUprobe API)
-	link, err := env.Client.AttachUprobe(ctx, prog.Kernel.ID(), target, fnName, 0, "")
+	upSpec, err := bpfman.NewUprobeAttachSpec(prog.Kernel.ID(), target)
+	require.NoError(t, err)
+	upSpec = upSpec.WithFnName(fnName)
+	link, err := env.Client.AttachUprobe(ctx, upSpec, bpfman.AttachOpts{})
 	require.NoError(t, err)
 
 	// Then: link has expected properties
@@ -687,7 +699,9 @@ func TestFentry_LoadAttachDetachUnload(t *testing.T) {
 	require.NotEmpty(t, listedProgs[0].Metadata.PinPath)
 
 	// When: attach via client (fentry doesn't need additional params - target is in program)
-	link, err := env.Client.AttachFentry(ctx, prog.Kernel.ID(), "")
+	feSpec, err := bpfman.NewFentryAttachSpec(prog.Kernel.ID())
+	require.NoError(t, err)
+	link, err := env.Client.AttachFentry(ctx, feSpec, bpfman.AttachOpts{})
 	require.NoError(t, err)
 
 	// Then: link has expected properties
@@ -797,7 +811,9 @@ func TestFexit_LoadAttachDetachUnload(t *testing.T) {
 	require.NotEmpty(t, listedProgs[0].Metadata.PinPath)
 
 	// When: attach via client
-	link, err := env.Client.AttachFexit(ctx, prog.Kernel.ID(), "")
+	fxSpec, err := bpfman.NewFexitAttachSpec(prog.Kernel.ID())
+	require.NoError(t, err)
+	link, err := env.Client.AttachFexit(ctx, fxSpec, bpfman.AttachOpts{})
 	require.NoError(t, err)
 
 	// Then: link has expected properties
@@ -910,7 +926,10 @@ func TestTC_LoadAttachDetachUnload(t *testing.T) {
 
 	// When: attach via client to lo interface (always available)
 	// TC uses dispatchers and supports both ingress and egress
-	link, err := env.Client.AttachTC(ctx, prog.Kernel.ID(), 1, "lo", "ingress", 50, nil, "")
+	tcSpec, err := bpfman.NewTCAttachSpec(prog.Kernel.ID(), "lo", 1, "ingress")
+	require.NoError(t, err)
+	tcSpec = tcSpec.WithPriority(50)
+	link, err := env.Client.AttachTC(ctx, tcSpec, bpfman.AttachOpts{})
 	require.NoError(t, err)
 
 	// Then: link has expected properties
@@ -1028,7 +1047,10 @@ func TestTCX_LoadAttachDetachUnload(t *testing.T) {
 	require.NotEmpty(t, listedProgs[0].Metadata.PinPath)
 
 	// When: attach via client to lo interface
-	link, err := env.Client.AttachTCX(ctx, prog.Kernel.ID(), 1, "lo", "ingress", 50, "")
+	tcxSpec, err := bpfman.NewTCXAttachSpec(prog.Kernel.ID(), "lo", 1, "ingress")
+	require.NoError(t, err)
+	tcxSpec = tcxSpec.WithPriority(50)
+	link, err := env.Client.AttachTCX(ctx, tcxSpec, bpfman.AttachOpts{})
 	require.NoError(t, err)
 
 	// Then: link has expected properties
@@ -1144,7 +1166,9 @@ func TestXDP_LoadAttachDetachUnload(t *testing.T) {
 	require.NotEmpty(t, listedProgs[0].Metadata.PinPath)
 
 	// When: attach via client to lo interface
-	link, err := env.Client.AttachXDP(ctx, prog.Kernel.ID(), 1, "lo", "")
+	xdpSpec, err := bpfman.NewXDPAttachSpec(prog.Kernel.ID(), "lo", 1)
+	require.NoError(t, err)
+	link, err := env.Client.AttachXDP(ctx, xdpSpec, bpfman.AttachOpts{})
 	require.NoError(t, err)
 
 	// Then: link has expected properties

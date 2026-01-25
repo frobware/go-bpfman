@@ -406,11 +406,14 @@ func (m *Manager) Get(ctx context.Context, kernelID uint32) (ProgramInfo, error)
 }
 
 // AttachTracepoint attaches a pinned program to a tracepoint.
-// programKernelID is required to associate the link with the program in the store.
-// If linkPinPath is empty, a default path is generated in the links directory.
 //
 // Pattern: FETCH -> KERNEL I/O -> COMPUTE -> EXECUTE
-func (m *Manager) AttachTracepoint(ctx context.Context, programKernelID uint32, group, name, linkPinPath string) (bpfman.LinkSummary, error) {
+func (m *Manager) AttachTracepoint(ctx context.Context, spec bpfman.TracepointAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error) {
+	programKernelID := spec.ProgramID()
+	group := spec.Group()
+	name := spec.Name()
+	linkPinPath := opts.LinkPinPath
+
 	// FETCH: Verify program exists in store
 	_, err := m.store.Get(ctx, programKernelID)
 	if err != nil {
@@ -469,17 +472,23 @@ func computeAttachTracepointAction(programKernelID, kernelLinkID uint32, pinPath
 }
 
 // AttachKprobe attaches a pinned program to a kernel function.
-// programKernelID is required to associate the link with the program in the store.
-// If linkPinPath is empty, a default path is generated in the links directory.
-// If retprobe is true, attaches as a kretprobe instead of kprobe.
+// retprobe is derived from the program type stored in the database.
 //
 // Pattern: FETCH -> KERNEL I/O -> COMPUTE -> EXECUTE
-func (m *Manager) AttachKprobe(ctx context.Context, programKernelID uint32, fnName string, offset uint64, retprobe bool, linkPinPath string) (bpfman.LinkSummary, error) {
-	// FETCH: Verify program exists in store
-	_, err := m.store.Get(ctx, programKernelID)
+func (m *Manager) AttachKprobe(ctx context.Context, spec bpfman.KprobeAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error) {
+	programKernelID := spec.ProgramID()
+	fnName := spec.FnName()
+	offset := spec.Offset()
+	linkPinPath := opts.LinkPinPath
+
+	// FETCH: Get program to determine if it's a kretprobe
+	prog, err := m.store.Get(ctx, programKernelID)
 	if err != nil {
 		return bpfman.LinkSummary{}, fmt.Errorf("get program %d: %w", programKernelID, err)
 	}
+
+	// Derive retprobe from program type
+	retprobe := prog.ProgramType == bpfman.ProgramTypeKretprobe
 
 	// COMPUTE: Construct paths from convention (kernel ID + bpffs root)
 	progPinPath := filepath.Join(m.dirs.FS, fmt.Sprintf("prog_%d", programKernelID))
@@ -546,18 +555,24 @@ func computeAttachKprobeAction(programKernelID, kernelLinkID uint32, pinPath, fn
 }
 
 // AttachUprobe attaches a pinned program to a user-space function.
-// programKernelID is required to associate the link with the program in the store.
-// target is the path to the binary or library (e.g., /usr/lib/libc.so.6).
-// If linkPinPath is empty, a default path is generated in the links directory.
-// If retprobe is true, attaches as a uretprobe instead of uprobe.
+// retprobe is derived from the program type stored in the database.
 //
 // Pattern: FETCH -> KERNEL I/O -> COMPUTE -> EXECUTE
-func (m *Manager) AttachUprobe(ctx context.Context, programKernelID uint32, target, fnName string, offset uint64, retprobe bool, linkPinPath string) (bpfman.LinkSummary, error) {
-	// FETCH: Verify program exists in store
-	_, err := m.store.Get(ctx, programKernelID)
+func (m *Manager) AttachUprobe(ctx context.Context, spec bpfman.UprobeAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error) {
+	programKernelID := spec.ProgramID()
+	target := spec.Target()
+	fnName := spec.FnName()
+	offset := spec.Offset()
+	linkPinPath := opts.LinkPinPath
+
+	// FETCH: Get program to determine if it's a uretprobe
+	prog, err := m.store.Get(ctx, programKernelID)
 	if err != nil {
 		return bpfman.LinkSummary{}, fmt.Errorf("get program %d: %w", programKernelID, err)
 	}
+
+	// Derive retprobe from program type
+	retprobe := prog.ProgramType == bpfman.ProgramTypeUretprobe
 
 	// COMPUTE: Construct paths from convention (kernel ID + bpffs root)
 	progPinPath := filepath.Join(m.dirs.FS, fmt.Sprintf("prog_%d", programKernelID))
@@ -627,10 +642,12 @@ func computeAttachUprobeAction(programKernelID, kernelLinkID uint32, pinPath, ta
 
 // AttachFentry attaches a pinned fentry program to its target kernel function.
 // The target function was specified at load time and stored in the program's AttachFunc.
-// If linkPinPath is empty, a default path is generated in the links directory.
 //
 // Pattern: FETCH -> KERNEL I/O -> COMPUTE -> EXECUTE
-func (m *Manager) AttachFentry(ctx context.Context, programKernelID uint32, linkPinPath string) (bpfman.LinkSummary, error) {
+func (m *Manager) AttachFentry(ctx context.Context, spec bpfman.FentryAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error) {
+	programKernelID := spec.ProgramID()
+	linkPinPath := opts.LinkPinPath
+
 	// FETCH: Get program metadata to access AttachFunc
 	prog, err := m.store.Get(ctx, programKernelID)
 	if err != nil {
@@ -694,10 +711,12 @@ func computeAttachFentryAction(programKernelID, kernelLinkID uint32, pinPath, fn
 
 // AttachFexit attaches a pinned fexit program to its target kernel function.
 // The target function was specified at load time and stored in the program's AttachFunc.
-// If linkPinPath is empty, a default path is generated in the links directory.
 //
 // Pattern: FETCH -> KERNEL I/O -> COMPUTE -> EXECUTE
-func (m *Manager) AttachFexit(ctx context.Context, programKernelID uint32, linkPinPath string) (bpfman.LinkSummary, error) {
+func (m *Manager) AttachFexit(ctx context.Context, spec bpfman.FexitAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error) {
+	programKernelID := spec.ProgramID()
+	linkPinPath := opts.LinkPinPath
+
 	// FETCH: Get program metadata to access AttachFunc
 	prog, err := m.store.Get(ctx, programKernelID)
 	if err != nil {
@@ -777,7 +796,12 @@ const (
 //   - Extension links: /sys/fs/bpf/bpfman/xdp/dispatcher_{nsid}_{ifindex}_{revision}/link_{position}
 //
 // Pattern: FETCH -> KERNEL I/O -> COMPUTE -> EXECUTE
-func (m *Manager) AttachXDP(ctx context.Context, programKernelID uint32, ifindex int, ifname string, linkPinPath string) (bpfman.LinkSummary, error) {
+func (m *Manager) AttachXDP(ctx context.Context, spec bpfman.XDPAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error) {
+	programKernelID := spec.ProgramID()
+	ifindex := spec.Ifindex()
+	ifname := spec.Ifname()
+	linkPinPath := opts.LinkPinPath
+
 	// FETCH: Get program metadata to access ObjectPath and ProgramName
 	prog, err := m.store.Get(ctx, programKernelID)
 	if err != nil {
@@ -1004,11 +1028,14 @@ var DefaultTCProceedOn = tcProceedOnOK | tcProceedOnPipe | tcProceedOnDispatcher
 //   - Extension links: /sys/fs/bpf/bpfman/tc-{direction}/dispatcher_{nsid}_{ifindex}_{revision}/link_{position}
 //
 // Pattern: FETCH -> KERNEL I/O -> COMPUTE -> EXECUTE
-func (m *Manager) AttachTC(ctx context.Context, programKernelID uint32, ifindex int, ifname, direction string, priority int, proceedOn []int32, linkPinPath string) (bpfman.LinkSummary, error) {
-	// Validate direction
-	if direction != "ingress" && direction != "egress" {
-		return bpfman.LinkSummary{}, fmt.Errorf("invalid TC direction %q: must be ingress or egress", direction)
-	}
+func (m *Manager) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error) {
+	programKernelID := spec.ProgramID()
+	ifindex := spec.Ifindex()
+	ifname := spec.Ifname()
+	direction := spec.Direction()
+	priority := spec.Priority()
+	proceedOn := spec.ProceedOn()
+	linkPinPath := opts.LinkPinPath
 
 	// FETCH: Get program metadata to access ObjectPath and ProgramName
 	prog, err := m.store.Get(ctx, programKernelID)
@@ -1166,11 +1193,13 @@ func computeAttachTCActions(
 //   - Link: /sys/fs/bpf/bpfman/tcx-{direction}/link_{nsid}_{ifindex}_{linkid}
 //
 // Pattern: FETCH -> KERNEL I/O -> COMPUTE -> EXECUTE
-func (m *Manager) AttachTCX(ctx context.Context, programKernelID uint32, ifindex int, ifname, direction string, priority int, linkPinPath string) (bpfman.LinkSummary, error) {
-	// Validate direction
-	if direction != "ingress" && direction != "egress" {
-		return bpfman.LinkSummary{}, fmt.Errorf("invalid TCX direction %q: must be ingress or egress", direction)
-	}
+func (m *Manager) AttachTCX(ctx context.Context, spec bpfman.TCXAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error) {
+	programKernelID := spec.ProgramID()
+	ifindex := spec.Ifindex()
+	ifname := spec.Ifname()
+	direction := spec.Direction()
+	priority := spec.Priority()
+	linkPinPath := opts.LinkPinPath
 
 	// FETCH: Get program metadata to find pin path
 	prog, err := m.store.Get(ctx, programKernelID)

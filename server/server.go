@@ -430,8 +430,14 @@ func (s *Server) attachTracepoint(ctx context.Context, programID uint32, info *p
 	}
 	group, name := parts[0], parts[1]
 
-	// Call manager with empty linkPinPath to auto-generate
-	summary, err := s.mgr.AttachTracepoint(ctx, programID, group, name, "")
+	// Construct AttachSpec with validation
+	spec, err := bpfman.NewTracepointAttachSpec(programID, group, name)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid tracepoint attach spec: %v", err)
+	}
+
+	// Call manager with empty LinkPinPath to auto-generate
+	summary, err := s.mgr.AttachTracepoint(ctx, spec, bpfman.AttachOpts{})
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return nil, status.Errorf(codes.NotFound, "program with ID %d not found", programID)
@@ -452,8 +458,14 @@ func (s *Server) attachXDP(ctx context.Context, programID uint32, info *pb.XDPAt
 		return nil, status.Errorf(codes.InvalidArgument, "interface %q: %v", info.Iface, err)
 	}
 
-	// Call manager with empty linkPinPath to auto-generate
-	summary, err := s.mgr.AttachXDP(ctx, programID, iface.Index, iface.Name, "")
+	// Construct AttachSpec with validation
+	spec, err := bpfman.NewXDPAttachSpec(programID, iface.Name, iface.Index)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid XDP attach spec: %v", err)
+	}
+
+	// Call manager with empty LinkPinPath to auto-generate
+	summary, err := s.mgr.AttachXDP(ctx, spec, bpfman.AttachOpts{})
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "attach XDP: %v", err)
 	}
@@ -477,11 +489,18 @@ func (s *Server) attachTC(ctx context.Context, programID uint32, info *pb.TCAtta
 		return nil, status.Errorf(codes.InvalidArgument, "interface %q: %v", info.Iface, err)
 	}
 
+	// Construct AttachSpec with validation
+	spec, err := bpfman.NewTCAttachSpec(programID, iface.Name, iface.Index, direction)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid TC attach spec: %v", err)
+	}
+
 	// Use provided priority or default
 	priority := int(info.Priority)
 	if priority == 0 {
 		priority = 50 // Default priority
 	}
+	spec = spec.WithPriority(priority)
 
 	// Use provided proceed-on or default
 	proceedOn := info.ProceedOn
@@ -489,9 +508,10 @@ func (s *Server) attachTC(ctx context.Context, programID uint32, info *pb.TCAtta
 		// Default: ok (0), pipe (3), dispatcher_return (30)
 		proceedOn = []int32{0, 3, 30}
 	}
+	spec = spec.WithProceedOn(proceedOn)
 
-	// Call manager with empty linkPinPath to auto-generate
-	summary, err := s.mgr.AttachTC(ctx, programID, iface.Index, iface.Name, direction, priority, proceedOn, "")
+	// Call manager with empty LinkPinPath to auto-generate
+	summary, err := s.mgr.AttachTC(ctx, spec, bpfman.AttachOpts{})
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "attach TC: %v", err)
 	}
@@ -515,14 +535,21 @@ func (s *Server) attachTCX(ctx context.Context, programID uint32, info *pb.TCXAt
 		return nil, status.Errorf(codes.InvalidArgument, "interface %q: %v", info.Iface, err)
 	}
 
+	// Construct AttachSpec with validation
+	spec, err := bpfman.NewTCXAttachSpec(programID, iface.Name, iface.Index, direction)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid TCX attach spec: %v", err)
+	}
+
 	// Use provided priority or default
 	priority := int(info.Priority)
 	if priority == 0 {
 		priority = 50 // Default priority
 	}
+	spec = spec.WithPriority(priority)
 
-	// Call manager with empty linkPinPath to auto-generate
-	summary, err := s.mgr.AttachTCX(ctx, programID, iface.Index, iface.Name, direction, priority, "")
+	// Call manager with empty LinkPinPath to auto-generate
+	summary, err := s.mgr.AttachTCX(ctx, spec, bpfman.AttachOpts{})
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "attach TCX: %v", err)
 	}
@@ -538,20 +565,17 @@ func (s *Server) attachKprobe(ctx context.Context, programID uint32, info *pb.Kp
 		return nil, status.Error(codes.InvalidArgument, "fn_name is required for kprobe attachment")
 	}
 
-	// Look up program to determine if it's a kretprobe
-	prog, err := s.mgr.Get(ctx, programID)
+	// Construct AttachSpec with validation
+	spec, err := bpfman.NewKprobeAttachSpec(programID, info.FnName)
 	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "program %d not found: %v", programID, err)
+		return nil, status.Errorf(codes.InvalidArgument, "invalid kprobe attach spec: %v", err)
+	}
+	if info.Offset != 0 {
+		spec = spec.WithOffset(info.Offset)
 	}
 
-	// Determine retprobe from program type stored in bpfman metadata
-	var retprobe bool
-	if prog.Bpfman != nil && prog.Bpfman.Program != nil {
-		retprobe = prog.Bpfman.Program.ProgramType == bpfman.ProgramTypeKretprobe
-	}
-
-	// Call manager with empty linkPinPath to auto-generate
-	summary, err := s.mgr.AttachKprobe(ctx, programID, info.FnName, info.Offset, retprobe, "")
+	// Call manager - it will determine retprobe from program type
+	summary, err := s.mgr.AttachKprobe(ctx, spec, bpfman.AttachOpts{})
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "attach kprobe: %v", err)
 	}
@@ -567,20 +591,20 @@ func (s *Server) attachUprobe(ctx context.Context, programID uint32, info *pb.Up
 		return nil, status.Error(codes.InvalidArgument, "target is required for uprobe attachment")
 	}
 
-	// Look up program to determine if it's a uretprobe
-	prog, err := s.mgr.Get(ctx, programID)
+	// Construct UprobeAttachSpec with validated input
+	spec, err := bpfman.NewUprobeAttachSpec(programID, info.Target)
 	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "program %d not found: %v", programID, err)
+		return nil, status.Errorf(codes.InvalidArgument, "invalid uprobe attach spec: %v", err)
 	}
-
-	// Determine retprobe from program type stored in bpfman metadata
-	var retprobe bool
-	if prog.Bpfman != nil && prog.Bpfman.Program != nil {
-		retprobe = prog.Bpfman.Program.ProgramType == bpfman.ProgramTypeUretprobe
+	if info.GetFnName() != "" {
+		spec = spec.WithFnName(info.GetFnName())
+	}
+	if info.Offset != 0 {
+		spec = spec.WithOffset(info.Offset)
 	}
 
 	// Call manager with empty linkPinPath to auto-generate
-	summary, err := s.mgr.AttachUprobe(ctx, programID, info.Target, info.GetFnName(), info.Offset, retprobe, "")
+	summary, err := s.mgr.AttachUprobe(ctx, spec, bpfman.AttachOpts{})
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "attach uprobe: %v", err)
 	}
@@ -593,9 +617,15 @@ func (s *Server) attachUprobe(ctx context.Context, programID uint32, info *pb.Up
 // attachFentry handles fentry attachment via the manager.
 // The attach function is stored in the program metadata from load time.
 func (s *Server) attachFentry(ctx context.Context, programID uint32, info *pb.FentryAttachInfo) (*pb.AttachResponse, error) {
+	// Construct FentryAttachSpec with validated input
+	spec, err := bpfman.NewFentryAttachSpec(programID)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid fentry attach spec: %v", err)
+	}
+
 	// Call manager with empty linkPinPath to auto-generate.
 	// The manager will retrieve the attach function from the stored program metadata.
-	summary, err := s.mgr.AttachFentry(ctx, programID, "")
+	summary, err := s.mgr.AttachFentry(ctx, spec, bpfman.AttachOpts{})
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "attach fentry: %v", err)
 	}
@@ -608,9 +638,15 @@ func (s *Server) attachFentry(ctx context.Context, programID uint32, info *pb.Fe
 // attachFexit handles fexit attachment via the manager.
 // The attach function is stored in the program metadata from load time.
 func (s *Server) attachFexit(ctx context.Context, programID uint32, info *pb.FexitAttachInfo) (*pb.AttachResponse, error) {
+	// Construct FexitAttachSpec with validated input
+	spec, err := bpfman.NewFexitAttachSpec(programID)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid fexit attach spec: %v", err)
+	}
+
 	// Call manager with empty linkPinPath to auto-generate.
 	// The manager will retrieve the attach function from the stored program metadata.
-	summary, err := s.mgr.AttachFexit(ctx, programID, "")
+	summary, err := s.mgr.AttachFexit(ctx, spec, bpfman.AttachOpts{})
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "attach fexit: %v", err)
 	}

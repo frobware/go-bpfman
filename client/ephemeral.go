@@ -171,43 +171,43 @@ func (e *ephemeralClient) Get(ctx context.Context, kernelID uint32) (manager.Pro
 }
 
 // AttachTracepoint attaches a program to a tracepoint via the ephemeral gRPC server.
-func (e *ephemeralClient) AttachTracepoint(ctx context.Context, programKernelID uint32, group, name, linkPinPath string) (bpfman.LinkSummary, error) {
-	return e.remote.AttachTracepoint(ctx, programKernelID, group, name, linkPinPath)
+func (e *ephemeralClient) AttachTracepoint(ctx context.Context, spec bpfman.TracepointAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error) {
+	return e.remote.AttachTracepoint(ctx, spec, opts)
 }
 
 // AttachXDP attaches an XDP program to a network interface via the ephemeral gRPC server.
-func (e *ephemeralClient) AttachXDP(ctx context.Context, programKernelID uint32, ifindex int, ifname, linkPinPath string) (bpfman.LinkSummary, error) {
-	return e.remote.AttachXDP(ctx, programKernelID, ifindex, ifname, linkPinPath)
+func (e *ephemeralClient) AttachXDP(ctx context.Context, spec bpfman.XDPAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error) {
+	return e.remote.AttachXDP(ctx, spec, opts)
 }
 
 // AttachTC attaches a TC program to a network interface via the ephemeral gRPC server.
-func (e *ephemeralClient) AttachTC(ctx context.Context, programKernelID uint32, ifindex int, ifname, direction string, priority int, proceedOn []int32, linkPinPath string) (bpfman.LinkSummary, error) {
-	return e.remote.AttachTC(ctx, programKernelID, ifindex, ifname, direction, priority, proceedOn, linkPinPath)
+func (e *ephemeralClient) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error) {
+	return e.remote.AttachTC(ctx, spec, opts)
 }
 
 // AttachTCX attaches a TCX program to a network interface via the ephemeral gRPC server.
-func (e *ephemeralClient) AttachTCX(ctx context.Context, programKernelID uint32, ifindex int, ifname, direction string, priority int, linkPinPath string) (bpfman.LinkSummary, error) {
-	return e.remote.AttachTCX(ctx, programKernelID, ifindex, ifname, direction, priority, linkPinPath)
+func (e *ephemeralClient) AttachTCX(ctx context.Context, spec bpfman.TCXAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error) {
+	return e.remote.AttachTCX(ctx, spec, opts)
 }
 
 // AttachKprobe attaches a kprobe/kretprobe program to a kernel function via the ephemeral gRPC server.
-func (e *ephemeralClient) AttachKprobe(ctx context.Context, programKernelID uint32, fnName string, offset uint64, linkPinPath string) (bpfman.LinkSummary, error) {
-	return e.remote.AttachKprobe(ctx, programKernelID, fnName, offset, linkPinPath)
+func (e *ephemeralClient) AttachKprobe(ctx context.Context, spec bpfman.KprobeAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error) {
+	return e.remote.AttachKprobe(ctx, spec, opts)
 }
 
 // AttachUprobe attaches a uprobe/uretprobe program to a user-space function via the ephemeral gRPC server.
-func (e *ephemeralClient) AttachUprobe(ctx context.Context, programKernelID uint32, target, fnName string, offset uint64, linkPinPath string) (bpfman.LinkSummary, error) {
-	return e.remote.AttachUprobe(ctx, programKernelID, target, fnName, offset, linkPinPath)
+func (e *ephemeralClient) AttachUprobe(ctx context.Context, spec bpfman.UprobeAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error) {
+	return e.remote.AttachUprobe(ctx, spec, opts)
 }
 
 // AttachFentry attaches a fentry program to a kernel function via the ephemeral gRPC server.
-func (e *ephemeralClient) AttachFentry(ctx context.Context, programKernelID uint32, linkPinPath string) (bpfman.LinkSummary, error) {
-	return e.remote.AttachFentry(ctx, programKernelID, linkPinPath)
+func (e *ephemeralClient) AttachFentry(ctx context.Context, spec bpfman.FentryAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error) {
+	return e.remote.AttachFentry(ctx, spec, opts)
 }
 
 // AttachFexit attaches a fexit program to a kernel function via the ephemeral gRPC server.
-func (e *ephemeralClient) AttachFexit(ctx context.Context, programKernelID uint32, linkPinPath string) (bpfman.LinkSummary, error) {
-	return e.remote.AttachFexit(ctx, programKernelID, linkPinPath)
+func (e *ephemeralClient) AttachFexit(ctx context.Context, spec bpfman.FexitAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error) {
+	return e.remote.AttachFexit(ctx, spec, opts)
 }
 
 // Detach removes a link via the ephemeral gRPC server.
