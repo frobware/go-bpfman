@@ -37,6 +37,19 @@ const (
 	DefaultCSIVersion = "0.1.0"
 )
 
+// NetIfaceResolver resolves network interfaces by name.
+// This interface enables testing without real network interfaces.
+type NetIfaceResolver interface {
+	InterfaceByName(name string) (*net.Interface, error)
+}
+
+// DefaultNetIfaceResolver uses the standard library net package.
+type DefaultNetIfaceResolver struct{}
+
+func (DefaultNetIfaceResolver) InterfaceByName(name string) (*net.Interface, error) {
+	return net.InterfaceByName(name)
+}
+
 // RunConfig configures the server daemon.
 type RunConfig struct {
 	Dirs       config.RuntimeDirs
@@ -149,13 +162,14 @@ func Run(ctx context.Context, cfg RunConfig) error {
 type Server struct {
 	pb.UnimplementedBpfmanServer
 
-	mu     sync.RWMutex
-	dirs   config.RuntimeDirs
-	kernel interpreter.KernelOperations
-	store  interpreter.Store
-	puller interpreter.ImagePuller
-	mgr    *manager.Manager
-	logger *slog.Logger
+	mu       sync.RWMutex
+	dirs     config.RuntimeDirs
+	kernel   interpreter.KernelOperations
+	store    interpreter.Store
+	puller   interpreter.ImagePuller
+	netIface NetIfaceResolver
+	mgr      *manager.Manager
+	logger   *slog.Logger
 }
 
 // newWithStore creates a new bpfman gRPC server with a pre-configured store.
@@ -164,25 +178,27 @@ func newWithStore(dirs config.RuntimeDirs, store interpreter.Store, puller inter
 		logger = slog.Default()
 	}
 	return &Server{
-		dirs:   dirs,
-		kernel: ebpf.New(ebpf.WithLogger(logger)),
-		store:  store,
-		puller: puller,
-		logger: logger.With("component", "server"),
+		dirs:     dirs,
+		kernel:   ebpf.New(ebpf.WithLogger(logger)),
+		store:    store,
+		puller:   puller,
+		netIface: DefaultNetIfaceResolver{},
+		logger:   logger.With("component", "server"),
 	}
 }
 
 // New creates a server with the provided dependencies.
-func New(dirs config.RuntimeDirs, store interpreter.Store, kernel interpreter.KernelOperations, puller interpreter.ImagePuller, logger *slog.Logger) *Server {
+func New(dirs config.RuntimeDirs, store interpreter.Store, kernel interpreter.KernelOperations, puller interpreter.ImagePuller, netIface NetIfaceResolver, logger *slog.Logger) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	s := &Server{
-		dirs:   dirs,
-		kernel: kernel,
-		store:  store,
-		puller: puller,
-		logger: logger.With("component", "server"),
+		dirs:     dirs,
+		kernel:   kernel,
+		store:    store,
+		puller:   puller,
+		netIface: netIface,
+		logger:   logger.With("component", "server"),
 	}
 	s.mgr = manager.New(dirs, store, kernel, logger)
 	return s
@@ -417,7 +433,7 @@ func (s *Server) attachTracepoint(ctx context.Context, programID uint32, info *p
 // attachXDP handles XDP attachment via the manager.
 func (s *Server) attachXDP(ctx context.Context, programID uint32, info *pb.XDPAttachInfo) (*pb.AttachResponse, error) {
 	// Get interface index from name
-	iface, err := net.InterfaceByName(info.Iface)
+	iface, err := s.netIface.InterfaceByName(info.Iface)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "interface %q: %v", info.Iface, err)
 	}
@@ -442,7 +458,7 @@ func (s *Server) attachTC(ctx context.Context, programID uint32, info *pb.TCAtta
 	}
 
 	// Get interface index from name
-	iface, err := net.InterfaceByName(info.Iface)
+	iface, err := s.netIface.InterfaceByName(info.Iface)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "interface %q: %v", info.Iface, err)
 	}
@@ -480,7 +496,7 @@ func (s *Server) attachTCX(ctx context.Context, programID uint32, info *pb.TCXAt
 	}
 
 	// Get interface index from name
-	iface, err := net.InterfaceByName(info.Iface)
+	iface, err := s.netIface.InterfaceByName(info.Iface)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "interface %q: %v", info.Iface, err)
 	}

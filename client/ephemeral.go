@@ -74,7 +74,7 @@ func newEphemeral(dirs config.RuntimeDirs, cfg config.Config, logger *slog.Logge
 	}
 
 	// Create gRPC server with injected dependencies
-	srv := server.New(dirs, env.Store, env.Kernel, puller, logger)
+	srv := server.New(dirs, env.Store, env.Kernel, puller, server.DefaultNetIfaceResolver{}, logger)
 	grpcServer := grpc.NewServer(
 		grpc.UnaryInterceptor(loggingInterceptor(logger)),
 	)

@@ -20,6 +20,7 @@ import (
 	"io"
 	"iter"
 	"log/slog"
+	"net"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -122,6 +123,29 @@ func (f *fakeKernelLinkInfo) LinkType() string    { return f.linkType }
 func (f *fakeKernelLinkInfo) AttachType() string  { return "" }
 func (f *fakeKernelLinkInfo) TargetObjID() uint32 { return 0 }
 func (f *fakeKernelLinkInfo) TargetBTFId() uint32 { return 0 }
+
+// fakeNetIfaceResolver implements server.NetIfaceResolver for testing.
+// It returns fake interface data without requiring real network interfaces.
+type fakeNetIfaceResolver struct {
+	interfaces map[string]*net.Interface
+}
+
+func newFakeNetIfaceResolver() *fakeNetIfaceResolver {
+	return &fakeNetIfaceResolver{
+		interfaces: map[string]*net.Interface{
+			"lo":   {Index: 1, Name: "lo"},
+			"eth0": {Index: 2, Name: "eth0"},
+		},
+	}
+}
+
+func (f *fakeNetIfaceResolver) InterfaceByName(name string) (*net.Interface, error) {
+	iface, ok := f.interfaces[name]
+	if !ok {
+		return nil, fmt.Errorf("interface %q not found", name)
+	}
+	return iface, nil
+}
 
 func newFakeKernel() *fakeKernel {
 	fk := &fakeKernel{
@@ -277,6 +301,10 @@ func (f *fakeKernel) UnloadProgram(_ context.Context, progPinPath, mapsDir strin
 // ProgramCount returns the number of programs currently loaded.
 func (f *fakeKernel) ProgramCount() int {
 	return len(f.programs)
+}
+
+func (f *fakeKernel) LinkCount() int {
+	return len(f.links)
 }
 
 func (f *fakeKernel) Programs(_ context.Context) iter.Seq2[kernel.Program, error] {
@@ -626,7 +654,8 @@ func newTestFixture(t *testing.T) *testFixture {
 	t.Cleanup(func() { store.Close() })
 	dirs := config.NewRuntimeDirs(t.TempDir())
 	kernel := newFakeKernel()
-	srv := server.New(dirs, store, kernel, nil, testLogger())
+	netIface := newFakeNetIfaceResolver()
+	srv := server.New(dirs, store, kernel, nil, netIface, testLogger())
 	return &testFixture{
 		Server: srv,
 		Kernel: kernel,
@@ -1899,4 +1928,869 @@ func TestDetach_KernelFailure_ReturnsError(t *testing.T) {
 	lastOp := ops[len(ops)-1]
 	assert.Equal(t, "detach", lastOp.Op, "last op should be detach")
 	assert.NotNil(t, lastOp.Err, "last op should have recorded the error")
+}
+
+// =============================================================================
+// XDP Dispatcher Lifecycle Tests
+// =============================================================================
+//
+// These tests verify the XDP dispatcher lifecycle, similar to the integration
+// test in integration-tests/test-dispatcher-cleanup.sh but using a fake kernel
+// and network interface resolver.
+
+// TestXDPDispatcher_FirstAttachCreatesDispatcher verifies that:
+//
+//	Given a loaded XDP program,
+//	When I attach it to an interface for the first time,
+//	Then a dispatcher is created,
+//	And the extension count is 1.
+func TestXDPDispatcher_FirstAttachCreatesDispatcher(t *testing.T) {
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	// Load an XDP program
+	loadReq := &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_File{File: "/path/to/xdp.o"},
+		},
+		Info: []*pb.LoadInfo{
+			{Name: "xdp_pass", ProgramType: pb.BpfmanProgramType_XDP},
+		},
+		Metadata: map[string]string{
+			"bpfman.io/ProgramName": "xdp-dispatcher-test",
+		},
+	}
+
+	loadResp, err := fix.Server.Load(ctx, loadReq)
+	require.NoError(t, err, "Load should succeed")
+	programID := loadResp.Programs[0].KernelInfo.Id
+
+	// Attach to interface (using fake "lo" interface)
+	attachReq := &pb.AttachRequest{
+		Id: programID,
+		Attach: &pb.AttachInfo{
+			Info: &pb.AttachInfo_XdpAttachInfo{
+				XdpAttachInfo: &pb.XDPAttachInfo{
+					Iface: "lo",
+				},
+			},
+		},
+	}
+
+	attachResp, err := fix.Server.Attach(ctx, attachReq)
+	require.NoError(t, err, "AttachXDP should succeed")
+	require.NotZero(t, attachResp.LinkId, "link ID should be non-zero")
+
+	// Verify link exists in fake kernel
+	assert.Equal(t, 1, fix.Kernel.LinkCount(), "should have 1 link in kernel")
+}
+
+// TestXDPDispatcher_MultipleAttachesCreateMultipleLinks verifies that:
+//
+//	Given a loaded XDP program,
+//	When I attach it multiple times to the same interface,
+//	Then multiple links are created.
+func TestXDPDispatcher_MultipleAttachesCreateMultipleLinks(t *testing.T) {
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	// Load an XDP program
+	loadReq := &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_File{File: "/path/to/xdp.o"},
+		},
+		Info: []*pb.LoadInfo{
+			{Name: "xdp_pass", ProgramType: pb.BpfmanProgramType_XDP},
+		},
+		Metadata: map[string]string{
+			"bpfman.io/ProgramName": "xdp-multi-attach-test",
+		},
+	}
+
+	loadResp, err := fix.Server.Load(ctx, loadReq)
+	require.NoError(t, err, "Load should succeed")
+	programID := loadResp.Programs[0].KernelInfo.Id
+
+	// Attach multiple times
+	var linkIDs []uint32
+	for i := 0; i < 3; i++ {
+		attachReq := &pb.AttachRequest{
+			Id: programID,
+			Attach: &pb.AttachInfo{
+				Info: &pb.AttachInfo_XdpAttachInfo{
+					XdpAttachInfo: &pb.XDPAttachInfo{
+						Iface: "lo",
+					},
+				},
+			},
+		}
+		attachResp, err := fix.Server.Attach(ctx, attachReq)
+		require.NoError(t, err, "AttachXDP %d should succeed", i+1)
+		linkIDs = append(linkIDs, attachResp.LinkId)
+	}
+
+	// Verify we have 3 links
+	assert.Equal(t, 3, fix.Kernel.LinkCount(), "should have 3 links in kernel")
+	assert.Len(t, linkIDs, 3, "should have collected 3 link IDs")
+}
+
+// TestXDPDispatcher_DetachDecrementsLinkCount verifies that:
+//
+//	Given a program with multiple XDP attachments,
+//	When I detach one link,
+//	Then the link count decrements,
+//	And remaining links are still valid.
+func TestXDPDispatcher_DetachDecrementsLinkCount(t *testing.T) {
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	// Load and attach twice
+	loadReq := &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_File{File: "/path/to/xdp.o"},
+		},
+		Info: []*pb.LoadInfo{
+			{Name: "xdp_pass", ProgramType: pb.BpfmanProgramType_XDP},
+		},
+		Metadata: map[string]string{
+			"bpfman.io/ProgramName": "xdp-detach-test",
+		},
+	}
+
+	loadResp, err := fix.Server.Load(ctx, loadReq)
+	require.NoError(t, err, "Load should succeed")
+	programID := loadResp.Programs[0].KernelInfo.Id
+
+	attachReq := &pb.AttachRequest{
+		Id: programID,
+		Attach: &pb.AttachInfo{
+			Info: &pb.AttachInfo_XdpAttachInfo{
+				XdpAttachInfo: &pb.XDPAttachInfo{
+					Iface: "lo",
+				},
+			},
+		},
+	}
+
+	attach1, err := fix.Server.Attach(ctx, attachReq)
+	require.NoError(t, err, "First attach should succeed")
+
+	attach2, err := fix.Server.Attach(ctx, attachReq)
+	require.NoError(t, err, "Second attach should succeed")
+
+	// Verify we have 2 links
+	assert.Equal(t, 2, fix.Kernel.LinkCount(), "should have 2 links")
+
+	// Detach first link
+	_, err = fix.Server.Detach(ctx, &pb.DetachRequest{LinkId: attach1.LinkId})
+	require.NoError(t, err, "Detach first link should succeed")
+
+	// Should have 1 link remaining
+	assert.Equal(t, 1, fix.Kernel.LinkCount(), "should have 1 link after first detach")
+
+	// Detach second link
+	_, err = fix.Server.Detach(ctx, &pb.DetachRequest{LinkId: attach2.LinkId})
+	require.NoError(t, err, "Detach second link should succeed")
+
+	// Should have no links
+	assert.Equal(t, 0, fix.Kernel.LinkCount(), "should have 0 links after second detach")
+}
+
+// TestXDPDispatcher_FullLifecycle verifies the complete dispatcher lifecycle:
+//
+//  1. Load XDP program
+//  2. Attach multiple times
+//  3. Detach all links one by one
+//  4. Unload program
+//  5. Verify clean state
+//
+// This mirrors the integration test in test-dispatcher-cleanup.sh.
+func TestXDPDispatcher_FullLifecycle(t *testing.T) {
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	// Step 1: Load XDP program
+	loadReq := &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_File{File: "/path/to/xdp.o"},
+		},
+		Info: []*pb.LoadInfo{
+			{Name: "xdp_pass", ProgramType: pb.BpfmanProgramType_XDP},
+		},
+		Metadata: map[string]string{
+			"bpfman.io/ProgramName": "xdp-lifecycle-test",
+		},
+	}
+
+	loadResp, err := fix.Server.Load(ctx, loadReq)
+	require.NoError(t, err, "Load should succeed")
+	programID := loadResp.Programs[0].KernelInfo.Id
+	t.Logf("Step 1: Loaded program ID %d", programID)
+
+	// Step 2: Attach multiple times (simulate filling dispatcher slots)
+	numAttachments := 5
+	var linkIDs []uint32
+	for i := 0; i < numAttachments; i++ {
+		attachReq := &pb.AttachRequest{
+			Id: programID,
+			Attach: &pb.AttachInfo{
+				Info: &pb.AttachInfo_XdpAttachInfo{
+					XdpAttachInfo: &pb.XDPAttachInfo{
+						Iface: "lo",
+					},
+				},
+			},
+		}
+		attachResp, err := fix.Server.Attach(ctx, attachReq)
+		require.NoError(t, err, "Attach %d should succeed", i+1)
+		linkIDs = append(linkIDs, attachResp.LinkId)
+		t.Logf("Step 2: Attached link %d (kernel ID %d)", i+1, attachResp.LinkId)
+	}
+
+	// Verify state after attachments
+	assert.Equal(t, 1, fix.Kernel.ProgramCount(), "should have 1 program")
+	assert.Equal(t, numAttachments, fix.Kernel.LinkCount(), "should have %d links", numAttachments)
+
+	// Step 3: Detach all links one by one
+	for i, linkID := range linkIDs {
+		_, err := fix.Server.Detach(ctx, &pb.DetachRequest{LinkId: linkID})
+		require.NoError(t, err, "Detach link %d should succeed", linkID)
+		expectedLinks := numAttachments - i - 1
+		assert.Equal(t, expectedLinks, fix.Kernel.LinkCount(),
+			"should have %d links after detaching link %d", expectedLinks, i+1)
+		t.Logf("Step 3: Detached link %d, remaining links: %d", linkID, expectedLinks)
+	}
+
+	// Step 4: Verify no links remain
+	assert.Equal(t, 0, fix.Kernel.LinkCount(), "should have 0 links after all detaches")
+
+	// Step 5: Unload program
+	_, err = fix.Server.Unload(ctx, &pb.UnloadRequest{Id: programID})
+	require.NoError(t, err, "Unload should succeed")
+	t.Logf("Step 4: Unloaded program %d", programID)
+
+	// Step 6: Verify clean state
+	assert.Equal(t, 0, fix.Kernel.ProgramCount(), "should have 0 programs")
+	assert.Equal(t, 0, fix.Kernel.LinkCount(), "should have 0 links")
+
+	// Verify database is clean
+	listResp, err := fix.Server.List(ctx, &pb.ListRequest{})
+	require.NoError(t, err, "List should succeed")
+	assert.Empty(t, listResp.Results, "should have 0 programs in database")
+
+	t.Log("Step 5: Verified clean state - test passed")
+}
+
+// TestXDP_AttachToNonExistentInterface verifies that:
+//
+//	Given a loaded XDP program,
+//	When I try to attach it to a non-existent interface,
+//	Then the operation fails with an appropriate error.
+func TestXDP_AttachToNonExistentInterface(t *testing.T) {
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	// Load an XDP program
+	loadReq := &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_File{File: "/path/to/xdp.o"},
+		},
+		Info: []*pb.LoadInfo{
+			{Name: "xdp_pass", ProgramType: pb.BpfmanProgramType_XDP},
+		},
+		Metadata: map[string]string{
+			"bpfman.io/ProgramName": "xdp-nonexistent-iface-test",
+		},
+	}
+
+	loadResp, err := fix.Server.Load(ctx, loadReq)
+	require.NoError(t, err, "Load should succeed")
+	programID := loadResp.Programs[0].KernelInfo.Id
+
+	// Attempt to attach to non-existent interface
+	attachReq := &pb.AttachRequest{
+		Id: programID,
+		Attach: &pb.AttachInfo{
+			Info: &pb.AttachInfo_XdpAttachInfo{
+				XdpAttachInfo: &pb.XDPAttachInfo{
+					Iface: "nonexistent0",
+				},
+			},
+		},
+	}
+
+	_, err = fix.Server.Attach(ctx, attachReq)
+	require.Error(t, err, "Attach to non-existent interface should fail")
+	assert.Contains(t, err.Error(), "not found", "error should mention interface not found")
+
+	// Program should still be loaded
+	assert.Equal(t, 1, fix.Kernel.ProgramCount(), "program should still be loaded")
+	// No links should exist
+	assert.Equal(t, 0, fix.Kernel.LinkCount(), "no links should exist")
+}
+
+// =============================================================================
+// TC Dispatcher Lifecycle Tests
+// =============================================================================
+//
+// These tests verify the TC dispatcher lifecycle using the fake network
+// interface resolver.
+
+// TestTC_FirstAttachCreatesLink verifies that:
+//
+//	Given a loaded TC program,
+//	When I attach it to an interface,
+//	Then a link is created.
+func TestTC_FirstAttachCreatesLink(t *testing.T) {
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	// Load a TC program
+	loadReq := &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_File{File: "/path/to/tc.o"},
+		},
+		Info: []*pb.LoadInfo{
+			{Name: "tc_pass", ProgramType: pb.BpfmanProgramType_TC},
+		},
+		Metadata: map[string]string{
+			"bpfman.io/ProgramName": "tc-attach-test",
+		},
+	}
+
+	loadResp, err := fix.Server.Load(ctx, loadReq)
+	require.NoError(t, err, "Load should succeed")
+	programID := loadResp.Programs[0].KernelInfo.Id
+
+	// Attach to interface with ingress direction
+	attachReq := &pb.AttachRequest{
+		Id: programID,
+		Attach: &pb.AttachInfo{
+			Info: &pb.AttachInfo_TcAttachInfo{
+				TcAttachInfo: &pb.TCAttachInfo{
+					Iface:     "eth0",
+					Direction: "ingress",
+					Priority:  50,
+				},
+			},
+		},
+	}
+
+	attachResp, err := fix.Server.Attach(ctx, attachReq)
+	require.NoError(t, err, "AttachTC should succeed")
+	require.NotZero(t, attachResp.LinkId, "link ID should be non-zero")
+
+	// Verify link exists in fake kernel
+	assert.Equal(t, 1, fix.Kernel.LinkCount(), "should have 1 link in kernel")
+}
+
+// TestTC_IngressAndEgressDirections verifies that:
+//
+//	Given a loaded TC program,
+//	When I attach it with both ingress and egress directions,
+//	Then both attachments succeed.
+func TestTC_IngressAndEgressDirections(t *testing.T) {
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	// Load a TC program
+	loadReq := &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_File{File: "/path/to/tc.o"},
+		},
+		Info: []*pb.LoadInfo{
+			{Name: "tc_pass", ProgramType: pb.BpfmanProgramType_TC},
+		},
+		Metadata: map[string]string{
+			"bpfman.io/ProgramName": "tc-direction-test",
+		},
+	}
+
+	loadResp, err := fix.Server.Load(ctx, loadReq)
+	require.NoError(t, err, "Load should succeed")
+	programID := loadResp.Programs[0].KernelInfo.Id
+
+	// Attach ingress
+	ingressReq := &pb.AttachRequest{
+		Id: programID,
+		Attach: &pb.AttachInfo{
+			Info: &pb.AttachInfo_TcAttachInfo{
+				TcAttachInfo: &pb.TCAttachInfo{
+					Iface:     "eth0",
+					Direction: "ingress",
+				},
+			},
+		},
+	}
+
+	ingressResp, err := fix.Server.Attach(ctx, ingressReq)
+	require.NoError(t, err, "Ingress attach should succeed")
+
+	// Attach egress
+	egressReq := &pb.AttachRequest{
+		Id: programID,
+		Attach: &pb.AttachInfo{
+			Info: &pb.AttachInfo_TcAttachInfo{
+				TcAttachInfo: &pb.TCAttachInfo{
+					Iface:     "eth0",
+					Direction: "egress",
+				},
+			},
+		},
+	}
+
+	egressResp, err := fix.Server.Attach(ctx, egressReq)
+	require.NoError(t, err, "Egress attach should succeed")
+
+	// Verify both links exist
+	assert.Equal(t, 2, fix.Kernel.LinkCount(), "should have 2 links")
+	assert.NotEqual(t, ingressResp.LinkId, egressResp.LinkId, "link IDs should differ")
+}
+
+// TestTC_InvalidDirection verifies that:
+//
+//	Given a loaded TC program,
+//	When I try to attach with an invalid direction,
+//	Then the operation fails.
+func TestTC_InvalidDirection(t *testing.T) {
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	// Load a TC program
+	loadReq := &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_File{File: "/path/to/tc.o"},
+		},
+		Info: []*pb.LoadInfo{
+			{Name: "tc_pass", ProgramType: pb.BpfmanProgramType_TC},
+		},
+		Metadata: map[string]string{
+			"bpfman.io/ProgramName": "tc-invalid-direction-test",
+		},
+	}
+
+	loadResp, err := fix.Server.Load(ctx, loadReq)
+	require.NoError(t, err, "Load should succeed")
+	programID := loadResp.Programs[0].KernelInfo.Id
+
+	// Attempt attach with invalid direction
+	attachReq := &pb.AttachRequest{
+		Id: programID,
+		Attach: &pb.AttachInfo{
+			Info: &pb.AttachInfo_TcAttachInfo{
+				TcAttachInfo: &pb.TCAttachInfo{
+					Iface:     "eth0",
+					Direction: "sideways",
+				},
+			},
+		},
+	}
+
+	_, err = fix.Server.Attach(ctx, attachReq)
+	require.Error(t, err, "Attach with invalid direction should fail")
+	assert.Contains(t, err.Error(), "direction", "error should mention direction")
+}
+
+// TestTC_AttachToNonExistentInterface verifies that:
+//
+//	Given a loaded TC program,
+//	When I try to attach it to a non-existent interface,
+//	Then the operation fails with an appropriate error.
+func TestTC_AttachToNonExistentInterface(t *testing.T) {
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	// Load a TC program
+	loadReq := &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_File{File: "/path/to/tc.o"},
+		},
+		Info: []*pb.LoadInfo{
+			{Name: "tc_pass", ProgramType: pb.BpfmanProgramType_TC},
+		},
+		Metadata: map[string]string{
+			"bpfman.io/ProgramName": "tc-nonexistent-iface-test",
+		},
+	}
+
+	loadResp, err := fix.Server.Load(ctx, loadReq)
+	require.NoError(t, err, "Load should succeed")
+	programID := loadResp.Programs[0].KernelInfo.Id
+
+	// Attempt to attach to non-existent interface
+	attachReq := &pb.AttachRequest{
+		Id: programID,
+		Attach: &pb.AttachInfo{
+			Info: &pb.AttachInfo_TcAttachInfo{
+				TcAttachInfo: &pb.TCAttachInfo{
+					Iface:     "nonexistent0",
+					Direction: "ingress",
+				},
+			},
+		},
+	}
+
+	_, err = fix.Server.Attach(ctx, attachReq)
+	require.Error(t, err, "Attach to non-existent interface should fail")
+	assert.Contains(t, err.Error(), "not found", "error should mention interface not found")
+
+	// No links should exist
+	assert.Equal(t, 0, fix.Kernel.LinkCount(), "no links should exist")
+}
+
+// TestTC_FullLifecycle verifies the complete TC lifecycle:
+//
+//  1. Load TC program
+//  2. Attach to ingress and egress
+//  3. Detach all links
+//  4. Unload program
+//  5. Verify clean state
+func TestTC_FullLifecycle(t *testing.T) {
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	// Step 1: Load TC program
+	loadReq := &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_File{File: "/path/to/tc.o"},
+		},
+		Info: []*pb.LoadInfo{
+			{Name: "tc_pass", ProgramType: pb.BpfmanProgramType_TC},
+		},
+		Metadata: map[string]string{
+			"bpfman.io/ProgramName": "tc-lifecycle-test",
+		},
+	}
+
+	loadResp, err := fix.Server.Load(ctx, loadReq)
+	require.NoError(t, err, "Load should succeed")
+	programID := loadResp.Programs[0].KernelInfo.Id
+	t.Logf("Step 1: Loaded program ID %d", programID)
+
+	// Step 2: Attach to ingress and egress on multiple interfaces
+	var linkIDs []uint32
+	for _, iface := range []string{"lo", "eth0"} {
+		for _, direction := range []string{"ingress", "egress"} {
+			attachReq := &pb.AttachRequest{
+				Id: programID,
+				Attach: &pb.AttachInfo{
+					Info: &pb.AttachInfo_TcAttachInfo{
+						TcAttachInfo: &pb.TCAttachInfo{
+							Iface:     iface,
+							Direction: direction,
+						},
+					},
+				},
+			}
+			attachResp, err := fix.Server.Attach(ctx, attachReq)
+			require.NoError(t, err, "Attach %s/%s should succeed", iface, direction)
+			linkIDs = append(linkIDs, attachResp.LinkId)
+			t.Logf("Step 2: Attached %s/%s (link ID %d)", iface, direction, attachResp.LinkId)
+		}
+	}
+
+	// Verify state after attachments (4 links: 2 interfaces x 2 directions)
+	assert.Equal(t, 1, fix.Kernel.ProgramCount(), "should have 1 program")
+	assert.Equal(t, 4, fix.Kernel.LinkCount(), "should have 4 links")
+
+	// Step 3: Detach all links
+	for i, linkID := range linkIDs {
+		_, err := fix.Server.Detach(ctx, &pb.DetachRequest{LinkId: linkID})
+		require.NoError(t, err, "Detach link %d should succeed", linkID)
+		t.Logf("Step 3: Detached link %d, remaining: %d", linkID, fix.Kernel.LinkCount())
+		assert.Equal(t, 4-i-1, fix.Kernel.LinkCount(), "link count should decrement")
+	}
+
+	// Step 4: Unload program
+	_, err = fix.Server.Unload(ctx, &pb.UnloadRequest{Id: programID})
+	require.NoError(t, err, "Unload should succeed")
+	t.Logf("Step 4: Unloaded program %d", programID)
+
+	// Step 5: Verify clean state
+	assert.Equal(t, 0, fix.Kernel.ProgramCount(), "should have 0 programs")
+	assert.Equal(t, 0, fix.Kernel.LinkCount(), "should have 0 links")
+	t.Log("Step 5: Verified clean state - test passed")
+}
+
+// =============================================================================
+// TCX Lifecycle Tests
+// =============================================================================
+//
+// These tests verify the TCX lifecycle using the fake network interface
+// resolver. TCX is the modern link-based TC attachment mechanism.
+
+// TestTCX_FirstAttachCreatesLink verifies that:
+//
+//	Given a loaded TCX program,
+//	When I attach it to an interface,
+//	Then a link is created.
+func TestTCX_FirstAttachCreatesLink(t *testing.T) {
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	// Load a TCX program
+	loadReq := &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_File{File: "/path/to/tcx.o"},
+		},
+		Info: []*pb.LoadInfo{
+			{Name: "tcx_pass", ProgramType: pb.BpfmanProgramType_TCX},
+		},
+		Metadata: map[string]string{
+			"bpfman.io/ProgramName": "tcx-attach-test",
+		},
+	}
+
+	loadResp, err := fix.Server.Load(ctx, loadReq)
+	require.NoError(t, err, "Load should succeed")
+	programID := loadResp.Programs[0].KernelInfo.Id
+
+	// Attach to interface with ingress direction
+	attachReq := &pb.AttachRequest{
+		Id: programID,
+		Attach: &pb.AttachInfo{
+			Info: &pb.AttachInfo_TcxAttachInfo{
+				TcxAttachInfo: &pb.TCXAttachInfo{
+					Iface:     "eth0",
+					Direction: "ingress",
+					Priority:  50,
+				},
+			},
+		},
+	}
+
+	attachResp, err := fix.Server.Attach(ctx, attachReq)
+	require.NoError(t, err, "AttachTCX should succeed")
+	require.NotZero(t, attachResp.LinkId, "link ID should be non-zero")
+
+	// Verify link exists in fake kernel
+	assert.Equal(t, 1, fix.Kernel.LinkCount(), "should have 1 link in kernel")
+}
+
+// TestTCX_IngressAndEgressDirections verifies that:
+//
+//	Given a loaded TCX program,
+//	When I attach it with both ingress and egress directions,
+//	Then both attachments succeed.
+func TestTCX_IngressAndEgressDirections(t *testing.T) {
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	// Load a TCX program
+	loadReq := &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_File{File: "/path/to/tcx.o"},
+		},
+		Info: []*pb.LoadInfo{
+			{Name: "tcx_pass", ProgramType: pb.BpfmanProgramType_TCX},
+		},
+		Metadata: map[string]string{
+			"bpfman.io/ProgramName": "tcx-direction-test",
+		},
+	}
+
+	loadResp, err := fix.Server.Load(ctx, loadReq)
+	require.NoError(t, err, "Load should succeed")
+	programID := loadResp.Programs[0].KernelInfo.Id
+
+	// Attach ingress
+	ingressReq := &pb.AttachRequest{
+		Id: programID,
+		Attach: &pb.AttachInfo{
+			Info: &pb.AttachInfo_TcxAttachInfo{
+				TcxAttachInfo: &pb.TCXAttachInfo{
+					Iface:     "eth0",
+					Direction: "ingress",
+				},
+			},
+		},
+	}
+
+	ingressResp, err := fix.Server.Attach(ctx, ingressReq)
+	require.NoError(t, err, "Ingress attach should succeed")
+
+	// Attach egress
+	egressReq := &pb.AttachRequest{
+		Id: programID,
+		Attach: &pb.AttachInfo{
+			Info: &pb.AttachInfo_TcxAttachInfo{
+				TcxAttachInfo: &pb.TCXAttachInfo{
+					Iface:     "eth0",
+					Direction: "egress",
+				},
+			},
+		},
+	}
+
+	egressResp, err := fix.Server.Attach(ctx, egressReq)
+	require.NoError(t, err, "Egress attach should succeed")
+
+	// Verify both links exist
+	assert.Equal(t, 2, fix.Kernel.LinkCount(), "should have 2 links")
+	assert.NotEqual(t, ingressResp.LinkId, egressResp.LinkId, "link IDs should differ")
+}
+
+// TestTCX_InvalidDirection verifies that:
+//
+//	Given a loaded TCX program,
+//	When I try to attach with an invalid direction,
+//	Then the operation fails.
+func TestTCX_InvalidDirection(t *testing.T) {
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	// Load a TCX program
+	loadReq := &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_File{File: "/path/to/tcx.o"},
+		},
+		Info: []*pb.LoadInfo{
+			{Name: "tcx_pass", ProgramType: pb.BpfmanProgramType_TCX},
+		},
+		Metadata: map[string]string{
+			"bpfman.io/ProgramName": "tcx-invalid-direction-test",
+		},
+	}
+
+	loadResp, err := fix.Server.Load(ctx, loadReq)
+	require.NoError(t, err, "Load should succeed")
+	programID := loadResp.Programs[0].KernelInfo.Id
+
+	// Attempt attach with invalid direction
+	attachReq := &pb.AttachRequest{
+		Id: programID,
+		Attach: &pb.AttachInfo{
+			Info: &pb.AttachInfo_TcxAttachInfo{
+				TcxAttachInfo: &pb.TCXAttachInfo{
+					Iface:     "eth0",
+					Direction: "sideways",
+				},
+			},
+		},
+	}
+
+	_, err = fix.Server.Attach(ctx, attachReq)
+	require.Error(t, err, "Attach with invalid direction should fail")
+	assert.Contains(t, err.Error(), "direction", "error should mention direction")
+}
+
+// TestTCX_AttachToNonExistentInterface verifies that:
+//
+//	Given a loaded TCX program,
+//	When I try to attach it to a non-existent interface,
+//	Then the operation fails with an appropriate error.
+func TestTCX_AttachToNonExistentInterface(t *testing.T) {
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	// Load a TCX program
+	loadReq := &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_File{File: "/path/to/tcx.o"},
+		},
+		Info: []*pb.LoadInfo{
+			{Name: "tcx_pass", ProgramType: pb.BpfmanProgramType_TCX},
+		},
+		Metadata: map[string]string{
+			"bpfman.io/ProgramName": "tcx-nonexistent-iface-test",
+		},
+	}
+
+	loadResp, err := fix.Server.Load(ctx, loadReq)
+	require.NoError(t, err, "Load should succeed")
+	programID := loadResp.Programs[0].KernelInfo.Id
+
+	// Attempt to attach to non-existent interface
+	attachReq := &pb.AttachRequest{
+		Id: programID,
+		Attach: &pb.AttachInfo{
+			Info: &pb.AttachInfo_TcxAttachInfo{
+				TcxAttachInfo: &pb.TCXAttachInfo{
+					Iface:     "nonexistent0",
+					Direction: "ingress",
+				},
+			},
+		},
+	}
+
+	_, err = fix.Server.Attach(ctx, attachReq)
+	require.Error(t, err, "Attach to non-existent interface should fail")
+	assert.Contains(t, err.Error(), "not found", "error should mention interface not found")
+
+	// No links should exist
+	assert.Equal(t, 0, fix.Kernel.LinkCount(), "no links should exist")
+}
+
+// TestTCX_FullLifecycle verifies the complete TCX lifecycle:
+//
+//  1. Load TCX program
+//  2. Attach to ingress and egress on multiple interfaces
+//  3. Detach all links
+//  4. Unload program
+//  5. Verify clean state
+func TestTCX_FullLifecycle(t *testing.T) {
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	// Step 1: Load TCX program
+	loadReq := &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_File{File: "/path/to/tcx.o"},
+		},
+		Info: []*pb.LoadInfo{
+			{Name: "tcx_pass", ProgramType: pb.BpfmanProgramType_TCX},
+		},
+		Metadata: map[string]string{
+			"bpfman.io/ProgramName": "tcx-lifecycle-test",
+		},
+	}
+
+	loadResp, err := fix.Server.Load(ctx, loadReq)
+	require.NoError(t, err, "Load should succeed")
+	programID := loadResp.Programs[0].KernelInfo.Id
+	t.Logf("Step 1: Loaded program ID %d", programID)
+
+	// Step 2: Attach to ingress and egress on multiple interfaces
+	var linkIDs []uint32
+	for _, iface := range []string{"lo", "eth0"} {
+		for _, direction := range []string{"ingress", "egress"} {
+			attachReq := &pb.AttachRequest{
+				Id: programID,
+				Attach: &pb.AttachInfo{
+					Info: &pb.AttachInfo_TcxAttachInfo{
+						TcxAttachInfo: &pb.TCXAttachInfo{
+							Iface:     iface,
+							Direction: direction,
+						},
+					},
+				},
+			}
+			attachResp, err := fix.Server.Attach(ctx, attachReq)
+			require.NoError(t, err, "Attach %s/%s should succeed", iface, direction)
+			linkIDs = append(linkIDs, attachResp.LinkId)
+			t.Logf("Step 2: Attached %s/%s (link ID %d)", iface, direction, attachResp.LinkId)
+		}
+	}
+
+	// Verify state after attachments (4 links: 2 interfaces x 2 directions)
+	assert.Equal(t, 1, fix.Kernel.ProgramCount(), "should have 1 program")
+	assert.Equal(t, 4, fix.Kernel.LinkCount(), "should have 4 links")
+
+	// Step 3: Detach all links
+	for i, linkID := range linkIDs {
+		_, err := fix.Server.Detach(ctx, &pb.DetachRequest{LinkId: linkID})
+		require.NoError(t, err, "Detach link %d should succeed", linkID)
+		t.Logf("Step 3: Detached link %d, remaining: %d", linkID, fix.Kernel.LinkCount())
+		assert.Equal(t, 4-i-1, fix.Kernel.LinkCount(), "link count should decrement")
+	}
+
+	// Step 4: Unload program
+	_, err = fix.Server.Unload(ctx, &pb.UnloadRequest{Id: programID})
+	require.NoError(t, err, "Unload should succeed")
+	t.Logf("Step 4: Unloaded program %d", programID)
+
+	// Step 5: Verify clean state
+	assert.Equal(t, 0, fix.Kernel.ProgramCount(), "should have 0 programs")
+	assert.Equal(t, 0, fix.Kernel.LinkCount(), "should have 0 links")
+	t.Log("Step 5: Verified clean state - test passed")
 }
