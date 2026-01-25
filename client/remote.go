@@ -420,7 +420,9 @@ func (c *remoteClient) PullImage(ctx context.Context, ref interpreter.ImageRef) 
 func (c *remoteClient) LoadImage(ctx context.Context, ref interpreter.ImageRef, programs []ImageProgramSpec, opts LoadImageOpts) ([]bpfman.ManagedProgram, error) {
 	// Build LoadInfo for each program
 	loadInfo := make([]*pb.LoadInfo, 0, len(programs))
-	var globalData map[string][]byte
+
+	// Start with request-level global data, per-program specs can override
+	globalData := opts.GlobalData
 
 	// Copy user metadata and add type hints for kretprobe/uretprobe
 	// since the proto enum doesn't distinguish them from kprobe/uprobe.

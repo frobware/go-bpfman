@@ -1220,6 +1220,96 @@ func TestXDP_LoadAttachDetachUnload(t *testing.T) {
 	require.Error(t, err, "Get should fail after unload")
 }
 
+// TestLoadWithMetadataAndGlobalData verifies that user-supplied metadata and
+// global data are stored and returned correctly through the full stack.
+func TestLoadWithMetadataAndGlobalData(t *testing.T) {
+	t.Parallel()
+	RequireRoot(t)
+
+	env := NewTestEnv(t)
+	ctx := context.Background()
+
+	// Given: clean state
+	env.AssertCleanState()
+
+	// Define user metadata and global data
+	userMetadata := map[string]string{
+		"owner":                 "test-team",
+		"environment":           "e2e-testing",
+		"bpfman.io/application": "metadata-test",
+	}
+	globalData := map[string][]byte{
+		"config_u8":  {0x42},
+		"config_u32": {0xDE, 0xAD, 0xBE, 0xEF},
+	}
+
+	// When: load from OCI image with metadata and global data
+	imageRef := interpreter.ImageRef{
+		URL: "quay.io/bpfman-bytecode/xdp_pass:latest",
+	}
+	programs, err := env.Client.LoadImage(ctx, imageRef, []client.ImageProgramSpec{
+		{
+			ProgramType: bpfman.ProgramTypeXDP,
+			ProgramName: "pass",
+		},
+	}, client.LoadImageOpts{
+		UserMetadata: userMetadata,
+		GlobalData:   globalData,
+	})
+	require.NoError(t, err)
+	require.Len(t, programs, 1)
+
+	prog := programs[0]
+	t.Cleanup(func() {
+		env.Client.Unload(context.Background(), prog.Kernel.ID())
+	})
+
+	// Then: Get should return the user metadata and global data
+	gotProg, err := env.Client.Get(ctx, prog.Kernel.ID())
+	require.NoError(t, err)
+	require.NotNil(t, gotProg.Bpfman)
+	require.NotNil(t, gotProg.Bpfman.Program)
+
+	// Verify user metadata is returned
+	require.Equal(t, "test-team", gotProg.Bpfman.Program.UserMetadata["owner"],
+		"Get should return user metadata 'owner'")
+	require.Equal(t, "e2e-testing", gotProg.Bpfman.Program.UserMetadata["environment"],
+		"Get should return user metadata 'environment'")
+	require.Equal(t, "metadata-test", gotProg.Bpfman.Program.UserMetadata["bpfman.io/application"],
+		"Get should return user metadata 'bpfman.io/application'")
+
+	// Verify global data is returned
+	require.Equal(t, []byte{0x42}, gotProg.Bpfman.Program.GlobalData["config_u8"],
+		"Get should return global data 'config_u8'")
+	require.Equal(t, []byte{0xDE, 0xAD, 0xBE, 0xEF}, gotProg.Bpfman.Program.GlobalData["config_u32"],
+		"Get should return global data 'config_u32'")
+
+	// Then: List should also return the user metadata and global data
+	listedProgs, err := env.Client.List(ctx)
+	require.NoError(t, err)
+	require.Len(t, listedProgs, 1)
+	require.NotNil(t, listedProgs[0].Metadata)
+
+	// Verify user metadata via List
+	require.Equal(t, "test-team", listedProgs[0].Metadata.UserMetadata["owner"],
+		"List should return user metadata 'owner'")
+	require.Equal(t, "e2e-testing", listedProgs[0].Metadata.UserMetadata["environment"],
+		"List should return user metadata 'environment'")
+
+	// Verify global data via List
+	require.Equal(t, []byte{0x42}, listedProgs[0].Metadata.GlobalData["config_u8"],
+		"List should return global data 'config_u8'")
+	require.Equal(t, []byte{0xDE, 0xAD, 0xBE, 0xEF}, listedProgs[0].Metadata.GlobalData["config_u32"],
+		"List should return global data 'config_u32'")
+
+	// When: unload
+	err = env.Client.Unload(ctx, prog.Kernel.ID())
+	require.NoError(t, err)
+
+	// Then: clean state
+	env.AssertCleanState()
+}
+
 // uprobeTarget returns the path and function name for uprobe tests.
 // Uses libc malloc - works on standard Linux and NixOS.
 func uprobeTarget() (target, fnName string) {

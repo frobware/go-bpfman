@@ -796,6 +796,102 @@ func TestGetProgram_ReturnsAllFields(t *testing.T) {
 	assert.Equal(t, uint32(bpfman.ProgramTypeKprobe), getResp.KernelInfo.ProgramType, "KernelInfo.ProgramType")
 }
 
+// TestLoadProgram_WithGlobalData verifies that:
+//
+//	Given a program loaded with global data,
+//	When I retrieve it via Get,
+//	Then the global data is returned correctly.
+func TestLoadProgram_WithGlobalData(t *testing.T) {
+	srv := newTestServer(t)
+	ctx := context.Background()
+
+	globalData := map[string][]byte{
+		"GLOBAL_u8":  {0x01},
+		"GLOBAL_u32": {0x0A, 0x0B, 0x0C, 0x0D},
+		"sampling":   {0x00, 0x00, 0x00, 0x01},
+	}
+
+	req := &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_File{File: "/path/to/prog.o"},
+		},
+		Info: []*pb.LoadInfo{
+			{
+				Name:        "global_test_prog",
+				ProgramType: pb.BpfmanProgramType_KPROBE,
+			},
+		},
+		Metadata: map[string]string{
+			"app": "global-test",
+		},
+		GlobalData: globalData,
+	}
+
+	loadResp, err := srv.Load(ctx, req)
+	require.NoError(t, err, "Load failed")
+	require.Len(t, loadResp.Programs, 1, "expected 1 program")
+
+	// Verify global data is returned in the load response
+	prog := loadResp.Programs[0]
+	assert.Equal(t, globalData, prog.Info.GlobalData, "GlobalData in load response")
+
+	// Verify global data is returned via Get
+	kernelID := prog.KernelInfo.Id
+	getResp, err := srv.Get(ctx, &pb.GetRequest{Id: kernelID})
+	require.NoError(t, err, "Get failed")
+	assert.Equal(t, globalData, getResp.Info.GlobalData, "GlobalData in get response")
+}
+
+// TestLoadProgram_WithMetadataAndGlobalData verifies that:
+//
+//	Given a program loaded with both metadata and global data,
+//	When I retrieve it via Get and List,
+//	Then both are returned correctly.
+func TestLoadProgram_WithMetadataAndGlobalData(t *testing.T) {
+	srv := newTestServer(t)
+	ctx := context.Background()
+
+	metadata := map[string]string{
+		"owner":       "test-team",
+		"environment": "staging",
+	}
+	globalData := map[string][]byte{
+		"config_flag": {0xFF},
+	}
+
+	req := &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_File{File: "/path/to/prog.o"},
+		},
+		Info: []*pb.LoadInfo{
+			{
+				Name:        "combined_test_prog",
+				ProgramType: pb.BpfmanProgramType_TRACEPOINT,
+			},
+		},
+		Metadata:   metadata,
+		GlobalData: globalData,
+	}
+
+	loadResp, err := srv.Load(ctx, req)
+	require.NoError(t, err, "Load failed")
+	kernelID := loadResp.Programs[0].KernelInfo.Id
+
+	// Verify via Get
+	getResp, err := srv.Get(ctx, &pb.GetRequest{Id: kernelID})
+	require.NoError(t, err, "Get failed")
+	assert.Equal(t, "test-team", getResp.Info.Metadata["owner"], "Metadata[owner]")
+	assert.Equal(t, "staging", getResp.Info.Metadata["environment"], "Metadata[environment]")
+	assert.Equal(t, globalData, getResp.Info.GlobalData, "GlobalData")
+
+	// Verify via List
+	listResp, err := srv.List(ctx, &pb.ListRequest{})
+	require.NoError(t, err, "List failed")
+	require.Len(t, listResp.Results, 1, "expected 1 program in list")
+	assert.Equal(t, "test-team", listResp.Results[0].Info.Metadata["owner"], "List Metadata[owner]")
+	assert.Equal(t, globalData, listResp.Results[0].Info.GlobalData, "List GlobalData")
+}
+
 // TestListPrograms_ReturnsAllFields verifies that:
 //
 //	Given multiple programs loaded with different metadata,

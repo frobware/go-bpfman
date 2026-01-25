@@ -73,3 +73,162 @@ func TestParseProgramSpec_InvalidInputs(t *testing.T) {
 		})
 	}
 }
+
+func TestParseKeyValue_ValidInputs(t *testing.T) {
+	tests := []struct {
+		input         string
+		expectedKey   string
+		expectedValue string
+	}{
+		{"key=value", "key", "value"},
+		{"owner=acme", "owner", "acme"},
+		{"bpfman.io/application=stats", "bpfman.io/application", "stats"},
+		{"key=", "key", ""},                          // empty value is valid
+		{"key=value=with=equals", "key", "value=with=equals"}, // value can contain =
+		{"  key  =value", "key", "value"},            // whitespace in key trimmed
+		{"key=  value with spaces  ", "key", "  value with spaces  "}, // value whitespace preserved
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			kv, err := cli.ParseKeyValue(tt.input)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expectedKey, kv.Key)
+			assert.Equal(t, tt.expectedValue, kv.Value)
+		})
+	}
+}
+
+func TestParseKeyValue_InvalidInputs(t *testing.T) {
+	tests := []struct {
+		input       string
+		errContains string
+	}{
+		{"noequals", "expected KEY=VALUE"},
+		{"=value", "expected KEY=VALUE"}, // empty key
+		{"", "expected KEY=VALUE"},
+		{"   =value", "key cannot be empty"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			_, err := cli.ParseKeyValue(tt.input)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.errContains)
+		})
+	}
+}
+
+func TestParseGlobalData_ValidInputs(t *testing.T) {
+	tests := []struct {
+		input        string
+		expectedName string
+		expectedData []byte
+	}{
+		{"GLOBAL_u8=01", "GLOBAL_u8", []byte{0x01}},
+		{"GLOBAL_u32=0A0B0C0D", "GLOBAL_u32", []byte{0x0A, 0x0B, 0x0C, 0x0D}},
+		{"sampling=00000001", "sampling", []byte{0x00, 0x00, 0x00, 0x01}},
+		// With 0x prefix
+		{"GLOBAL_u8=0x01", "GLOBAL_u8", []byte{0x01}},
+		{"GLOBAL_u8=0X01", "GLOBAL_u8", []byte{0x01}},
+		{"GLOBAL_u32=0x0A0B0C0D", "GLOBAL_u32", []byte{0x0A, 0x0B, 0x0C, 0x0D}},
+		// With whitespace
+		{"  name  =  0x01  ", "name", []byte{0x01}},
+		// Empty data
+		{"empty=", "empty", []byte{}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			gd, err := cli.ParseGlobalData(tt.input)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expectedName, gd.Name)
+			assert.Equal(t, tt.expectedData, gd.Data)
+		})
+	}
+}
+
+func TestParseGlobalData_InvalidInputs(t *testing.T) {
+	tests := []struct {
+		input       string
+		errContains string
+	}{
+		{"noequals", "expected NAME=HEX"},
+		{"=01", "expected NAME=HEX"},    // empty name
+		{"", "expected NAME=HEX"},
+		{"   =01", "name cannot be empty"},
+		{"name=GG", "invalid hex data"}, // invalid hex
+		{"name=0xGG", "invalid hex data"},
+		{"name=123", "invalid hex data"}, // odd number of hex chars
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			_, err := cli.ParseGlobalData(tt.input)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.errContains)
+		})
+	}
+}
+
+func TestMetadataMap(t *testing.T) {
+	t.Run("nil for empty slice", func(t *testing.T) {
+		result := cli.MetadataMap(nil)
+		assert.Nil(t, result)
+
+		result = cli.MetadataMap([]cli.KeyValue{})
+		assert.Nil(t, result)
+	})
+
+	t.Run("converts to map", func(t *testing.T) {
+		input := []cli.KeyValue{
+			{Key: "owner", Value: "acme"},
+			{Key: "app", Value: "test"},
+		}
+		result := cli.MetadataMap(input)
+		assert.Equal(t, map[string]string{
+			"owner": "acme",
+			"app":   "test",
+		}, result)
+	})
+
+	t.Run("last value wins for duplicate keys", func(t *testing.T) {
+		input := []cli.KeyValue{
+			{Key: "key", Value: "first"},
+			{Key: "key", Value: "second"},
+		}
+		result := cli.MetadataMap(input)
+		assert.Equal(t, "second", result["key"])
+	})
+}
+
+func TestGlobalDataMap(t *testing.T) {
+	t.Run("nil for empty slice", func(t *testing.T) {
+		result := cli.GlobalDataMap(nil)
+		assert.Nil(t, result)
+
+		result = cli.GlobalDataMap([]cli.GlobalData{})
+		assert.Nil(t, result)
+	})
+
+	t.Run("converts to map", func(t *testing.T) {
+		input := []cli.GlobalData{
+			{Name: "GLOBAL_u8", Data: []byte{0x01}},
+			{Name: "GLOBAL_u32", Data: []byte{0x0A, 0x0B, 0x0C, 0x0D}},
+		}
+		result := cli.GlobalDataMap(input)
+		assert.Equal(t, map[string][]byte{
+			"GLOBAL_u8":  {0x01},
+			"GLOBAL_u32": {0x0A, 0x0B, 0x0C, 0x0D},
+		}, result)
+	})
+
+	t.Run("last value wins for duplicate names", func(t *testing.T) {
+		input := []cli.GlobalData{
+			{Name: "var", Data: []byte{0x01}},
+			{Name: "var", Data: []byte{0x02}},
+		}
+		result := cli.GlobalDataMap(input)
+		assert.Equal(t, []byte{0x02}, result["var"])
+	})
+}
