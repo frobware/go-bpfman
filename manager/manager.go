@@ -800,6 +800,7 @@ func (m *Manager) AttachXDP(ctx context.Context, spec bpfman.XDPAttachSpec, opts
 	programKernelID := spec.ProgramID()
 	ifindex := spec.Ifindex()
 	ifname := spec.Ifname()
+	netnsPath := spec.Netns()
 	linkPinPath := opts.LinkPinPath
 
 	// FETCH: Get program metadata to access ObjectPath and ProgramName
@@ -808,17 +809,17 @@ func (m *Manager) AttachXDP(ctx context.Context, spec bpfman.XDPAttachSpec, opts
 		return bpfman.LinkSummary{}, fmt.Errorf("get program %d: %w", programKernelID, err)
 	}
 
-	// FETCH: Get network namespace ID
-	nsid, err := netns.GetCurrentNsid()
+	// FETCH: Get network namespace ID (from target namespace if specified)
+	nsid, err := netns.GetNsid(netnsPath)
 	if err != nil {
-		return bpfman.LinkSummary{}, fmt.Errorf("get current nsid: %w", err)
+		return bpfman.LinkSummary{}, fmt.Errorf("get nsid: %w", err)
 	}
 
 	// FETCH: Look up existing dispatcher or create new one
 	dispState, err := m.store.GetDispatcher(ctx, string(dispatcher.DispatcherTypeXDP), nsid, uint32(ifindex))
 	if errors.Is(err, store.ErrNotFound) {
 		// KERNEL I/O + EXECUTE: Create new dispatcher
-		dispState, err = m.createXDPDispatcher(ctx, nsid, uint32(ifindex))
+		dispState, err = m.createXDPDispatcher(ctx, nsid, uint32(ifindex), netnsPath)
 		if err != nil {
 			return bpfman.LinkSummary{}, fmt.Errorf("create XDP dispatcher for %s: %w", ifname, err)
 		}
@@ -937,7 +938,7 @@ func computeAttachXDPActions(
 // createXDPDispatcher creates a new XDP dispatcher for the given interface.
 //
 // Pattern: COMPUTE -> KERNEL I/O -> COMPUTE -> EXECUTE
-func (m *Manager) createXDPDispatcher(ctx context.Context, nsid uint64, ifindex uint32) (dispatcher.State, error) {
+func (m *Manager) createXDPDispatcher(ctx context.Context, nsid uint64, ifindex uint32, netnsPath string) (dispatcher.State, error) {
 	// COMPUTE: Calculate paths according to Rust bpfman convention
 	revision := uint32(1)
 	linkPinPath := dispatcher.DispatcherLinkPath(m.dirs.FS, dispatcher.DispatcherTypeXDP, nsid, ifindex)
@@ -947,6 +948,7 @@ func (m *Manager) createXDPDispatcher(ctx context.Context, nsid uint64, ifindex 
 	m.logger.Info("creating XDP dispatcher",
 		"nsid", nsid,
 		"ifindex", ifindex,
+		"netns", netnsPath,
 		"revision", revision,
 		"prog_pin_path", progPinPath,
 		"link_pin_path", linkPinPath)
@@ -958,6 +960,7 @@ func (m *Manager) createXDPDispatcher(ctx context.Context, nsid uint64, ifindex 
 		linkPinPath,
 		dispatcher.MaxPrograms,
 		xdpProceedOnPass,
+		netnsPath,
 	)
 	if err != nil {
 		return dispatcher.State{}, err
@@ -1035,6 +1038,7 @@ func (m *Manager) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts b
 	direction := spec.Direction()
 	priority := spec.Priority()
 	proceedOn := spec.ProceedOn()
+	netnsPath := spec.Netns()
 	linkPinPath := opts.LinkPinPath
 
 	// FETCH: Get program metadata to access ObjectPath and ProgramName
@@ -1043,10 +1047,10 @@ func (m *Manager) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts b
 		return bpfman.LinkSummary{}, fmt.Errorf("get program %d: %w", programKernelID, err)
 	}
 
-	// FETCH: Get network namespace ID
-	nsid, err := netns.GetCurrentNsid()
+	// FETCH: Get network namespace ID (from target namespace if specified)
+	nsid, err := netns.GetNsid(netnsPath)
 	if err != nil {
-		return bpfman.LinkSummary{}, fmt.Errorf("get current nsid: %w", err)
+		return bpfman.LinkSummary{}, fmt.Errorf("get nsid: %w", err)
 	}
 
 	// Determine dispatcher type based on direction
@@ -1061,7 +1065,7 @@ func (m *Manager) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts b
 	dispState, err := m.store.GetDispatcher(ctx, string(dispType), nsid, uint32(ifindex))
 	if errors.Is(err, store.ErrNotFound) {
 		// KERNEL I/O + EXECUTE: Create new dispatcher
-		dispState, err = m.createTCDispatcher(ctx, nsid, uint32(ifindex), direction, dispType)
+		dispState, err = m.createTCDispatcher(ctx, nsid, uint32(ifindex), direction, dispType, netnsPath)
 		if err != nil {
 			return bpfman.LinkSummary{}, fmt.Errorf("create TC dispatcher for %s %s: %w", ifname, direction, err)
 		}
@@ -1199,6 +1203,7 @@ func (m *Manager) AttachTCX(ctx context.Context, spec bpfman.TCXAttachSpec, opts
 	ifname := spec.Ifname()
 	direction := spec.Direction()
 	priority := spec.Priority()
+	netnsPath := spec.Netns()
 	linkPinPath := opts.LinkPinPath
 
 	// FETCH: Get program metadata to find pin path
@@ -1212,10 +1217,10 @@ func (m *Manager) AttachTCX(ctx context.Context, spec bpfman.TCXAttachSpec, opts
 		return bpfman.LinkSummary{}, fmt.Errorf("program %d is type %s, not tcx", programKernelID, prog.ProgramType)
 	}
 
-	// FETCH: Get network namespace ID
-	nsid, err := netns.GetCurrentNsid()
+	// FETCH: Get network namespace ID (from target namespace if specified)
+	nsid, err := netns.GetNsid(netnsPath)
 	if err != nil {
-		return bpfman.LinkSummary{}, fmt.Errorf("get current nsid: %w", err)
+		return bpfman.LinkSummary{}, fmt.Errorf("get nsid: %w", err)
 	}
 
 	// COMPUTE: Calculate link pin path if not provided
@@ -1232,7 +1237,7 @@ func (m *Manager) AttachTCX(ctx context.Context, spec bpfman.TCXAttachSpec, opts
 	progPinPath := filepath.Join(fsRoot, fmt.Sprintf("prog_%d", programKernelID))
 
 	// KERNEL I/O: Attach program using TCX link
-	link, err := m.kernel.AttachTCX(ifindex, direction, progPinPath, linkPinPath)
+	link, err := m.kernel.AttachTCX(ifindex, direction, progPinPath, linkPinPath, netnsPath)
 	if err != nil {
 		return bpfman.LinkSummary{}, fmt.Errorf("attach TCX to %s %s: %w", ifname, direction, err)
 	}
@@ -1280,7 +1285,7 @@ func (m *Manager) AttachTCX(ctx context.Context, spec bpfman.TCXAttachSpec, opts
 // createTCDispatcher creates a new TC dispatcher for the given interface and direction.
 //
 // Pattern: COMPUTE -> KERNEL I/O -> COMPUTE -> EXECUTE
-func (m *Manager) createTCDispatcher(ctx context.Context, nsid uint64, ifindex uint32, direction string, dispType dispatcher.DispatcherType) (dispatcher.State, error) {
+func (m *Manager) createTCDispatcher(ctx context.Context, nsid uint64, ifindex uint32, direction string, dispType dispatcher.DispatcherType, netnsPath string) (dispatcher.State, error) {
 	// COMPUTE: Calculate paths according to Rust bpfman convention
 	revision := uint32(1)
 	linkPinPath := dispatcher.DispatcherLinkPath(m.dirs.FS, dispType, nsid, ifindex)
@@ -1291,6 +1296,7 @@ func (m *Manager) createTCDispatcher(ctx context.Context, nsid uint64, ifindex u
 		"direction", direction,
 		"nsid", nsid,
 		"ifindex", ifindex,
+		"netns", netnsPath,
 		"revision", revision,
 		"prog_pin_path", progPinPath,
 		"link_pin_path", linkPinPath)
@@ -1303,6 +1309,7 @@ func (m *Manager) createTCDispatcher(ctx context.Context, nsid uint64, ifindex u
 		direction,
 		dispatcher.MaxPrograms,
 		uint32(DefaultTCProceedOn),
+		netnsPath,
 	)
 	if err != nil {
 		return dispatcher.State{}, err

@@ -137,6 +137,7 @@ type XDPAttachSpec struct {
 	programID uint32
 	ifname    string
 	ifindex   int
+	netns     string // optional network namespace path
 }
 
 // NewXDPAttachSpec creates an XDPAttachSpec with validated fields.
@@ -156,6 +157,14 @@ func NewXDPAttachSpec(programID uint32, ifname string, ifindex int) (XDPAttachSp
 func (s XDPAttachSpec) ProgramID() uint32 { return s.programID }
 func (s XDPAttachSpec) Ifname() string    { return s.ifname }
 func (s XDPAttachSpec) Ifindex() int      { return s.ifindex }
+func (s XDPAttachSpec) Netns() string     { return s.netns }
+
+// WithNetns returns a new XDPAttachSpec with the network namespace path set.
+// If non-empty, attachment is performed in that network namespace.
+func (s XDPAttachSpec) WithNetns(netns string) XDPAttachSpec {
+	s.netns = netns
+	return s
+}
 
 // TCAttachSpec specifies how to attach TC.
 type TCAttachSpec struct {
@@ -165,6 +174,7 @@ type TCAttachSpec struct {
 	direction string // "ingress" or "egress"
 	priority  int
 	proceedOn []int32
+	netns     string // optional network namespace path
 }
 
 // NewTCAttachSpec creates a TCAttachSpec with validated fields.
@@ -190,6 +200,7 @@ func (s TCAttachSpec) Ifindex() int       { return s.ifindex }
 func (s TCAttachSpec) Direction() string  { return s.direction }
 func (s TCAttachSpec) Priority() int      { return s.priority }
 func (s TCAttachSpec) ProceedOn() []int32 { return s.proceedOn }
+func (s TCAttachSpec) Netns() string      { return s.netns }
 
 // WithPriority returns a new TCAttachSpec with the priority set.
 func (s TCAttachSpec) WithPriority(p int) TCAttachSpec {
@@ -203,6 +214,13 @@ func (s TCAttachSpec) WithProceedOn(po []int32) TCAttachSpec {
 	return s
 }
 
+// WithNetns returns a new TCAttachSpec with the network namespace path set.
+// If non-empty, attachment is performed in that network namespace.
+func (s TCAttachSpec) WithNetns(netns string) TCAttachSpec {
+	s.netns = netns
+	return s
+}
+
 // TCXAttachSpec specifies how to attach TCX.
 type TCXAttachSpec struct {
 	programID uint32
@@ -210,6 +228,7 @@ type TCXAttachSpec struct {
 	ifindex   int
 	direction string
 	priority  int
+	netns     string // optional network namespace path
 }
 
 // NewTCXAttachSpec creates a TCXAttachSpec with validated fields.
@@ -234,9 +253,17 @@ func (s TCXAttachSpec) Ifname() string    { return s.ifname }
 func (s TCXAttachSpec) Ifindex() int      { return s.ifindex }
 func (s TCXAttachSpec) Direction() string { return s.direction }
 func (s TCXAttachSpec) Priority() int     { return s.priority }
+func (s TCXAttachSpec) Netns() string     { return s.netns }
 
 // WithPriority returns a new TCXAttachSpec with the priority set.
 func (s TCXAttachSpec) WithPriority(p int) TCXAttachSpec {
 	s.priority = p
+	return s
+}
+
+// WithNetns returns a new TCXAttachSpec with the network namespace path set.
+// If non-empty, attachment is performed in that network namespace.
+func (s TCXAttachSpec) WithNetns(netns string) TCXAttachSpec {
+	s.netns = netns
 	return s
 }

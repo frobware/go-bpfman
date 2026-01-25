@@ -547,7 +547,7 @@ func (f *fakeKernel) AttachXDPDispatcher(ifindex int, pinDir string, numProgs in
 	}, nil
 }
 
-func (f *fakeKernel) AttachXDPDispatcherWithPaths(ifindex int, progPinPath, linkPinPath string, numProgs int, proceedOn uint32) (*interpreter.XDPDispatcherResult, error) {
+func (f *fakeKernel) AttachXDPDispatcherWithPaths(ifindex int, progPinPath, linkPinPath string, numProgs int, proceedOn uint32, netns string) (*interpreter.XDPDispatcherResult, error) {
 	dispatcherID := f.nextID.Add(1)
 	linkID := f.nextID.Add(1)
 	return &interpreter.XDPDispatcherResult{
@@ -579,7 +579,7 @@ func (f *fakeKernel) AttachXDPExtension(dispatcherPinPath, objectPath, programNa
 	}, nil
 }
 
-func (f *fakeKernel) AttachTCDispatcherWithPaths(ifindex int, progPinPath, linkPinPath, direction string, numProgs int, proceedOn uint32) (*interpreter.TCDispatcherResult, error) {
+func (f *fakeKernel) AttachTCDispatcherWithPaths(ifindex int, progPinPath, linkPinPath, direction string, numProgs int, proceedOn uint32, netns string) (*interpreter.TCDispatcherResult, error) {
 	dispatcherID := f.nextID.Add(1)
 	linkID := f.nextID.Add(1)
 	return &interpreter.TCDispatcherResult{
@@ -611,7 +611,7 @@ func (f *fakeKernel) AttachTCExtension(dispatcherPinPath, objectPath, programNam
 	}, nil
 }
 
-func (f *fakeKernel) AttachTCX(ifindex int, direction, programPinPath, linkPinPath string) (bpfman.ManagedLink, error) {
+func (f *fakeKernel) AttachTCX(ifindex int, direction, programPinPath, linkPinPath, netns string) (bpfman.ManagedLink, error) {
 	id := f.nextID.Add(1)
 	f.links[id] = &bpfman.AttachedLink{
 		ID:      id,

@@ -18,6 +18,7 @@ import (
 	"github.com/frobware/go-bpfman/dispatcher"
 	"github.com/frobware/go-bpfman/interpreter"
 	"github.com/frobware/go-bpfman/kernel"
+	"github.com/frobware/go-bpfman/netns"
 )
 
 // inferProgramType returns the program type based on the ELF section name.
@@ -840,9 +841,12 @@ func (k *kernelAdapter) AttachXDP(progPinPath string, ifindex int, linkPinPath s
 // The dispatcher allows multiple XDP programs to be chained together.
 func (k *kernelAdapter) AttachXDPDispatcher(ifindex int, pinDir string, numProgs int, proceedOn uint32) (*interpreter.XDPDispatcherResult, error) {
 	// Configure the dispatcher
+	// XDP_DISPATCHER_RETVAL (31) is returned by empty slots - we must include
+	// this bit so the dispatcher continues past empty slots to the final XDP_PASS.
+	const xdpDispatcherRetval = 31
 	cfg := dispatcher.NewXDPConfig(numProgs)
 	for i := 0; i < dispatcher.MaxPrograms; i++ {
-		cfg.ChainCallActions[i] = proceedOn
+		cfg.ChainCallActions[i] = proceedOn | (1 << xdpDispatcherRetval)
 	}
 
 	// Load the dispatcher spec with config injected
@@ -931,11 +935,15 @@ func (k *kernelAdapter) AttachXDPDispatcher(ifindex int, pinDir string, numProgs
 // This follows the Rust bpfman convention where:
 //   - progPinPath: revision-specific path for the dispatcher program
 //   - linkPinPath: stable path for the XDP link (outside revision directory)
-func (k *kernelAdapter) AttachXDPDispatcherWithPaths(ifindex int, progPinPath, linkPinPath string, numProgs int, proceedOn uint32) (*interpreter.XDPDispatcherResult, error) {
+//   - netnsPath: if non-empty, attachment is performed in that network namespace
+func (k *kernelAdapter) AttachXDPDispatcherWithPaths(ifindex int, progPinPath, linkPinPath string, numProgs int, proceedOn uint32, netnsPath string) (*interpreter.XDPDispatcherResult, error) {
 	// Configure the dispatcher
+	// XDP_DISPATCHER_RETVAL (31) is returned by empty slots - we must include
+	// this bit so the dispatcher continues past empty slots to the final XDP_PASS.
+	const xdpDispatcherRetval = 31
 	cfg := dispatcher.NewXDPConfig(numProgs)
 	for i := 0; i < dispatcher.MaxPrograms; i++ {
-		cfg.ChainCallActions[i] = proceedOn
+		cfg.ChainCallActions[i] = proceedOn | (1 << xdpDispatcherRetval)
 	}
 
 	// Load the dispatcher spec with config injected
@@ -957,7 +965,23 @@ func (k *kernelAdapter) AttachXDPDispatcherWithPaths(ifindex int, progPinPath, l
 		return nil, fmt.Errorf("xdp_dispatcher program not found in collection")
 	}
 
-	// Attach to interface
+	// Enter target network namespace if specified
+	var nsGuard *netns.Guard
+	if netnsPath != "" {
+		k.logger.Debug("entering network namespace for XDP dispatcher attachment", "netns", netnsPath, "ifindex", ifindex)
+		guard, err := netns.Enter(netnsPath)
+		if err != nil {
+			return nil, fmt.Errorf("enter network namespace %s: %w", netnsPath, err)
+		}
+		nsGuard = guard
+		defer func() {
+			if err := nsGuard.Close(); err != nil {
+				k.logger.Warn("failed to restore network namespace", "error", err)
+			}
+		}()
+	}
+
+	// Attach to interface (now in target namespace if netnsPath was provided)
 	lnk, err := link.AttachXDP(link.XDPOptions{
 		Program:   dispatcherProg,
 		Interface: ifindex,
@@ -1140,11 +1164,15 @@ func (k *kernelAdapter) AttachXDPExtension(dispatcherPinPath, objectPath, progra
 //   - direction: "ingress" or "egress"
 //   - numProgs: Number of extension slots to enable
 //   - proceedOn: Bitmask of TC return codes that trigger continuation
-func (k *kernelAdapter) AttachTCDispatcherWithPaths(ifindex int, progPinPath, linkPinPath, direction string, numProgs int, proceedOn uint32) (*interpreter.TCDispatcherResult, error) {
+//   - netnsPath: if non-empty, attachment is performed in that network namespace
+func (k *kernelAdapter) AttachTCDispatcherWithPaths(ifindex int, progPinPath, linkPinPath, direction string, numProgs int, proceedOn uint32, netnsPath string) (*interpreter.TCDispatcherResult, error) {
 	// Configure the TC dispatcher
+	// TC_DISPATCHER_RETVAL (30) is returned by empty slots - we must include
+	// this bit so the dispatcher continues past empty slots to the final TC_ACT_OK.
+	const tcDispatcherRetval = 30
 	cfg := dispatcher.NewTCConfig(numProgs)
 	for i := 0; i < dispatcher.MaxPrograms; i++ {
-		cfg.ChainCallActions[i] = proceedOn
+		cfg.ChainCallActions[i] = proceedOn | (1 << tcDispatcherRetval)
 	}
 
 	// Load the TC dispatcher spec with config injected
@@ -1177,7 +1205,23 @@ func (k *kernelAdapter) AttachTCDispatcherWithPaths(ifindex int, progPinPath, li
 		return nil, fmt.Errorf("invalid TC direction %q: must be ingress or egress", direction)
 	}
 
-	// Attach to interface using TCX link
+	// Enter target network namespace if specified
+	var nsGuard *netns.Guard
+	if netnsPath != "" {
+		k.logger.Debug("entering network namespace for TC dispatcher attachment", "netns", netnsPath, "ifindex", ifindex, "direction", direction)
+		guard, err := netns.Enter(netnsPath)
+		if err != nil {
+			return nil, fmt.Errorf("enter network namespace %s: %w", netnsPath, err)
+		}
+		nsGuard = guard
+		defer func() {
+			if err := nsGuard.Close(); err != nil {
+				k.logger.Warn("failed to restore network namespace", "error", err)
+			}
+		}()
+	}
+
+	// Attach to interface using TCX link (now in target namespace if netnsPath was provided)
 	lnk, err := link.AttachTCX(link.TCXOptions{
 		Program:   dispatcherProg,
 		Interface: ifindex,
@@ -1347,7 +1391,7 @@ func (k *kernelAdapter) AttachTCExtension(dispatcherPinPath, objectPath, program
 
 // AttachTCX attaches a loaded program directly to an interface using TCX link.
 // Unlike TC which uses dispatchers, TCX uses native kernel multi-program support.
-func (k *kernelAdapter) AttachTCX(ifindex int, direction, programPinPath, linkPinPath string) (bpfman.ManagedLink, error) {
+func (k *kernelAdapter) AttachTCX(ifindex int, direction, programPinPath, linkPinPath, netnsPath string) (bpfman.ManagedLink, error) {
 	// Load the pinned program
 	prog, err := ebpf.LoadPinnedProgram(programPinPath, nil)
 	if err != nil {
@@ -1373,7 +1417,21 @@ func (k *kernelAdapter) AttachTCX(ifindex int, direction, programPinPath, linkPi
 		return bpfman.ManagedLink{}, fmt.Errorf("invalid TCX direction %q: must be ingress or egress", direction)
 	}
 
-	// Attach using TCX link
+	// Enter target network namespace if specified
+	if netnsPath != "" {
+		k.logger.Debug("entering network namespace for TCX attachment", "netns", netnsPath, "ifindex", ifindex, "direction", direction)
+		guard, err := netns.Enter(netnsPath)
+		if err != nil {
+			return bpfman.ManagedLink{}, fmt.Errorf("enter network namespace %s: %w", netnsPath, err)
+		}
+		defer func() {
+			if err := guard.Close(); err != nil {
+				k.logger.Warn("failed to restore network namespace", "error", err)
+			}
+		}()
+	}
+
+	// Attach using TCX link (now in target namespace if netnsPath was provided)
 	lnk, err := link.AttachTCX(link.TCXOptions{
 		Interface: ifindex,
 		Program:   prog,

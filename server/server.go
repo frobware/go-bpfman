@@ -32,7 +32,8 @@ import (
 
 const (
 	// DefaultCSIDriverName is the default CSI driver name.
-	DefaultCSIDriverName = "csi.go-bpfman.io"
+	// Uses csi.bpfman.io for compatibility with bpfman-operator.
+	DefaultCSIDriverName = "csi.bpfman.io"
 	// DefaultCSIVersion is the default CSI driver version.
 	DefaultCSIVersion = "0.1.0"
 )
@@ -464,6 +465,11 @@ func (s *Server) attachXDP(ctx context.Context, programID uint32, info *pb.XDPAt
 		return nil, status.Errorf(codes.InvalidArgument, "invalid XDP attach spec: %v", err)
 	}
 
+	// Apply network namespace if specified
+	if info.GetNetns() != "" {
+		spec = spec.WithNetns(info.GetNetns())
+	}
+
 	// Call manager with empty LinkPinPath to auto-generate
 	summary, err := s.mgr.AttachXDP(ctx, spec, bpfman.AttachOpts{})
 	if err != nil {
@@ -510,6 +516,11 @@ func (s *Server) attachTC(ctx context.Context, programID uint32, info *pb.TCAtta
 	}
 	spec = spec.WithProceedOn(proceedOn)
 
+	// Apply network namespace if specified
+	if info.GetNetns() != "" {
+		spec = spec.WithNetns(info.GetNetns())
+	}
+
 	// Call manager with empty LinkPinPath to auto-generate
 	summary, err := s.mgr.AttachTC(ctx, spec, bpfman.AttachOpts{})
 	if err != nil {
@@ -547,6 +558,11 @@ func (s *Server) attachTCX(ctx context.Context, programID uint32, info *pb.TCXAt
 		priority = 50 // Default priority
 	}
 	spec = spec.WithPriority(priority)
+
+	// Apply network namespace if specified
+	if info.GetNetns() != "" {
+		spec = spec.WithNetns(info.GetNetns())
+	}
 
 	// Call manager with empty LinkPinPath to auto-generate
 	summary, err := s.mgr.AttachTCX(ctx, spec, bpfman.AttachOpts{})
@@ -741,11 +757,15 @@ func (s *Server) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	s.logger.Info("Get request", "program_id", req.Id)
+
 	metadata, err := s.store.Get(ctx, req.Id)
 	if errors.Is(err, store.ErrNotFound) {
+		s.logger.Info("Get response: not found", "program_id", req.Id)
 		return nil, status.Errorf(codes.NotFound, "program with ID %d not found", req.Id)
 	}
 	if err != nil {
+		s.logger.Error("Get response: store error", "program_id", req.Id, "error", err)
 		return nil, status.Errorf(codes.Internal, "failed to get program: %v", err)
 	}
 
@@ -764,6 +784,8 @@ func (s *Server) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, 
 	for _, link := range links {
 		linkIDs = append(linkIDs, link.KernelLinkID)
 	}
+
+	s.logger.Info("Get response: success", "program_id", req.Id, "program_name", metadata.ProgramName, "link_count", len(linkIDs))
 
 	return &pb.GetResponse{
 		Info: &pb.ProgramInfo{

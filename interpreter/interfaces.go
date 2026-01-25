@@ -196,7 +196,8 @@ type DispatcherAttacher interface {
 	//   - linkPinPath: Stable path to pin the XDP link (e.g., .../xdp/dispatcher_{nsid}_{ifindex}_link)
 	//   - numProgs: Number of extension slots to enable
 	//   - proceedOn: Bitmask of XDP return codes that trigger continuation to next program
-	AttachXDPDispatcherWithPaths(ifindex int, progPinPath, linkPinPath string, numProgs int, proceedOn uint32) (*XDPDispatcherResult, error)
+	//   - netns: Optional network namespace path. If non-empty, attachment is performed in that namespace.
+	AttachXDPDispatcherWithPaths(ifindex int, progPinPath, linkPinPath string, numProgs int, proceedOn uint32, netns string) (*XDPDispatcherResult, error)
 
 	// AttachXDPExtension loads a program from ELF as Extension type and attaches
 	// it to a dispatcher slot. The program is loaded with BPF_PROG_TYPE_EXT
@@ -213,7 +214,8 @@ type DispatcherAttacher interface {
 	//   - direction: "ingress" or "egress"
 	//   - numProgs: Number of extension slots to enable
 	//   - proceedOn: Bitmask of TC return codes that trigger continuation to next program
-	AttachTCDispatcherWithPaths(ifindex int, progPinPath, linkPinPath, direction string, numProgs int, proceedOn uint32) (*TCDispatcherResult, error)
+	//   - netns: Optional network namespace path. If non-empty, attachment is performed in that namespace.
+	AttachTCDispatcherWithPaths(ifindex int, progPinPath, linkPinPath, direction string, numProgs int, proceedOn uint32, netns string) (*TCDispatcherResult, error)
 
 	// AttachTCExtension loads a program from ELF as Extension type and attaches
 	// it to a TC dispatcher slot. The program is loaded with BPF_PROG_TYPE_EXT
@@ -229,7 +231,8 @@ type DispatcherAttacher interface {
 	//   - direction: "ingress" or "egress"
 	//   - programPinPath: Path where the program is pinned
 	//   - linkPinPath: Path to pin the TCX link
-	AttachTCX(ifindex int, direction, programPinPath, linkPinPath string) (bpfman.ManagedLink, error)
+	//   - netns: Optional network namespace path. If non-empty, attachment is performed in that namespace.
+	AttachTCX(ifindex int, direction, programPinPath, linkPinPath, netns string) (bpfman.ManagedLink, error)
 }
 
 // LinkDetacher detaches links from hooks.
