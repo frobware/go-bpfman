@@ -1,6 +1,8 @@
 # syntax=docker/dockerfile:1.4
-# Build stage for Go binary
+# Build Go binary and inject into upstream bpfman image
 ARG BUILDER_IMAGE=registry.access.redhat.com/ubi9/go-toolset:1.25
+ARG BPFMAN_IMAGE=quay.io/bpfman/bpfman:latest
+
 FROM ${BUILDER_IMAGE} AS builder
 
 WORKDIR /build
@@ -33,16 +35,11 @@ COPY dispatchers/ dispatchers/
 RUN --mount=type=cache,target=/root/.cache/go-build \
     make bpfman-build
 
-# Runtime image - Fedora for bpftool availability
-FROM fedora:latest
+# Use upstream bpfman image, replace binary
+FROM ${BPFMAN_IMAGE}
 
-RUN dnf install -y sqlite bpftool && dnf clean all
+COPY --from=builder /build/bin/bpfman /bpfman
+RUN ln -sf /bpfman /bpfman-rpc
 
-COPY --from=builder /build/bin/bpfman .
-COPY testdata/stats.o /opt/bpf/stats.o
-
-# Create bpfman-rpc symlink for compatibility with bpfman-operator.
-# When invoked as bpfman-rpc, the binary automatically runs "serve".
-RUN ln -s /bpfman /bpfman-rpc
-
+# Override upstream ENTRYPOINT which passes --timeout=0 (not supported by Go daemon)
 ENTRYPOINT ["./bpfman-rpc"]

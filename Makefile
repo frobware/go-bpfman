@@ -24,6 +24,7 @@ help:
 	@echo "  bpfman-proto                Generate protobuf/gRPC stubs"
 	@echo "  bpfman-test-grpc            Run gRPC integration tests"
 	@echo "  docker-build-bpfman         Build bpfman container image"
+	@echo "  docker-build-bpfman-upstream Build bpfman using upstream image as base"
 	@echo "  docker-build-bpfman-cgo     Build bpfman with CGO (if needed)"
 	@echo ""
 	@echo "Example stats-reader app:"
@@ -53,7 +54,7 @@ help:
 IMAGE_TAG ?= dev
 BPFMAN_IMAGE ?= bpfman
 BPFMAN_BUILDER_IMAGE ?= bpfman-builder
-KIND_CLUSTER ?= bpfman-go
+KIND_CLUSTER ?= bpfman-deployment
 NAMESPACE ?= bpfman
 STATS_READER_IMAGE ?= stats-reader
 BIN_DIR ?= bin
@@ -61,7 +62,7 @@ BIN_DIR ?= bin
 # Aggregate targets
 build-all: bpfman-build
 
-docker-build-all: docker-build-bpfman docker-build-stats-reader docker-build-csi-sanity
+docker-build-all: docker-build-bpfman docker-build-bpfman-upstream docker-build-stats-reader docker-build-csi-sanity
 
 clean: bpfman-clean dispatchers-clean coverage-clean
 	$(RM) -r $(BIN_DIR)
@@ -138,6 +139,10 @@ $(BPFMAN_PB_DIR)/bpfman.pb.go $(BPFMAN_PB_DIR)/bpfman_grpc.pb.go: $(BPFMAN_PROTO
 
 docker-build-bpfman: testdata/stats.o
 	docker buildx build --builder=default --load -t $(BPFMAN_IMAGE):$(IMAGE_TAG) -f Dockerfile.bpfman .
+
+# Build bpfman using upstream image as base (for operator integration testing)
+docker-build-bpfman-upstream:
+	docker buildx build --builder=default --load -t $(BPFMAN_IMAGE):$(IMAGE_TAG) -f Dockerfile.bpfman-upstream .
 
 # CGO builder image (for future use if CGO is needed again)
 # Usage: make docker-build-bpfman-builder && make docker-build-bpfman-cgo
@@ -251,6 +256,7 @@ kind-undeploy-all: stats-reader-delete bpfman-delete
 	docker-build-bpfman \
 	docker-build-bpfman-builder \
 	docker-build-bpfman-cgo \
+	docker-build-bpfman-upstream \
 	docker-build-csi-sanity \
 	docker-build-stats-reader \
 	docker-clean-bpfman-builder \

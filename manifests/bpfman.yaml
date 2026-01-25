@@ -24,7 +24,7 @@ spec:
         - name: bpfman
           image: bpfman:dev
           imagePullPolicy: IfNotPresent
-          args: ["serve", "--csi-support", "--runtime-dir", "/run/bpfman", "--tcp-address", "[::]:50051"]
+          args: ["--csi-support", "--runtime-dir", "/run/bpfman", "--tcp-address", "[::]:50051"]
           securityContext:
             privileged: true
           ports:

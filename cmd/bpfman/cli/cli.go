@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"reflect"
 
 	"github.com/alecthomas/kong"
@@ -40,7 +41,14 @@ func (c *CLI) RuntimeDirs() config.RuntimeDirs {
 }
 
 // Run parses command-line arguments and executes the selected command.
+// If invoked as "bpfman-rpc", automatically runs the serve command for
+// compatibility with the bpfman-operator which expects the Rust daemon's
+// binary layout.
 func Run() {
+	if filepath.Base(os.Args[0]) == "bpfman-rpc" {
+		os.Args = append([]string{os.Args[0], "serve"}, os.Args[1:]...)
+	}
+
 	var c CLI
 	ctx := kong.Parse(&c, KongOptions()...)
 	ctx.FatalIfErrorf(ctx.Run(&c))
