@@ -66,35 +66,35 @@ func (c *remoteClient) Close() error {
 
 // Load loads a BPF program via gRPC.
 func (c *remoteClient) Load(ctx context.Context, spec bpfman.LoadSpec, opts manager.LoadOpts) (bpfman.ManagedProgram, error) {
-	protoType, err := domainTypeToProto(spec.ProgramType)
+	protoType, err := domainTypeToProto(spec.ProgramType())
 	if err != nil {
 		return bpfman.ManagedProgram{}, fmt.Errorf("convert program type: %w", err)
 	}
 	info := &pb.LoadInfo{
-		Name:        spec.ProgramName,
+		Name:        spec.ProgramName(),
 		ProgramType: protoType,
 	}
 	// Add ProgSpecificInfo for fentry/fexit which require attach function at load time
-	if spec.ProgramType == bpfman.ProgramTypeFentry {
+	if spec.ProgramType() == bpfman.ProgramTypeFentry {
 		info.Info = &pb.ProgSpecificInfo{
 			Info: &pb.ProgSpecificInfo_FentryLoadInfo{
-				FentryLoadInfo: &pb.FentryLoadInfo{FnName: spec.AttachFunc},
+				FentryLoadInfo: &pb.FentryLoadInfo{FnName: spec.AttachFunc()},
 			},
 		}
-	} else if spec.ProgramType == bpfman.ProgramTypeFexit {
+	} else if spec.ProgramType() == bpfman.ProgramTypeFexit {
 		info.Info = &pb.ProgSpecificInfo{
 			Info: &pb.ProgSpecificInfo_FexitLoadInfo{
-				FexitLoadInfo: &pb.FexitLoadInfo{FnName: spec.AttachFunc},
+				FexitLoadInfo: &pb.FexitLoadInfo{FnName: spec.AttachFunc()},
 			},
 		}
 	}
 
 	req := &pb.LoadRequest{
 		Bytecode: &pb.BytecodeLocation{
-			Location: &pb.BytecodeLocation_File{File: spec.ObjectPath},
+			Location: &pb.BytecodeLocation_File{File: spec.ObjectPath()},
 		},
 		Metadata:   opts.UserMetadata,
-		GlobalData: spec.GlobalData,
+		GlobalData: spec.GlobalData(),
 		Info:       []*pb.LoadInfo{info},
 	}
 
@@ -416,7 +416,7 @@ func (c *remoteClient) PullImage(ctx context.Context, ref interpreter.ImageRef) 
 
 // LoadImage loads programs from an OCI image via gRPC.
 // The server handles pulling and caching the image.
-func (c *remoteClient) LoadImage(ctx context.Context, ref interpreter.ImageRef, programs []bpfman.LoadSpec, opts LoadImageOpts) ([]bpfman.ManagedProgram, error) {
+func (c *remoteClient) LoadImage(ctx context.Context, ref interpreter.ImageRef, programs []ImageProgramSpec, opts LoadImageOpts) ([]bpfman.ManagedProgram, error) {
 	// Build LoadInfo for each program
 	loadInfo := make([]*pb.LoadInfo, 0, len(programs))
 	var globalData map[string][]byte

@@ -87,16 +87,26 @@ func (c *LoadImageCmd) Run(cli *CLI) error {
 		metadata["bpfman.io/application"] = c.Application
 	}
 
-	// Build LoadSpecs for each program
-	programs := make([]bpfman.LoadSpec, 0, len(c.Programs))
+	// Build ImageProgramSpecs for each program
+	programs := make([]client.ImageProgramSpec, 0, len(c.Programs))
 	for _, spec := range c.Programs {
-		programs = append(programs, bpfman.LoadSpec{
-			ProgramName: spec.Name,
-			ProgramType: spec.Type,
-			GlobalData:  globalData,
-			AttachFunc:  spec.AttachFunc,
-			MapOwnerID:  c.MapOwnerID,
-		})
+		var progSpec client.ImageProgramSpec
+		var specErr error
+		if spec.Type.RequiresAttachFunc() {
+			progSpec, specErr = client.NewImageProgramSpecWithAttach(spec.Name, spec.Type, spec.AttachFunc)
+		} else {
+			progSpec, specErr = client.NewImageProgramSpec(spec.Name, spec.Type)
+		}
+		if specErr != nil {
+			return fmt.Errorf("invalid program spec for %q: %w", spec.Name, specErr)
+		}
+		if globalData != nil {
+			progSpec = progSpec.WithGlobalData(globalData)
+		}
+		if c.MapOwnerID != 0 {
+			progSpec = progSpec.WithMapOwnerID(c.MapOwnerID)
+		}
+		programs = append(programs, progSpec)
 	}
 
 	// Load via gRPC - server handles image pulling

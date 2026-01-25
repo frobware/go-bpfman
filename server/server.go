@@ -293,23 +293,37 @@ func (s *Server) Load(ctx context.Context, req *pb.LoadRequest) (*pb.LoadRespons
 		// which map to KPROBE/UPROBE in the proto enum.
 		progType = resolveActualType(progType, info.Name, req.Metadata)
 
-		spec := bpfman.LoadSpec{
-			ObjectPath:  objectPath,
-			ProgramName: info.Name,
-			ProgramType: progType,
-			PinPath:     s.dirs.FS, // bpffs root - actual paths computed from kernel ID
-			GlobalData:  req.GlobalData,
-			ImageSource: imageSource,
-		}
-
 		// Extract AttachFunc from ProgSpecificInfo for fentry/fexit
+		var attachFunc string
 		if info.Info != nil {
 			switch i := info.Info.Info.(type) {
 			case *pb.ProgSpecificInfo_FentryLoadInfo:
-				spec.AttachFunc = i.FentryLoadInfo.FnName
+				attachFunc = i.FentryLoadInfo.FnName
 			case *pb.ProgSpecificInfo_FexitLoadInfo:
-				spec.AttachFunc = i.FexitLoadInfo.FnName
+				attachFunc = i.FexitLoadInfo.FnName
 			}
+		}
+
+		// Create LoadSpec using the appropriate constructor (validates required fields)
+		var spec bpfman.LoadSpec
+		var constructErr error
+		if progType.RequiresAttachFunc() {
+			spec, constructErr = bpfman.NewAttachLoadSpec(objectPath, info.Name, progType, attachFunc)
+		} else {
+			spec, constructErr = bpfman.NewLoadSpec(objectPath, info.Name, progType)
+		}
+		if constructErr != nil {
+			rollback()
+			return nil, status.Errorf(codes.InvalidArgument, "invalid load request for %s: %v", info.Name, constructErr)
+		}
+
+		// Apply optional fields
+		spec = spec.WithPinPath(s.dirs.FS) // bpffs root - actual paths computed from kernel ID
+		if req.GlobalData != nil {
+			spec = spec.WithGlobalData(req.GlobalData)
+		}
+		if imageSource != nil {
+			spec = spec.WithImageSource(imageSource)
 		}
 
 		opts := manager.LoadOpts{
@@ -533,7 +547,7 @@ func (s *Server) attachKprobe(ctx context.Context, programID uint32, info *pb.Kp
 	// Determine retprobe from program type stored in bpfman metadata
 	var retprobe bool
 	if prog.Bpfman != nil && prog.Bpfman.Program != nil {
-		retprobe = prog.Bpfman.Program.LoadSpec.ProgramType == bpfman.ProgramTypeKretprobe
+		retprobe = prog.Bpfman.Program.LoadSpec.ProgramType() == bpfman.ProgramTypeKretprobe
 	}
 
 	// Call manager with empty linkPinPath to auto-generate
@@ -562,7 +576,7 @@ func (s *Server) attachUprobe(ctx context.Context, programID uint32, info *pb.Up
 	// Determine retprobe from program type stored in bpfman metadata
 	var retprobe bool
 	if prog.Bpfman != nil && prog.Bpfman.Program != nil {
-		retprobe = prog.Bpfman.Program.LoadSpec.ProgramType == bpfman.ProgramTypeUretprobe
+		retprobe = prog.Bpfman.Program.LoadSpec.ProgramType() == bpfman.ProgramTypeUretprobe
 	}
 
 	// Call manager with empty linkPinPath to auto-generate
@@ -635,7 +649,7 @@ func (s *Server) List(ctx context.Context, req *pb.ListRequest) (*pb.ListRespons
 
 	for kernelID, metadata := range stored {
 		// Filter by program type if specified
-		if req.ProgramType != nil && *req.ProgramType != uint32(metadata.LoadSpec.ProgramType) {
+		if req.ProgramType != nil && *req.ProgramType != uint32(metadata.LoadSpec.ProgramType()) {
 			continue
 		}
 
@@ -663,16 +677,16 @@ func (s *Server) List(ctx context.Context, req *pb.ListRequest) (*pb.ListRespons
 
 		results = append(results, &pb.ListResponse_ListResult{
 			Info: &pb.ProgramInfo{
-				Name:       metadata.LoadSpec.ProgramName,
-				Bytecode:   &pb.BytecodeLocation{Location: &pb.BytecodeLocation_File{File: metadata.LoadSpec.ObjectPath}},
+				Name:       metadata.LoadSpec.ProgramName(),
+				Bytecode:   &pb.BytecodeLocation{Location: &pb.BytecodeLocation_File{File: metadata.LoadSpec.ObjectPath()}},
 				Metadata:   metadata.UserMetadata,
-				GlobalData: metadata.LoadSpec.GlobalData,
-				MapPinPath: metadata.LoadSpec.PinPath,
+				GlobalData: metadata.LoadSpec.GlobalData(),
+				MapPinPath: metadata.LoadSpec.PinPath(),
 			},
 			KernelInfo: &pb.KernelProgramInfo{
 				Id:          kernelID,
 				Name:        kp.Name,
-				ProgramType: uint32(metadata.LoadSpec.ProgramType),
+				ProgramType: uint32(metadata.LoadSpec.ProgramType()),
 				Tag:         kp.Tag,
 				LoadedAt:    kp.LoadedAt.Format(time.RFC3339),
 				MapIds:      kp.MapIDs,
@@ -717,17 +731,17 @@ func (s *Server) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, 
 
 	return &pb.GetResponse{
 		Info: &pb.ProgramInfo{
-			Name:       metadata.LoadSpec.ProgramName,
-			Bytecode:   &pb.BytecodeLocation{Location: &pb.BytecodeLocation_File{File: metadata.LoadSpec.ObjectPath}},
+			Name:       metadata.LoadSpec.ProgramName(),
+			Bytecode:   &pb.BytecodeLocation{Location: &pb.BytecodeLocation_File{File: metadata.LoadSpec.ObjectPath()}},
 			Metadata:   metadata.UserMetadata,
-			GlobalData: metadata.LoadSpec.GlobalData,
-			MapPinPath: metadata.LoadSpec.PinPath,
+			GlobalData: metadata.LoadSpec.GlobalData(),
+			MapPinPath: metadata.LoadSpec.PinPath(),
 			Links:      linkIDs,
 		},
 		KernelInfo: &pb.KernelProgramInfo{
 			Id:          req.Id,
 			Name:        kp.Name,
-			ProgramType: uint32(metadata.LoadSpec.ProgramType),
+			ProgramType: uint32(metadata.LoadSpec.ProgramType()),
 			Tag:         kp.Tag,
 			LoadedAt:    kp.LoadedAt.Format(time.RFC3339),
 			MapIds:      kp.MapIDs,

@@ -102,20 +102,6 @@ func ParseProgramType(s string) (ProgramType, bool) {
 	}
 }
 
-// LoadSpec describes how to load a BPF program.
-type LoadSpec struct {
-	ObjectPath  string            `json:"object_path"`
-	ProgramName string            `json:"program_name"`
-	ProgramType ProgramType       `json:"program_type"`
-	PinPath     string            `json:"pin_path"`
-	GlobalData  map[string][]byte `json:"global_data,omitempty"`
-	ImageSource *ImageSource      `json:"image_source,omitempty"`
-	// AttachFunc is the kernel function to attach to (required for fentry/fexit).
-	AttachFunc string `json:"attach_func,omitempty"`
-	// MapOwnerID is the program ID of another program to share maps with.
-	MapOwnerID uint32 `json:"map_owner_id,omitempty"`
-}
-
 // Program contains metadata for programs managed by bpfman.
 // This is what we store - the kernel is the source of truth for runtime state.
 // A Program only exists in the store after successful load.

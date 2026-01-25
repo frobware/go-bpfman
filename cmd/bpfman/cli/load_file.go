@@ -59,17 +59,28 @@ func (c *LoadFileCmd) Run(cli *CLI) error {
 	results := make([]bpfman.ManagedProgram, 0, len(c.Programs))
 
 	for _, prog := range c.Programs {
-		// Build load spec and options
-		// PinPath is the bpffs root; actual paths are computed from kernel ID
-		spec := bpfman.LoadSpec{
-			ObjectPath:  objPath.Path,
-			ProgramName: prog.Name,
-			ProgramType: prog.Type, // Already validated at parse time
-			PinPath:     cli.RuntimeDirs().FS,
-			GlobalData:  globalData,
-			AttachFunc:  prog.AttachFunc, // For fentry/fexit
-			MapOwnerID:  c.MapOwnerID,
+		// Build load spec using the appropriate constructor
+		var spec bpfman.LoadSpec
+		var err error
+		if prog.Type.RequiresAttachFunc() {
+			spec, err = bpfman.NewAttachLoadSpec(objPath.Path, prog.Name, prog.Type, prog.AttachFunc)
+		} else {
+			spec, err = bpfman.NewLoadSpec(objPath.Path, prog.Name, prog.Type)
 		}
+		if err != nil {
+			return fmt.Errorf("invalid load spec for %q: %w", prog.Name, err)
+		}
+
+		// Apply optional fields
+		// PinPath is the bpffs root; actual paths are computed from kernel ID
+		spec = spec.WithPinPath(cli.RuntimeDirs().FS)
+		if globalData != nil {
+			spec = spec.WithGlobalData(globalData)
+		}
+		if c.MapOwnerID != 0 {
+			spec = spec.WithMapOwnerID(c.MapOwnerID)
+		}
+
 		opts := manager.LoadOpts{
 			UserMetadata: metadata,
 		}

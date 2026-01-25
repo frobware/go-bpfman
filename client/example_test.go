@@ -49,10 +49,9 @@ func ExampleClient_Load() {
 	}
 	defer c.Close()
 
-	spec := bpfman.LoadSpec{
-		ObjectPath:  "/path/to/program.o",
-		ProgramName: "my_xdp_prog",
-		ProgramType: bpfman.ProgramTypeXDP,
+	spec, err := bpfman.NewLoadSpec("/path/to/program.o", "my_xdp_prog", bpfman.ProgramTypeXDP)
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	prog, err := c.Load(context.Background(), spec, manager.LoadOpts{})

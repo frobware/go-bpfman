@@ -33,6 +33,67 @@ type LoadImageOpts struct {
 	GlobalData   map[string][]byte
 }
 
+// ImageProgramSpec describes a program to load from an OCI image.
+// Unlike LoadSpec, this doesn't require objectPath/pinPath since those are
+// determined by the server after pulling the image.
+type ImageProgramSpec struct {
+	ProgramName string
+	ProgramType bpfman.ProgramType
+	AttachFunc  string            // Required for fentry/fexit
+	GlobalData  map[string][]byte // Per-program overrides (optional)
+	MapOwnerID  uint32            // Share maps with another program (optional)
+}
+
+// NewImageProgramSpec creates an ImageProgramSpec for non-fentry/fexit programs.
+func NewImageProgramSpec(programName string, programType bpfman.ProgramType) (ImageProgramSpec, error) {
+	if programName == "" {
+		return ImageProgramSpec{}, errors.New("programName is required")
+	}
+	if !programType.Valid() {
+		return ImageProgramSpec{}, errors.New("invalid program type")
+	}
+	if programType.RequiresAttachFunc() {
+		return ImageProgramSpec{}, errors.New("use NewImageProgramSpecWithAttach for fentry/fexit")
+	}
+	return ImageProgramSpec{
+		ProgramName: programName,
+		ProgramType: programType,
+	}, nil
+}
+
+// NewImageProgramSpecWithAttach creates an ImageProgramSpec for fentry/fexit programs.
+func NewImageProgramSpecWithAttach(programName string, programType bpfman.ProgramType, attachFunc string) (ImageProgramSpec, error) {
+	if programName == "" {
+		return ImageProgramSpec{}, errors.New("programName is required")
+	}
+	if !programType.Valid() {
+		return ImageProgramSpec{}, errors.New("invalid program type")
+	}
+	if !programType.RequiresAttachFunc() {
+		return ImageProgramSpec{}, errors.New("use NewImageProgramSpec for non-fentry/fexit")
+	}
+	if attachFunc == "" {
+		return ImageProgramSpec{}, errors.New("attachFunc is required for fentry/fexit")
+	}
+	return ImageProgramSpec{
+		ProgramName: programName,
+		ProgramType: programType,
+		AttachFunc:  attachFunc,
+	}, nil
+}
+
+// WithGlobalData returns a copy with global data set.
+func (s ImageProgramSpec) WithGlobalData(data map[string][]byte) ImageProgramSpec {
+	s.GlobalData = data
+	return s
+}
+
+// WithMapOwnerID returns a copy with map owner ID set.
+func (s ImageProgramSpec) WithMapOwnerID(id uint32) ImageProgramSpec {
+	s.MapOwnerID = id
+	return s
+}
+
 // Client provides a transport-agnostic interface for BPF program management.
 // Commands use this interface and remain unaware of whether they are
 // operating locally or remotely.
@@ -68,5 +129,5 @@ type Client interface {
 
 	// Image operations
 	PullImage(ctx context.Context, ref interpreter.ImageRef) (interpreter.PulledImage, error)
-	LoadImage(ctx context.Context, ref interpreter.ImageRef, programs []bpfman.LoadSpec, opts LoadImageOpts) ([]bpfman.ManagedProgram, error)
+	LoadImage(ctx context.Context, ref interpreter.ImageRef, programs []ImageProgramSpec, opts LoadImageOpts) ([]bpfman.ManagedProgram, error)
 }

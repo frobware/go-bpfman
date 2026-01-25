@@ -106,10 +106,10 @@ func (m *Manager) Load(ctx context.Context, spec bpfman.LoadSpec, opts LoadOpts)
 	// Pin paths are computed from kernel ID by the kernel layer
 	loaded, err := m.kernel.Load(ctx, spec)
 	if err != nil {
-		return bpfman.ManagedProgram{}, fmt.Errorf("load program %s: %w", spec.ProgramName, err)
+		return bpfman.ManagedProgram{}, fmt.Errorf("load program %s: %w", spec.ProgramName(), err)
 	}
 	m.logger.Info("loaded program",
-		"name", spec.ProgramName,
+		"name", spec.ProgramName(),
 		"kernel_id", loaded.Kernel.ID(),
 		"prog_pin", loaded.Managed.PinPath,
 		"maps_dir", loaded.Managed.PinDir)
@@ -118,9 +118,35 @@ func (m *Manager) Load(ctx context.Context, spec bpfman.LoadSpec, opts LoadOpts)
 	// Store the actual pin paths (not the root) for later use.
 	// Use the inferred type from the kernel layer (from ELF section name)
 	// rather than the user-specified type.
-	storedSpec := spec
-	storedSpec.PinPath = loaded.Managed.PinDir   // Store maps directory for CSI/unload
-	storedSpec.ProgramType = loaded.Managed.Type // Use inferred type from ELF
+	inferredType := loaded.Managed.Type
+	var storedSpec bpfman.LoadSpec
+	var constructErr error
+	if inferredType.RequiresAttachFunc() {
+		storedSpec, constructErr = bpfman.NewAttachLoadSpec(spec.ObjectPath(), spec.ProgramName(), inferredType, spec.AttachFunc())
+	} else {
+		storedSpec, constructErr = bpfman.NewLoadSpec(spec.ObjectPath(), spec.ProgramName(), inferredType)
+	}
+	if constructErr != nil {
+		// This shouldn't happen - we just loaded successfully
+		m.logger.Error("invalid LoadSpec after successful load", "kernel_id", loaded.Kernel.ID(), "error", constructErr)
+		if rbErr := m.kernel.UnloadProgram(ctx, loaded.Managed.PinPath, loaded.Managed.PinDir); rbErr != nil {
+			m.logger.Error("rollback failed", "kernel_id", loaded.Kernel.ID(), "error", rbErr)
+		}
+		return bpfman.ManagedProgram{}, fmt.Errorf("internal error: invalid LoadSpec after load: %w", constructErr)
+	}
+
+	// Apply optional fields
+	storedSpec = storedSpec.WithPinPath(loaded.Managed.PinDir) // Store maps directory for CSI/unload
+	if spec.GlobalData() != nil {
+		storedSpec = storedSpec.WithGlobalData(spec.GlobalData())
+	}
+	if spec.ImageSource() != nil {
+		storedSpec = storedSpec.WithImageSource(spec.ImageSource())
+	}
+	if spec.MapOwnerID() != 0 {
+		storedSpec = storedSpec.WithMapOwnerID(spec.MapOwnerID())
+	}
+
 	metadata := bpfman.Program{
 		LoadSpec:     storedSpec,
 		UserMetadata: opts.UserMetadata,
@@ -634,7 +660,7 @@ func (m *Manager) AttachFentry(ctx context.Context, programKernelID uint32, link
 		return bpfman.LinkSummary{}, fmt.Errorf("get program %d: %w", programKernelID, err)
 	}
 
-	fnName := prog.LoadSpec.AttachFunc
+	fnName := prog.LoadSpec.AttachFunc()
 	if fnName == "" {
 		return bpfman.LinkSummary{}, fmt.Errorf("program %d has no attach function (fentry requires attach function at load time)", programKernelID)
 	}
@@ -701,7 +727,7 @@ func (m *Manager) AttachFexit(ctx context.Context, programKernelID uint32, linkP
 		return bpfman.LinkSummary{}, fmt.Errorf("get program %d: %w", programKernelID, err)
 	}
 
-	fnName := prog.LoadSpec.AttachFunc
+	fnName := prog.LoadSpec.AttachFunc()
 	if fnName == "" {
 		return bpfman.LinkSummary{}, fmt.Errorf("program %d has no attach function (fexit requires attach function at load time)", programKernelID)
 	}
@@ -817,8 +843,8 @@ func (m *Manager) AttachXDP(ctx context.Context, programKernelID uint32, ifindex
 	// KERNEL I/O: Attach user program as extension (returns ManagedLink)
 	link, err := m.kernel.AttachXDPExtension(
 		dispState.ProgPinPath,
-		prog.LoadSpec.ObjectPath,
-		prog.LoadSpec.ProgramName,
+		prog.LoadSpec.ObjectPath(),
+		prog.LoadSpec.ProgramName(),
 		position,
 		linkPinPath,
 	)
@@ -1058,8 +1084,8 @@ func (m *Manager) AttachTC(ctx context.Context, programKernelID uint32, ifindex 
 	// KERNEL I/O: Attach user program as extension (returns ManagedLink)
 	link, err := m.kernel.AttachTCExtension(
 		dispState.ProgPinPath,
-		prog.LoadSpec.ObjectPath,
-		prog.LoadSpec.ProgramName,
+		prog.LoadSpec.ObjectPath(),
+		prog.LoadSpec.ProgramName(),
 		position,
 		linkPinPath,
 	)
@@ -1176,8 +1202,8 @@ func (m *Manager) AttachTCX(ctx context.Context, programKernelID uint32, ifindex
 	}
 
 	// Verify program type is TCX
-	if prog.LoadSpec.ProgramType != bpfman.ProgramTypeTCX {
-		return bpfman.LinkSummary{}, fmt.Errorf("program %d is type %s, not tcx", programKernelID, prog.LoadSpec.ProgramType)
+	if prog.LoadSpec.ProgramType() != bpfman.ProgramTypeTCX {
+		return bpfman.LinkSummary{}, fmt.Errorf("program %d is type %s, not tcx", programKernelID, prog.LoadSpec.ProgramType())
 	}
 
 	// FETCH: Get network namespace ID
@@ -1196,7 +1222,7 @@ func (m *Manager) AttachTCX(ctx context.Context, programKernelID uint32, ifindex
 	// COMPUTE: The stored PinPath is the maps directory (e.g., /fs/maps/8518).
 	// The program is pinned at /fs/prog_<kernelID>.
 	// So we go up two levels from maps dir to get /fs, then add prog_<id>.
-	fsRoot := filepath.Dir(filepath.Dir(prog.LoadSpec.PinPath))
+	fsRoot := filepath.Dir(filepath.Dir(prog.LoadSpec.PinPath()))
 	progPinPath := filepath.Join(fsRoot, fmt.Sprintf("prog_%d", programKernelID))
 
 	// KERNEL I/O: Attach program using TCX link

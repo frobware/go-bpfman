@@ -264,7 +264,7 @@ func (e *ephemeralClient) PullImage(ctx context.Context, ref interpreter.ImageRe
 
 // LoadImage loads programs from an OCI image via the ephemeral gRPC server.
 // The server handles pulling and caching the image.
-func (e *ephemeralClient) LoadImage(ctx context.Context, ref interpreter.ImageRef, programs []bpfman.LoadSpec, opts LoadImageOpts) ([]bpfman.ManagedProgram, error) {
+func (e *ephemeralClient) LoadImage(ctx context.Context, ref interpreter.ImageRef, programs []ImageProgramSpec, opts LoadImageOpts) ([]bpfman.ManagedProgram, error) {
 	return e.remote.LoadImage(ctx, ref, programs, opts)
 }
 

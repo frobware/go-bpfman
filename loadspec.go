@@ -1,0 +1,206 @@
+package bpfman
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+)
+
+// LoadSpec describes how to load a BPF program.
+// LoadSpec is immutable after construction and can only be created via
+// the NewLoadSpec or NewAttachLoadSpec constructors, which enforce that
+// all required fields are present and valid.
+type LoadSpec struct {
+	objectPath  string
+	programName string
+	programType ProgramType
+	pinPath     string
+	globalData  map[string][]byte
+	imageSource *ImageSource
+	attachFunc  string
+	mapOwnerID  uint32
+}
+
+// RequiresAttachFunc returns true if this program type requires an attach
+// function (fentry and fexit).
+func (t ProgramType) RequiresAttachFunc() bool {
+	return t == ProgramTypeFentry || t == ProgramTypeFexit
+}
+
+// Valid returns true if this is a known, specified program type.
+func (t ProgramType) Valid() bool {
+	switch t {
+	case ProgramTypeXDP, ProgramTypeTC, ProgramTypeTCX,
+		ProgramTypeTracepoint, ProgramTypeKprobe, ProgramTypeKretprobe,
+		ProgramTypeUprobe, ProgramTypeUretprobe,
+		ProgramTypeFentry, ProgramTypeFexit:
+		return true
+	default:
+		return false
+	}
+}
+
+// NewLoadSpec creates a LoadSpec for program types that do not require
+// an attach function. For fentry/fexit, use NewAttachLoadSpec instead.
+//
+// Returns an error if:
+//   - objectPath is empty
+//   - programName is empty
+//   - programType is invalid or unspecified
+//   - programType requires an attach function (use NewAttachLoadSpec)
+func NewLoadSpec(objectPath, programName string, programType ProgramType) (LoadSpec, error) {
+	if objectPath == "" {
+		return LoadSpec{}, errors.New("objectPath is required")
+	}
+	if programName == "" {
+		return LoadSpec{}, errors.New("programName is required")
+	}
+	if !programType.Valid() {
+		return LoadSpec{}, fmt.Errorf("invalid program type: %s", programType)
+	}
+	if programType.RequiresAttachFunc() {
+		return LoadSpec{}, fmt.Errorf("%s requires NewAttachLoadSpec with attachFunc", programType)
+	}
+	return LoadSpec{
+		objectPath:  objectPath,
+		programName: programName,
+		programType: programType,
+	}, nil
+}
+
+// NewAttachLoadSpec creates a LoadSpec for program types that require an
+// attach function (fentry/fexit).
+//
+// Returns an error if:
+//   - objectPath is empty
+//   - programName is empty
+//   - programType is invalid or does not require an attach function
+//   - attachFunc is empty
+func NewAttachLoadSpec(objectPath, programName string, programType ProgramType, attachFunc string) (LoadSpec, error) {
+	if objectPath == "" {
+		return LoadSpec{}, errors.New("objectPath is required")
+	}
+	if programName == "" {
+		return LoadSpec{}, errors.New("programName is required")
+	}
+	if !programType.Valid() {
+		return LoadSpec{}, fmt.Errorf("invalid program type: %s", programType)
+	}
+	if !programType.RequiresAttachFunc() {
+		return LoadSpec{}, fmt.Errorf("%s does not require attachFunc, use NewLoadSpec", programType)
+	}
+	if attachFunc == "" {
+		return LoadSpec{}, fmt.Errorf("attachFunc is required for %s", programType)
+	}
+	return LoadSpec{
+		objectPath:  objectPath,
+		programName: programName,
+		programType: programType,
+		attachFunc:  attachFunc,
+	}, nil
+}
+
+// NewObservedLoadSpec creates a LoadSpec for describing an already-loaded program.
+//
+// Unlike NewLoadSpec and NewAttachLoadSpec, this constructor doesn't require
+// attachFunc for fentry/fexit programs. This is appropriate when reconstructing
+// a LoadSpec from stored/observed data (e.g., proto responses, database records)
+// where the attachFunc information is not available because it was only needed
+// at load time.
+//
+// Validates that programName is non-empty and programType is valid.
+// objectPath may be empty for image-loaded programs.
+func NewObservedLoadSpec(objectPath, programName string, programType ProgramType) (LoadSpec, error) {
+	if programName == "" {
+		return LoadSpec{}, errors.New("programName is required")
+	}
+	if !programType.Valid() && programType != ProgramTypeUnspecified {
+		return LoadSpec{}, fmt.Errorf("invalid program type: %s", programType)
+	}
+	return LoadSpec{
+		objectPath:  objectPath,
+		programName: programName,
+		programType: programType,
+	}, nil
+}
+
+// Getters for LoadSpec fields
+
+func (s LoadSpec) ObjectPath() string            { return s.objectPath }
+func (s LoadSpec) ProgramName() string           { return s.programName }
+func (s LoadSpec) ProgramType() ProgramType      { return s.programType }
+func (s LoadSpec) PinPath() string               { return s.pinPath }
+func (s LoadSpec) GlobalData() map[string][]byte { return s.globalData }
+func (s LoadSpec) ImageSource() *ImageSource     { return s.imageSource }
+func (s LoadSpec) AttachFunc() string            { return s.attachFunc }
+func (s LoadSpec) MapOwnerID() uint32            { return s.mapOwnerID }
+
+// WithPinPath returns a new LoadSpec with the pin path set.
+func (s LoadSpec) WithPinPath(pinPath string) LoadSpec {
+	s.pinPath = pinPath
+	return s
+}
+
+// WithGlobalData returns a new LoadSpec with global data set.
+func (s LoadSpec) WithGlobalData(data map[string][]byte) LoadSpec {
+	s.globalData = data
+	return s
+}
+
+// WithImageSource returns a new LoadSpec with image source set.
+func (s LoadSpec) WithImageSource(src *ImageSource) LoadSpec {
+	s.imageSource = src
+	return s
+}
+
+// WithMapOwnerID returns a new LoadSpec with map owner ID set.
+func (s LoadSpec) WithMapOwnerID(id uint32) LoadSpec {
+	s.mapOwnerID = id
+	return s
+}
+
+// loadSpecJSON is the JSON representation of LoadSpec.
+// This allows LoadSpec to have private fields while still being serializable.
+type loadSpecJSON struct {
+	ObjectPath  string            `json:"object_path"`
+	ProgramName string            `json:"program_name"`
+	ProgramType ProgramType       `json:"program_type"`
+	PinPath     string            `json:"pin_path,omitempty"`
+	GlobalData  map[string][]byte `json:"global_data,omitempty"`
+	ImageSource *ImageSource      `json:"image_source,omitempty"`
+	AttachFunc  string            `json:"attach_func,omitempty"`
+	MapOwnerID  uint32            `json:"map_owner_id,omitempty"`
+}
+
+// MarshalJSON implements json.Marshaler.
+func (s LoadSpec) MarshalJSON() ([]byte, error) {
+	return json.Marshal(loadSpecJSON{
+		ObjectPath:  s.objectPath,
+		ProgramName: s.programName,
+		ProgramType: s.programType,
+		PinPath:     s.pinPath,
+		GlobalData:  s.globalData,
+		ImageSource: s.imageSource,
+		AttachFunc:  s.attachFunc,
+		MapOwnerID:  s.mapOwnerID,
+	})
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+// Note: This bypasses the constructor validation to support deserializing
+// stored data. The assumption is that data was validated at creation time.
+func (s *LoadSpec) UnmarshalJSON(data []byte) error {
+	var js loadSpecJSON
+	if err := json.Unmarshal(data, &js); err != nil {
+		return err
+	}
+	s.objectPath = js.ObjectPath
+	s.programName = js.ProgramName
+	s.programType = js.ProgramType
+	s.pinPath = js.PinPath
+	s.globalData = js.GlobalData
+	s.imageSource = js.ImageSource
+	s.attachFunc = js.AttachFunc
+	s.mapOwnerID = js.MapOwnerID
+	return nil
+}

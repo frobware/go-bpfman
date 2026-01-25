@@ -218,14 +218,14 @@ func (f *fakeKernel) Reset() {
 
 func (f *fakeKernel) Load(_ context.Context, spec bpfman.LoadSpec) (bpfman.ManagedProgram, error) {
 	// Validate program type - mirrors real kernel behaviour
-	if spec.ProgramType == bpfman.ProgramTypeUnspecified {
+	if spec.ProgramType() == bpfman.ProgramTypeUnspecified {
 		err := fmt.Errorf("program type must be specified")
-		f.recordOp("load", spec.ProgramName, 0, err)
+		f.recordOp("load", spec.ProgramName(), 0, err)
 		return bpfman.ManagedProgram{}, err
 	}
-	if spec.ProgramType < bpfman.ProgramTypeXDP || spec.ProgramType > bpfman.ProgramTypeFexit {
-		err := fmt.Errorf("invalid program type: %d", spec.ProgramType)
-		f.recordOp("load", spec.ProgramName, 0, err)
+	if spec.ProgramType() < bpfman.ProgramTypeXDP || spec.ProgramType() > bpfman.ProgramTypeFexit {
+		err := fmt.Errorf("invalid program type: %d", spec.ProgramType())
+		f.recordOp("load", spec.ProgramName(), 0, err)
 		return bpfman.ManagedProgram{}, err
 	}
 
@@ -233,33 +233,33 @@ func (f *fakeKernel) Load(_ context.Context, spec bpfman.LoadSpec) (bpfman.Manag
 	f.mu.Lock()
 	f.loadCount++
 	loadNum := f.loadCount
-	failErr := f.failOnProgram[spec.ProgramName]
+	failErr := f.failOnProgram[spec.ProgramName()]
 	failOnNth := f.failOnNthLoad
 	f.mu.Unlock()
 
 	if failErr != nil {
-		f.recordOp("load", spec.ProgramName, 0, failErr)
+		f.recordOp("load", spec.ProgramName(), 0, failErr)
 		return bpfman.ManagedProgram{}, failErr
 	}
 	if failOnNth > 0 && loadNum == failOnNth {
 		err := fmt.Errorf("injected error on load %d", loadNum)
-		f.recordOp("load", spec.ProgramName, 0, err)
+		f.recordOp("load", spec.ProgramName(), 0, err)
 		return bpfman.ManagedProgram{}, err
 	}
 
 	id := f.nextID.Add(1)
 	// Compute paths the same way the real kernel does - using kernel ID
-	progPinPath := fmt.Sprintf("%s/prog_%d", spec.PinPath, id)
-	mapsDir := fmt.Sprintf("%s/maps/%d", spec.PinPath, id)
+	progPinPath := fmt.Sprintf("%s/prog_%d", spec.PinPath(), id)
+	mapsDir := fmt.Sprintf("%s/maps/%d", spec.PinPath(), id)
 	fp := fakeProgram{
 		id:          id,
-		name:        spec.ProgramName,
-		programType: spec.ProgramType,
+		name:        spec.ProgramName(),
+		programType: spec.ProgramType(),
 		pinPath:     progPinPath,
 		pinDir:      mapsDir,
 	}
 	f.programs[id] = fp
-	f.recordOp("load", spec.ProgramName, id, nil)
+	f.recordOp("load", spec.ProgramName(), id, nil)
 	return bpfman.ManagedProgram{
 		Managed: &bpfman.ProgramInfo{
 			Name:    fp.name,
@@ -1086,14 +1086,28 @@ func TestLoadProgram_AllProgramTypes_RoundTrip(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			progName := "prog_" + tt.name
 
+			// Build LoadInfo - fentry/fexit require ProgSpecificInfo with FnName
+			loadInfo := &pb.LoadInfo{Name: progName, ProgramType: tt.protoType}
+			if tt.protoType == pb.BpfmanProgramType_FENTRY {
+				loadInfo.Info = &pb.ProgSpecificInfo{
+					Info: &pb.ProgSpecificInfo_FentryLoadInfo{
+						FentryLoadInfo: &pb.FentryLoadInfo{FnName: "test_func"},
+					},
+				}
+			} else if tt.protoType == pb.BpfmanProgramType_FEXIT {
+				loadInfo.Info = &pb.ProgSpecificInfo{
+					Info: &pb.ProgSpecificInfo_FexitLoadInfo{
+						FexitLoadInfo: &pb.FexitLoadInfo{FnName: "test_func"},
+					},
+				}
+			}
+
 			// Load
 			loadReq := &pb.LoadRequest{
 				Bytecode: &pb.BytecodeLocation{
 					Location: &pb.BytecodeLocation_File{File: "/path/to/" + progName + ".o"},
 				},
-				Info: []*pb.LoadInfo{
-					{Name: progName, ProgramType: tt.protoType},
-				},
+				Info: []*pb.LoadInfo{loadInfo},
 				Metadata: map[string]string{
 					"bpfman.io/ProgramName": progName,
 				},
@@ -1245,36 +1259,22 @@ func TestFakeKernel_RejectsUnspecifiedProgramType(t *testing.T) {
 	fk := newFakeKernel()
 	ctx := context.Background()
 
-	spec := bpfman.LoadSpec{
-		ProgramName: "test_prog",
-		ProgramType: bpfman.ProgramTypeUnspecified,
-		PinPath:     "/test/path",
-	}
+	// NewObservedLoadSpec allows Unspecified type since it's for describing
+	// already-loaded programs where the type might not be known.
+	spec, err := bpfman.NewObservedLoadSpec("", "test_prog", bpfman.ProgramTypeUnspecified)
+	require.NoError(t, err)
+	spec = spec.WithPinPath("/test/path")
 
-	_, err := fk.Load(ctx, spec)
+	_, err = fk.Load(ctx, spec)
 	require.Error(t, err, "Load with Unspecified type should fail")
 	assert.Contains(t, err.Error(), "program type must be specified")
 }
 
-// TestFakeKernel_RejectsInvalidProgramType verifies that:
-//
-//	Given a fake kernel,
-//	When Load is called with an out-of-range program type,
-//	Then it returns an error.
-func TestFakeKernel_RejectsInvalidProgramType(t *testing.T) {
-	fk := newFakeKernel()
-	ctx := context.Background()
-
-	spec := bpfman.LoadSpec{
-		ProgramName: "test_prog",
-		ProgramType: bpfman.ProgramType(999),
-		PinPath:     "/test/path",
-	}
-
-	_, err := fk.Load(ctx, spec)
-	require.Error(t, err, "Load with invalid type should fail")
-	assert.Contains(t, err.Error(), "invalid program type")
-}
+// Note: TestFakeKernel_RejectsInvalidProgramType was removed because with
+// proper constructors (NewLoadSpec, NewAttachLoadSpec, NewObservedLoadSpec),
+// it's impossible to create a LoadSpec with an out-of-range program type.
+// The validation now happens at construction time, making this scenario
+// unreachable in production code.
 
 // =============================================================================
 // Partial Failure and Rollback Tests
@@ -2857,16 +2857,16 @@ func TestFentry_AttachSucceeds(t *testing.T) {
 	assert.Equal(t, 1, fix.Kernel.LinkCount(), "should have 1 link in kernel")
 }
 
-// TestFentry_AttachWithoutFnName_Fails verifies that:
+// TestFentry_LoadWithoutFnName_Fails verifies that:
 //
-//	Given a loaded fentry program without FnName specified,
-//	When I try to attach it,
-//	Then the operation fails.
-func TestFentry_AttachWithoutFnName_Fails(t *testing.T) {
+//	Given a fentry program load request without FnName specified,
+//	When I try to load it,
+//	Then the operation fails because fentry requires attachFunc at load time.
+func TestFentry_LoadWithoutFnName_Fails(t *testing.T) {
 	fix := newTestFixture(t)
 	ctx := context.Background()
 
-	// Load a fentry program WITHOUT FnName (no ProgSpecificInfo)
+	// Try to load a fentry program WITHOUT FnName (no ProgSpecificInfo)
 	loadReq := &pb.LoadRequest{
 		Bytecode: &pb.BytecodeLocation{
 			Location: &pb.BytecodeLocation_File{File: "/path/to/fentry.o"},
@@ -2883,26 +2883,12 @@ func TestFentry_AttachWithoutFnName_Fails(t *testing.T) {
 		},
 	}
 
-	loadResp, err := fix.Server.Load(ctx, loadReq)
-	require.NoError(t, err, "Load should succeed (FnName not required at load)")
-	programID := loadResp.Programs[0].KernelInfo.Id
+	_, err := fix.Server.Load(ctx, loadReq)
+	require.Error(t, err, "Load should fail without FnName for fentry")
+	assert.Contains(t, err.Error(), "attachFunc", "error should mention attachFunc")
 
-	// Attempt to attach fentry without FnName
-	attachReq := &pb.AttachRequest{
-		Id: programID,
-		Attach: &pb.AttachInfo{
-			Info: &pb.AttachInfo_FentryAttachInfo{
-				FentryAttachInfo: &pb.FentryAttachInfo{},
-			},
-		},
-	}
-
-	_, err = fix.Server.Attach(ctx, attachReq)
-	require.Error(t, err, "Attach should fail without FnName")
-	assert.Contains(t, err.Error(), "attach function", "error should mention attach function")
-
-	// No links should exist
-	assert.Equal(t, 0, fix.Kernel.LinkCount(), "no links should exist")
+	// No programs should exist
+	assert.Equal(t, 0, fix.Kernel.ProgramCount(), "no programs should exist")
 }
 
 // TestFentry_FullLifecycle verifies the complete fentry lifecycle:
@@ -3043,16 +3029,16 @@ func TestFexit_AttachSucceeds(t *testing.T) {
 	assert.Equal(t, 1, fix.Kernel.LinkCount(), "should have 1 link in kernel")
 }
 
-// TestFexit_AttachWithoutFnName_Fails verifies that:
+// TestFexit_LoadWithoutFnName_Fails verifies that:
 //
-//	Given a loaded fexit program without FnName specified,
-//	When I try to attach it,
-//	Then the operation fails.
-func TestFexit_AttachWithoutFnName_Fails(t *testing.T) {
+//	Given a fexit program load request without FnName specified,
+//	When I try to load it,
+//	Then the operation fails because fexit requires attachFunc at load time.
+func TestFexit_LoadWithoutFnName_Fails(t *testing.T) {
 	fix := newTestFixture(t)
 	ctx := context.Background()
 
-	// Load a fexit program WITHOUT FnName (no ProgSpecificInfo)
+	// Try to load a fexit program WITHOUT FnName (no ProgSpecificInfo)
 	loadReq := &pb.LoadRequest{
 		Bytecode: &pb.BytecodeLocation{
 			Location: &pb.BytecodeLocation_File{File: "/path/to/fexit.o"},
@@ -3069,26 +3055,12 @@ func TestFexit_AttachWithoutFnName_Fails(t *testing.T) {
 		},
 	}
 
-	loadResp, err := fix.Server.Load(ctx, loadReq)
-	require.NoError(t, err, "Load should succeed (FnName not required at load)")
-	programID := loadResp.Programs[0].KernelInfo.Id
+	_, err := fix.Server.Load(ctx, loadReq)
+	require.Error(t, err, "Load should fail without FnName for fexit")
+	assert.Contains(t, err.Error(), "attachFunc", "error should mention attachFunc")
 
-	// Attempt to attach fexit without FnName
-	attachReq := &pb.AttachRequest{
-		Id: programID,
-		Attach: &pb.AttachInfo{
-			Info: &pb.AttachInfo_FexitAttachInfo{
-				FexitAttachInfo: &pb.FexitAttachInfo{},
-			},
-		},
-	}
-
-	_, err = fix.Server.Attach(ctx, attachReq)
-	require.Error(t, err, "Attach should fail without FnName")
-	assert.Contains(t, err.Error(), "attach function", "error should mention attach function")
-
-	// No links should exist
-	assert.Equal(t, 0, fix.Kernel.LinkCount(), "no links should exist")
+	// No programs should exist
+	assert.Equal(t, 0, fix.Kernel.ProgramCount(), "no programs should exist")
 }
 
 // TestFexit_FullLifecycle verifies the complete fexit lifecycle:

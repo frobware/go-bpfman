@@ -600,17 +600,16 @@ func (s *sqliteStore) Get(ctx context.Context, kernelID uint32) (bpfman.Program,
 // scanProgram scans a single row into a Program struct.
 // The row must include the tags column from GROUP_CONCAT.
 func (s *sqliteStore) scanProgram(row *sql.Row) (bpfman.Program, error) {
-	var prog bpfman.Program
-	var programType string
+	var programName, programTypeStr, objectPath, pinPath string
 	var attachFunc, globalDataJSON, imageSourceJSON, owner, description, tagsStr sql.NullString
 	var mapOwnerID sql.NullInt64
 	var createdAtStr string
 
 	err := row.Scan(
-		&prog.LoadSpec.ProgramName,
-		&programType,
-		&prog.LoadSpec.ObjectPath,
-		&prog.LoadSpec.PinPath,
+		&programName,
+		&programTypeStr,
+		&objectPath,
+		&pinPath,
 		&attachFunc,
 		&globalDataJSON,
 		&mapOwnerID,
@@ -625,33 +624,66 @@ func (s *sqliteStore) scanProgram(row *sql.Row) (bpfman.Program, error) {
 	}
 
 	// Parse program type
-	pt, _ := bpfman.ParseProgramType(programType)
-	prog.LoadSpec.ProgramType = pt
+	programType, _ := bpfman.ParseProgramType(programTypeStr)
 
-	// Parse nullable fields
+	// Parse nullable scalar fields
+	var attachFuncVal string
+	var mapOwnerIDVal uint32
 	if attachFunc.Valid {
-		prog.LoadSpec.AttachFunc = attachFunc.String
+		attachFuncVal = attachFunc.String
 	}
 	if mapOwnerID.Valid {
-		prog.LoadSpec.MapOwnerID = uint32(mapOwnerID.Int64)
+		mapOwnerIDVal = uint32(mapOwnerID.Int64)
+	}
+
+	// Parse JSON fields
+	var globalData map[string][]byte
+	var imageSource *bpfman.ImageSource
+	if globalDataJSON.Valid {
+		if err := json.Unmarshal([]byte(globalDataJSON.String), &globalData); err != nil {
+			return bpfman.Program{}, fmt.Errorf("failed to unmarshal global_data: %w", err)
+		}
+	}
+	if imageSourceJSON.Valid {
+		if err := json.Unmarshal([]byte(imageSourceJSON.String), &imageSource); err != nil {
+			return bpfman.Program{}, fmt.Errorf("failed to unmarshal image_source: %w", err)
+		}
+	}
+
+	// Construct LoadSpec using the appropriate constructor
+	// This re-validates the data, providing defense in depth against corruption
+	var loadSpec bpfman.LoadSpec
+	var constructErr error
+	if programType.RequiresAttachFunc() {
+		loadSpec, constructErr = bpfman.NewAttachLoadSpec(objectPath, programName, programType, attachFuncVal)
+	} else {
+		loadSpec, constructErr = bpfman.NewLoadSpec(objectPath, programName, programType)
+	}
+	if constructErr != nil {
+		return bpfman.Program{}, fmt.Errorf("invalid program data in store: %w", constructErr)
+	}
+
+	// Apply optional fields
+	loadSpec = loadSpec.WithPinPath(pinPath)
+	if globalData != nil {
+		loadSpec = loadSpec.WithGlobalData(globalData)
+	}
+	if imageSource != nil {
+		loadSpec = loadSpec.WithImageSource(imageSource)
+	}
+	if mapOwnerIDVal != 0 {
+		loadSpec = loadSpec.WithMapOwnerID(mapOwnerIDVal)
+	}
+
+	// Build the Program
+	prog := bpfman.Program{
+		LoadSpec: loadSpec,
 	}
 	if owner.Valid {
 		prog.Owner = owner.String
 	}
 	if description.Valid {
 		prog.Description = description.String
-	}
-
-	// Parse JSON fields
-	if globalDataJSON.Valid {
-		if err := json.Unmarshal([]byte(globalDataJSON.String), &prog.LoadSpec.GlobalData); err != nil {
-			return bpfman.Program{}, fmt.Errorf("failed to unmarshal global_data: %w", err)
-		}
-	}
-	if imageSourceJSON.Valid {
-		if err := json.Unmarshal([]byte(imageSourceJSON.String), &prog.LoadSpec.ImageSource); err != nil {
-			return bpfman.Program{}, fmt.Errorf("failed to unmarshal image_source: %w", err)
-		}
 	}
 
 	// Parse tags from GROUP_CONCAT result
@@ -693,15 +725,15 @@ func (s *sqliteStore) getUserMetadata(ctx context.Context, kernelID uint32) (map
 func (s *sqliteStore) Save(ctx context.Context, kernelID uint32, metadata bpfman.Program) error {
 	// Marshal only opaque fields to JSON
 	var globalDataJSON, imageSourceJSON sql.NullString
-	if metadata.LoadSpec.GlobalData != nil {
-		data, err := json.Marshal(metadata.LoadSpec.GlobalData)
+	if metadata.LoadSpec.GlobalData() != nil {
+		data, err := json.Marshal(metadata.LoadSpec.GlobalData())
 		if err != nil {
 			return fmt.Errorf("failed to marshal global_data: %w", err)
 		}
 		globalDataJSON = sql.NullString{String: string(data), Valid: true}
 	}
-	if metadata.LoadSpec.ImageSource != nil {
-		data, err := json.Marshal(metadata.LoadSpec.ImageSource)
+	if metadata.LoadSpec.ImageSource() != nil {
+		data, err := json.Marshal(metadata.LoadSpec.ImageSource())
 		if err != nil {
 			return fmt.Errorf("failed to marshal image_source: %w", err)
 		}
@@ -710,12 +742,12 @@ func (s *sqliteStore) Save(ctx context.Context, kernelID uint32, metadata bpfman
 
 	// Handle nullable fields
 	var mapOwnerID sql.NullInt64
-	if metadata.LoadSpec.MapOwnerID != 0 {
-		mapOwnerID = sql.NullInt64{Int64: int64(metadata.LoadSpec.MapOwnerID), Valid: true}
+	if metadata.LoadSpec.MapOwnerID() != 0 {
+		mapOwnerID = sql.NullInt64{Int64: int64(metadata.LoadSpec.MapOwnerID()), Valid: true}
 	}
 	var attachFunc, owner, description sql.NullString
-	if metadata.LoadSpec.AttachFunc != "" {
-		attachFunc = sql.NullString{String: metadata.LoadSpec.AttachFunc, Valid: true}
+	if metadata.LoadSpec.AttachFunc() != "" {
+		attachFunc = sql.NullString{String: metadata.LoadSpec.AttachFunc(), Valid: true}
 	}
 	if metadata.Owner != "" {
 		owner = sql.NullString{String: metadata.Owner, Valid: true}
@@ -727,10 +759,10 @@ func (s *sqliteStore) Save(ctx context.Context, kernelID uint32, metadata bpfman
 	start := time.Now()
 	result, err := s.stmtSaveProgram.ExecContext(ctx,
 		kernelID,
-		metadata.LoadSpec.ProgramName,
-		metadata.LoadSpec.ProgramType.String(),
-		metadata.LoadSpec.ObjectPath,
-		metadata.LoadSpec.PinPath,
+		metadata.LoadSpec.ProgramName(),
+		metadata.LoadSpec.ProgramType().String(),
+		metadata.LoadSpec.ObjectPath(),
+		metadata.LoadSpec.PinPath(),
 		attachFunc,
 		globalDataJSON,
 		mapOwnerID,
@@ -740,11 +772,11 @@ func (s *sqliteStore) Save(ctx context.Context, kernelID uint32, metadata bpfman
 		metadata.CreatedAt.Format(time.RFC3339),
 	)
 	if err != nil {
-		s.logger.Debug("sql", "stmt", "SaveProgram", "args", []any{kernelID, metadata.LoadSpec.ProgramName, "(columns)"}, "duration_ms", msec(time.Since(start)), "error", err)
+		s.logger.Debug("sql", "stmt", "SaveProgram", "args", []any{kernelID, metadata.LoadSpec.ProgramName(), "(columns)"}, "duration_ms", msec(time.Since(start)), "error", err)
 		return fmt.Errorf("failed to insert program: %w", err)
 	}
 	rows, _ := result.RowsAffected()
-	s.logger.Debug("sql", "stmt", "SaveProgram", "args", []any{kernelID, metadata.LoadSpec.ProgramName, "(columns)"}, "duration_ms", msec(time.Since(start)), "rows_affected", rows)
+	s.logger.Debug("sql", "stmt", "SaveProgram", "args", []any{kernelID, metadata.LoadSpec.ProgramName(), "(columns)"}, "duration_ms", msec(time.Since(start)), "rows_affected", rows)
 
 	// Clear old tags and insert new ones
 	start = time.Now()
@@ -844,18 +876,17 @@ func (s *sqliteStore) List(ctx context.Context) (map[uint32]bpfman.Program, erro
 // The row must include the tags column from GROUP_CONCAT.
 func (s *sqliteStore) scanProgramFromRows(rows *sql.Rows) (uint32, bpfman.Program, error) {
 	var kernelID uint32
-	var prog bpfman.Program
-	var programType string
+	var programName, programTypeStr, objectPath, pinPath string
 	var attachFunc, globalDataJSON, imageSourceJSON, owner, description, tagsStr sql.NullString
 	var mapOwnerID sql.NullInt64
 	var createdAtStr string
 
 	err := rows.Scan(
 		&kernelID,
-		&prog.LoadSpec.ProgramName,
-		&programType,
-		&prog.LoadSpec.ObjectPath,
-		&prog.LoadSpec.PinPath,
+		&programName,
+		&programTypeStr,
+		&objectPath,
+		&pinPath,
 		&attachFunc,
 		&globalDataJSON,
 		&mapOwnerID,
@@ -870,33 +901,66 @@ func (s *sqliteStore) scanProgramFromRows(rows *sql.Rows) (uint32, bpfman.Progra
 	}
 
 	// Parse program type
-	pt, _ := bpfman.ParseProgramType(programType)
-	prog.LoadSpec.ProgramType = pt
+	programType, _ := bpfman.ParseProgramType(programTypeStr)
 
-	// Parse nullable fields
+	// Parse nullable scalar fields
+	var attachFuncVal string
+	var mapOwnerIDVal uint32
 	if attachFunc.Valid {
-		prog.LoadSpec.AttachFunc = attachFunc.String
+		attachFuncVal = attachFunc.String
 	}
 	if mapOwnerID.Valid {
-		prog.LoadSpec.MapOwnerID = uint32(mapOwnerID.Int64)
+		mapOwnerIDVal = uint32(mapOwnerID.Int64)
+	}
+
+	// Parse JSON fields
+	var globalData map[string][]byte
+	var imageSource *bpfman.ImageSource
+	if globalDataJSON.Valid {
+		if err := json.Unmarshal([]byte(globalDataJSON.String), &globalData); err != nil {
+			return 0, bpfman.Program{}, fmt.Errorf("failed to unmarshal global_data for %d: %w", kernelID, err)
+		}
+	}
+	if imageSourceJSON.Valid {
+		if err := json.Unmarshal([]byte(imageSourceJSON.String), &imageSource); err != nil {
+			return 0, bpfman.Program{}, fmt.Errorf("failed to unmarshal image_source for %d: %w", kernelID, err)
+		}
+	}
+
+	// Construct LoadSpec using the appropriate constructor
+	// This re-validates the data, providing defense in depth against corruption
+	var loadSpec bpfman.LoadSpec
+	var constructErr error
+	if programType.RequiresAttachFunc() {
+		loadSpec, constructErr = bpfman.NewAttachLoadSpec(objectPath, programName, programType, attachFuncVal)
+	} else {
+		loadSpec, constructErr = bpfman.NewLoadSpec(objectPath, programName, programType)
+	}
+	if constructErr != nil {
+		return 0, bpfman.Program{}, fmt.Errorf("invalid program data in store for %d: %w", kernelID, constructErr)
+	}
+
+	// Apply optional fields
+	loadSpec = loadSpec.WithPinPath(pinPath)
+	if globalData != nil {
+		loadSpec = loadSpec.WithGlobalData(globalData)
+	}
+	if imageSource != nil {
+		loadSpec = loadSpec.WithImageSource(imageSource)
+	}
+	if mapOwnerIDVal != 0 {
+		loadSpec = loadSpec.WithMapOwnerID(mapOwnerIDVal)
+	}
+
+	// Build the Program
+	prog := bpfman.Program{
+		LoadSpec: loadSpec,
 	}
 	if owner.Valid {
 		prog.Owner = owner.String
 	}
 	if description.Valid {
 		prog.Description = description.String
-	}
-
-	// Parse JSON fields
-	if globalDataJSON.Valid {
-		if err := json.Unmarshal([]byte(globalDataJSON.String), &prog.LoadSpec.GlobalData); err != nil {
-			return 0, bpfman.Program{}, fmt.Errorf("failed to unmarshal global_data for %d: %w", kernelID, err)
-		}
-	}
-	if imageSourceJSON.Valid {
-		if err := json.Unmarshal([]byte(imageSourceJSON.String), &prog.LoadSpec.ImageSource); err != nil {
-			return 0, bpfman.Program{}, fmt.Errorf("failed to unmarshal image_source for %d: %w", kernelID, err)
-		}
 	}
 
 	// Parse tags from GROUP_CONCAT result

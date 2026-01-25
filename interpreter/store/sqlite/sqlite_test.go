@@ -26,6 +26,13 @@ func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
+// testLoadSpec returns a valid LoadSpec for testing.
+// Uses the constructor to ensure the test data passes validation.
+func testLoadSpec() bpfman.LoadSpec {
+	spec, _ := bpfman.NewLoadSpec("/test/path/program.o", "test_program", bpfman.ProgramTypeTracepoint)
+	return spec
+}
+
 func TestForeignKey_LinkRequiresProgram(t *testing.T) {
 	store, err := sqlite.NewInMemory(testLogger())
 	require.NoError(t, err, "failed to create store")
@@ -60,7 +67,7 @@ func TestForeignKey_CascadeDeleteRemovesLinks(t *testing.T) {
 	// Create a program directly.
 	kernelID := uint32(42)
 	prog := bpfman.Program{
-		LoadSpec:  bpfman.LoadSpec{ProgramType: bpfman.ProgramTypeTracepoint},
+		LoadSpec:  testLoadSpec(),
 		CreatedAt: time.Now(),
 	}
 
@@ -106,7 +113,7 @@ func TestForeignKey_CascadeDeleteRemovesMetadataIndex(t *testing.T) {
 	// Create a program with metadata.
 	kernelID := uint32(42)
 	prog := bpfman.Program{
-		LoadSpec:  bpfman.LoadSpec{ProgramType: bpfman.ProgramTypeTracepoint},
+		LoadSpec:  testLoadSpec(),
 		CreatedAt: time.Now(),
 		UserMetadata: map[string]string{
 			"app":     "test",
@@ -139,7 +146,7 @@ func TestUniqueIndex_ProgramNameEnforcesUniqueness(t *testing.T) {
 
 	// Create first program with a name.
 	prog1 := bpfman.Program{
-		LoadSpec:  bpfman.LoadSpec{ProgramType: bpfman.ProgramTypeTracepoint},
+		LoadSpec:  testLoadSpec(),
 		CreatedAt: time.Now(),
 		UserMetadata: map[string]string{
 			"bpfman.io/ProgramName": "my-program",
@@ -150,7 +157,7 @@ func TestUniqueIndex_ProgramNameEnforcesUniqueness(t *testing.T) {
 
 	// Attempt to create second program with the same name.
 	prog2 := bpfman.Program{
-		LoadSpec:  bpfman.LoadSpec{ProgramType: bpfman.ProgramTypeTracepoint},
+		LoadSpec:  testLoadSpec(),
 		CreatedAt: time.Now(),
 		UserMetadata: map[string]string{
 			"bpfman.io/ProgramName": "my-program", // duplicate
@@ -172,7 +179,7 @@ func TestUniqueIndex_DifferentNamesAllowed(t *testing.T) {
 	// Create two programs with different names.
 	for i, name := range []string{"program-a", "program-b"} {
 		prog := bpfman.Program{
-			LoadSpec:  bpfman.LoadSpec{ProgramType: bpfman.ProgramTypeTracepoint},
+			LoadSpec:  testLoadSpec(),
 			CreatedAt: time.Now(),
 			UserMetadata: map[string]string{
 				"bpfman.io/ProgramName": name,
@@ -197,7 +204,7 @@ func TestUniqueIndex_NameCanBeReusedAfterDelete(t *testing.T) {
 
 	// Create a program with a name.
 	prog := bpfman.Program{
-		LoadSpec:  bpfman.LoadSpec{ProgramType: bpfman.ProgramTypeTracepoint},
+		LoadSpec:  testLoadSpec(),
 		CreatedAt: time.Now(),
 		UserMetadata: map[string]string{
 			"bpfman.io/ProgramName": "reusable-name",
@@ -211,7 +218,7 @@ func TestUniqueIndex_NameCanBeReusedAfterDelete(t *testing.T) {
 
 	// Create a new program with the same name.
 	prog2 := bpfman.Program{
-		LoadSpec:  bpfman.LoadSpec{ProgramType: bpfman.ProgramTypeTracepoint},
+		LoadSpec:  testLoadSpec(),
 		CreatedAt: time.Now(),
 		UserMetadata: map[string]string{
 			"bpfman.io/ProgramName": "reusable-name", // same name, should work
@@ -236,7 +243,7 @@ func TestLinkRegistry_TracepointRoundTrip(t *testing.T) {
 
 	// Create a program first
 	prog := bpfman.Program{
-		LoadSpec:  bpfman.LoadSpec{ProgramType: bpfman.ProgramTypeTracepoint},
+		LoadSpec:  testLoadSpec(),
 		CreatedAt: time.Now(),
 	}
 	require.NoError(t, store.Save(ctx, 42, prog), "Save failed")
@@ -280,7 +287,7 @@ func TestLinkRegistry_KernelLinkIDUniqueness(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a program first
-	prog := bpfman.Program{LoadSpec: bpfman.LoadSpec{ProgramType: bpfman.ProgramTypeTracepoint}, CreatedAt: time.Now()}
+	prog := bpfman.Program{LoadSpec: testLoadSpec(), CreatedAt: time.Now()}
 	require.NoError(t, store.Save(ctx, 42, prog), "Save failed")
 
 	// Create first link
@@ -318,7 +325,7 @@ func TestLinkRegistry_CascadeDeleteFromRegistry(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a program first
-	prog := bpfman.Program{LoadSpec: bpfman.LoadSpec{ProgramType: bpfman.ProgramTypeTracepoint}, CreatedAt: time.Now()}
+	prog := bpfman.Program{LoadSpec: testLoadSpec(), CreatedAt: time.Now()}
 	require.NoError(t, store.Save(ctx, 42, prog), "Save failed")
 
 	// Create a tracepoint link
