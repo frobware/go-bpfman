@@ -44,6 +44,7 @@ COPY testdata/stats.o /opt/bpf/stats.o
 
 # Create bpfman-rpc symlink for compatibility with bpfman-operator.
 # When invoked as bpfman-rpc, the binary automatically runs "serve".
-RUN ln -s /bpfman /bpfman-rpc
+# Create bpfman-ns symlink for namespace helper (container uprobes).
+RUN ln -s /bpfman /bpfman-rpc && ln -s /bpfman /bpfman-ns
 
 ENTRYPOINT ["./bpfman-rpc"]

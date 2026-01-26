@@ -20,6 +20,7 @@ spec:
         app: bpfman-daemon-go
     spec:
       serviceAccountName: bpfman-daemon-go
+      hostPID: true  # Required for container_pid uprobe support (nsenter needs host PIDs)
       containers:
         - name: bpfman
           image: bpfman:dev

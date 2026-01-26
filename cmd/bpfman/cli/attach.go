@@ -34,10 +34,11 @@ type AttachCmd struct {
 	Netns string `short:"n" name:"netns" help:"Network namespace path (e.g., /var/run/netns/myns)."`
 
 	// Kprobe/uprobe flags
-	FnName   string `short:"f" name:"fn-name" help:"Function name to attach to."`
-	Offset   uint64 `name:"offset" help:"Offset within the function." default:"0"`
-	RetProbe bool   `name:"retprobe" help:"Attach as return probe instead of entry probe."`
-	Target   string `name:"target" help:"Path to target binary or library (required for uprobe)."`
+	FnName       string `short:"f" name:"fn-name" help:"Function name to attach to."`
+	Offset       uint64 `name:"offset" help:"Offset within the function." default:"0"`
+	RetProbe     bool   `name:"retprobe" help:"Attach as return probe instead of entry probe."`
+	Target       string `name:"target" help:"Path to target binary or library (required for uprobe)."`
+	ContainerPid int32  `name:"container-pid" help:"Container PID for namespace-aware uprobe attachment."`
 
 	// Common flags
 	Metadata []KeyValue `short:"m" name:"metadata" help:"KEY=VALUE metadata (can be repeated)."`
@@ -260,6 +261,9 @@ func (c *AttachCmd) attachUprobe(cli *CLI) error {
 	}
 	if c.Offset != 0 {
 		spec = spec.WithOffset(c.Offset)
+	}
+	if c.ContainerPid > 0 {
+		spec = spec.WithContainerPid(c.ContainerPid)
 	}
 
 	b, err := cli.Client()

@@ -40,7 +40,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 FROM ${BPFMAN_IMAGE}
 
 COPY --from=builder /build/bin/bpfman /bpfman
-RUN ln -sf /bpfman /bpfman-rpc
+RUN ln -sf /bpfman /bpfman-rpc && ln -sf /bpfman /bpfman-ns
 
 # Override upstream ENTRYPOINT which passes --timeout=0 (not supported by Go daemon)
 ENTRYPOINT ["./bpfman-rpc"]

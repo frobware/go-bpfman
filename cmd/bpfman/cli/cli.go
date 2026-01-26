@@ -44,7 +44,13 @@ func (c *CLI) RuntimeDirs() config.RuntimeDirs {
 // If invoked as "bpfman-rpc", automatically runs the serve command for
 // compatibility with the bpfman-operator which expects the Rust daemon's
 // binary layout.
+// If invoked as "bpfman-ns", runs the namespace helper for container uprobes.
 func Run() {
+	// Check for bpfman-ns mode first - needs special early handling
+	if runAsNS() {
+		return
+	}
+
 	if filepath.Base(os.Args[0]) == "bpfman-rpc" {
 		os.Args = append([]string{os.Args[0], "serve"}, os.Args[1:]...)
 	}

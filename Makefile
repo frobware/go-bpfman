@@ -116,10 +116,12 @@ doc-text:
 # bpfman targets
 # Note: bpfman-proto is not a dependency here since pb files are committed.
 # Run 'make bpfman-proto' explicitly after modifying proto/bpfman.proto.
+# CGO is required for the nsenter package which uses a C constructor to call
+# setns() before Go runtime starts (needed for uprobe container attachment).
 bpfman-build:
 	go fmt ./...
 	go vet ./...
-	CGO_ENABLED=0 go build -mod=vendor -o $(BIN_DIR)/bpfman ./cmd/bpfman
+	CGO_ENABLED=1 go build -mod=vendor -o $(BIN_DIR)/bpfman ./cmd/bpfman
 
 bpfman-clean:
 	$(RM) $(BIN_DIR)/bpfman
