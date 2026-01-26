@@ -1793,10 +1793,19 @@ func (k *kernelAdapter) attachUprobeViaHelper(progPinPath, target, fnName string
 	// Get current mount namespace inode for logging
 	currentMntNs, _ := nsenter.GetCurrentMntNsInode()
 
-	// Determine target namespace path for logging
+	// Determine target namespace path - try /proc first, then /host/proc for k8s
 	nsPath := fmt.Sprintf("/proc/%d/ns/mnt", containerPid)
 	if _, err := os.Stat(nsPath); err != nil {
-		nsPath = fmt.Sprintf("/host/proc/%d/ns/mnt", containerPid)
+		altPath := fmt.Sprintf("/host/proc/%d/ns/mnt", containerPid)
+		if _, err := os.Stat(altPath); err != nil {
+			k.logger.Error("container namespace not accessible",
+				"container_pid", containerPid,
+				"tried_paths", []string{nsPath, altPath},
+				"error", err,
+				"hint", "ensure container PID is valid and /proc or /host/proc is accessible")
+			return 0, fmt.Errorf("container namespace for PID %d not accessible (tried %s and %s): %w", containerPid, nsPath, altPath, err)
+		}
+		nsPath = altPath
 	}
 
 	k.logger.Info("preparing container uprobe attachment",
@@ -1852,13 +1861,16 @@ func (k *kernelAdapter) attachUprobeViaHelper(progPinPath, target, fnName string
 				"exit_code", exitErr.ExitCode(),
 				"stderr", stderr,
 				"container_pid", containerPid,
-				"target", target)
-			return 0, fmt.Errorf("bpfman-ns failed (exit %d): %s", exitErr.ExitCode(), stderr)
+				"target", target,
+				"fn_name", fnName,
+				"ns_path", nsPath)
+			return 0, fmt.Errorf("bpfman-ns failed attaching %s to %q in container %d (exit %d): %s", fnName, target, containerPid, exitErr.ExitCode(), stderr)
 		}
 		k.logger.Error("failed to run bpfman-ns helper",
 			"error", err,
-			"container_pid", containerPid)
-		return 0, fmt.Errorf("run bpfman-ns: %w", err)
+			"container_pid", containerPid,
+			"ns_path", nsPath)
+		return 0, fmt.Errorf("run bpfman-ns for container %d: %w", containerPid, err)
 	}
 
 	// Parse link ID from output
@@ -1881,19 +1893,23 @@ func (k *kernelAdapter) attachUprobeViaHelper(progPinPath, target, fnName string
 	if linkPinPath != "" {
 		lnk, err := link.NewFromID(link.ID(linkID))
 		if err != nil {
-			k.logger.Error("failed to get link by ID",
+			k.logger.Error("failed to get link by ID after child attached",
 				"link_id", linkID,
-				"error", err)
-			return 0, fmt.Errorf("get link by ID %d: %w", linkID, err)
+				"container_pid", containerPid,
+				"error", err,
+				"hint", "the child reported this link ID but we cannot access it")
+			return 0, fmt.Errorf("get link by ID %d (child attached but parent cannot access link): %w", linkID, err)
 		}
 		defer lnk.Close()
 
 		// Create link pin directory
-		if err := os.MkdirAll(filepath.Dir(linkPinPath), 0755); err != nil {
+		linkPinDir := filepath.Dir(linkPinPath)
+		if err := os.MkdirAll(linkPinDir, 0755); err != nil {
 			k.logger.Error("failed to create link pin directory",
-				"path", filepath.Dir(linkPinPath),
+				"path", linkPinDir,
+				"link_id", linkID,
 				"error", err)
-			return 0, fmt.Errorf("create link pin directory: %w", err)
+			return 0, fmt.Errorf("create link pin directory %s: %w", linkPinDir, err)
 		}
 
 		// Pin the link
@@ -1901,13 +1917,15 @@ func (k *kernelAdapter) attachUprobeViaHelper(progPinPath, target, fnName string
 			k.logger.Error("failed to pin link",
 				"path", linkPinPath,
 				"link_id", linkID,
+				"container_pid", containerPid,
 				"error", err)
-			return 0, fmt.Errorf("pin link to %s: %w", linkPinPath, err)
+			return 0, fmt.Errorf("pin link %d to %s: %w", linkID, linkPinPath, err)
 		}
 
 		k.logger.Info("link pinned successfully",
 			"path", linkPinPath,
-			"link_id", linkID)
+			"link_id", linkID,
+			"container_pid", containerPid)
 	}
 
 	k.logger.Info("container uprobe attachment succeeded",

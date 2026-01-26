@@ -85,13 +85,16 @@ func (cmd *NSUprobeCmd) Run() error {
 
 	// Create program from the inherited file descriptor.
 	// The parent opened the pinned program and passed the fd via ExtraFiles.
+	// If fd 3 doesn't exist, this means bpfman-ns was invoked incorrectly
+	// (must be called by the daemon which passes the program fd).
 	logger.Debug("creating program from inherited fd", "fd", ProgramFD)
 	prog, err := ebpf.NewProgramFromFD(ProgramFD)
 	if err != nil {
 		logger.Error("failed to create program from fd",
 			"fd", ProgramFD,
-			"error", err)
-		return fmt.Errorf("create program from fd %d: %w", ProgramFD, err)
+			"error", err,
+			"hint", "bpfman-ns must be invoked by the daemon, not directly")
+		return fmt.Errorf("create program from fd %d (bpfman-ns must be invoked by daemon, not directly): %w", ProgramFD, err)
 	}
 	// Don't close the program - we don't own the fd, and closing would
 	// close the underlying fd which we inherited from parent.
@@ -103,14 +106,18 @@ func (cmd *NSUprobeCmd) Run() error {
 		"prog_type", prog.Type(),
 		"prog_name", progInfo.Name)
 
-	// Verify target binary exists in current namespace
+	// Verify target binary exists in current namespace.
+	// After setns, we're in the container's mount namespace, so paths
+	// like /usr/bin/foo resolve to the container's filesystem.
 	if stat, err := os.Stat(cmd.Target); err != nil {
-		logger.Error("target binary not found in current namespace",
+		logger.Error("target binary not found in container namespace",
 			"target", cmd.Target,
-			"error", err)
-		return fmt.Errorf("target binary %s not found: %w", cmd.Target, err)
+			"error", err,
+			"current_mnt_ns_inode", currentMntNs,
+			"hint", "ensure the target path exists in the container's filesystem")
+		return fmt.Errorf("target binary %q not found in container (mnt ns inode %d): %w", cmd.Target, currentMntNs, err)
 	} else {
-		logger.Debug("target binary found",
+		logger.Debug("target binary found in container namespace",
 			"target", cmd.Target,
 			"size", stat.Size(),
 			"mode", stat.Mode())
@@ -150,9 +157,12 @@ func (cmd *NSUprobeCmd) Run() error {
 		logger.Error("failed to attach probe",
 			"type", attachType,
 			"fn_name", cmd.FnName,
+			"offset", cmd.Offset,
 			"target", cmd.Target,
+			"prog_id", progID,
+			"current_mnt_ns_inode", currentMntNs,
 			"error", err)
-		return fmt.Errorf("attach %s to %s in %s: %w", attachType, cmd.FnName, cmd.Target, err)
+		return fmt.Errorf("attach %s to %s (offset %d) in %q (mnt ns %d): %w", attachType, cmd.FnName, cmd.Offset, cmd.Target, currentMntNs, err)
 	}
 
 	// Get link info for the parent
