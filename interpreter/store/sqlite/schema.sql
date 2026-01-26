@@ -48,7 +48,8 @@ CREATE INDEX IF NOT EXISTS idx_program_metadata_key_value ON program_metadata_in
 --------------------------------------------------------------------------------
 
 -- link_registry contains all common fields for managed links.
--- kernel_link_id is the primary key (kernel-assigned link ID).
+-- kernel_link_id is the primary key (kernel-assigned link ID or synthetic ID
+-- for perf_event-based attachments like container uprobes).
 CREATE TABLE IF NOT EXISTS link_registry (
     kernel_link_id INTEGER PRIMARY KEY,
     link_type TEXT NOT NULL,

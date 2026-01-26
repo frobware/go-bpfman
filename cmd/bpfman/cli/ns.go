@@ -12,9 +12,7 @@ import (
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
 
-	// Import nsenter to register the CGO constructor that handles
-	// mount namespace switching before Go runtime starts.
-	_ "github.com/frobware/go-bpfman/nsenter"
+	"github.com/frobware/go-bpfman/nsenter"
 )
 
 // NSCmd handles the bpfman-ns subcommand for attaching uprobes in other
@@ -28,17 +26,23 @@ type NSCmd struct {
 	Uprobe NSUprobeCmd `cmd:"" help:"Attach uprobe in target namespace."`
 }
 
-// ProgramFD is the file descriptor number where the parent passes the BPF
-// program. The parent uses Cmd.ExtraFiles which maps to fd 3, 4, 5, etc.
-const ProgramFD = 3
+// File descriptor numbers for inherited fds from parent.
+// The parent uses Cmd.ExtraFiles which maps to fd 3, 4, 5, etc.
+const (
+	ProgramFD = 3 // BPF program fd
+	SocketFD  = 4 // Unix socket for passing link fd back to parent
+)
 
 // NSUprobeCmd attaches a uprobe in the target container's mount namespace.
 // When this code runs, the process is already in the target namespace
 // (switched by the CGO constructor before Go started).
 //
-// The parent process passes the BPF program via fd 3 (using Cmd.ExtraFiles),
-// so we don't need access to the host's bpffs. After attaching, we print the
-// link ID to stdout; the parent then uses link.NewFromID() to pin it.
+// The parent process passes:
+//   - BPF program via fd 3 (ExtraFiles[0])
+//   - Unix socket via fd 4 (ExtraFiles[1]) for returning the link fd
+//
+// After attaching, we send the link fd back to the parent via the socket.
+// The parent (in host namespace) then pins the link.
 type NSUprobeCmd struct {
 	Target   string `arg:"" help:"Target binary path (resolved in container namespace)."`
 	FnName   string `name:"fn-name" help:"Function name to attach to."`
@@ -62,10 +66,10 @@ func getMntNsInode(path string) uint64 {
 // Run executes the uprobe attachment. We're already in the target namespace
 // (the CGO constructor called setns before Go started).
 //
-// The BPF program is passed via fd 3 from the parent process. After attaching,
-// we print the link ID to stdout so the parent can pin it.
+// The BPF program is passed via fd 3, and a Unix socket via fd 4.
+// After attaching, we send the link fd back to the parent over the socket.
 func (cmd *NSUprobeCmd) Run() error {
-	// Create a logger that writes to stderr (stdout is reserved for link ID)
+	// Create a logger that writes to stderr (stdout is reserved for status)
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelDebug,
 	}))
@@ -81,12 +85,11 @@ func (cmd *NSUprobeCmd) Run() error {
 		"fn_name", cmd.FnName,
 		"offset", cmd.Offset,
 		"retprobe", cmd.Retprobe,
-		"program_fd", ProgramFD)
+		"program_fd", ProgramFD,
+		"socket_fd", SocketFD)
 
 	// Create program from the inherited file descriptor.
 	// The parent opened the pinned program and passed the fd via ExtraFiles.
-	// If fd 3 doesn't exist, this means bpfman-ns was invoked incorrectly
-	// (must be called by the daemon which passes the program fd).
 	logger.Debug("creating program from inherited fd", "fd", ProgramFD)
 	prog, err := ebpf.NewProgramFromFD(ProgramFD)
 	if err != nil {
@@ -96,19 +99,22 @@ func (cmd *NSUprobeCmd) Run() error {
 			"hint", "bpfman-ns must be invoked by the daemon, not directly")
 		return fmt.Errorf("create program from fd %d (bpfman-ns must be invoked by daemon, not directly): %w", ProgramFD, err)
 	}
-	// Don't close the program - we don't own the fd, and closing would
-	// close the underlying fd which we inherited from parent.
-
-	progInfo, _ := prog.Info()
-	progID, _ := progInfo.ID()
+	// Don't close the program - we don't own the fd.
 	logger.Debug("program from inherited fd",
-		"prog_id", progID,
-		"prog_type", prog.Type(),
-		"prog_name", progInfo.Name)
+		"fd", ProgramFD,
+		"prog_type", prog.Type())
+
+	// Get the socket for sending link fd back to parent
+	socket := os.NewFile(uintptr(SocketFD), "fdpass-socket")
+	if socket == nil {
+		logger.Error("failed to get socket fd",
+			"fd", SocketFD,
+			"hint", "bpfman-ns must be invoked by the daemon, not directly")
+		return fmt.Errorf("socket fd %d not available (bpfman-ns must be invoked by daemon)", SocketFD)
+	}
+	defer socket.Close()
 
 	// Verify target binary exists in current namespace.
-	// After setns, we're in the container's mount namespace, so paths
-	// like /usr/bin/foo resolve to the container's filesystem.
 	if stat, err := os.Stat(cmd.Target); err != nil {
 		logger.Error("target binary not found in container namespace",
 			"target", cmd.Target,
@@ -159,37 +165,55 @@ func (cmd *NSUprobeCmd) Run() error {
 			"fn_name", cmd.FnName,
 			"offset", cmd.Offset,
 			"target", cmd.Target,
-			"prog_id", progID,
 			"current_mnt_ns_inode", currentMntNs,
 			"error", err)
 		return fmt.Errorf("attach %s to %s (offset %d) in %q (mnt ns %d): %w", attachType, cmd.FnName, cmd.Offset, cmd.Target, currentMntNs, err)
 	}
 
-	// Get link info for the parent
-	linkInfo, err := lnk.Info()
-	if err != nil {
-		logger.Error("failed to get link info", "error", err)
+	logger.Info("probe attached successfully", "type", attachType)
+
+	// Get the perf event fd from the link.
+	// Uprobe links implement the PerfEvent interface.
+	pe, ok := lnk.(link.PerfEvent)
+	if !ok {
+		logger.Error("link does not implement PerfEvent interface",
+			"type", attachType)
 		lnk.Close()
-		return fmt.Errorf("get link info: %w", err)
+		return fmt.Errorf("link does not implement PerfEvent interface")
 	}
 
-	logger.Info("probe attached successfully",
-		"type", attachType,
-		"link_id", linkInfo.ID,
-		"link_type", linkInfo.Type,
-		"prog_id", progID)
+	perfFile, err := pe.PerfEvent()
+	if err != nil {
+		logger.Error("failed to get perf event fd",
+			"error", err)
+		lnk.Close()
+		return fmt.Errorf("get perf event fd: %w", err)
+	}
 
-	// Print link ID for the parent process to capture (to stdout).
-	// The parent will use link.NewFromID() to get the link and pin it.
-	logger.Debug("writing link ID to stdout", "link_id", linkInfo.ID)
-	fmt.Printf("%d\n", linkInfo.ID)
+	// Send the perf event fd back to the parent via the Unix socket.
+	// The parent (in host namespace) will receive it and keep the link alive.
+	linkFd := int(perfFile.Fd())
+	logger.Debug("sending link fd to parent",
+		"link_fd", linkFd,
+		"socket_fd", SocketFD)
 
-	// Close the link fd - the kernel link object persists because it's
-	// attached to the uprobe. The parent will re-acquire it via NewFromID.
-	lnk.Close()
+	if err := nsenter.SendFd(socket, "uprobe-link", linkFd); err != nil {
+		logger.Error("failed to send link fd to parent",
+			"link_fd", linkFd,
+			"error", err)
+		perfFile.Close()
+		lnk.Close()
+		return fmt.Errorf("send link fd to parent: %w", err)
+	}
 
-	logger.Info("bpfman-ns uprobe handler completed successfully",
-		"link_id", linkInfo.ID)
+	logger.Info("link fd sent to parent successfully",
+		"link_fd", linkFd)
+
+	// Close our references. The parent now has the fd via SCM_RIGHTS.
+	perfFile.Close()
+
+	// Print success to stdout for the parent
+	fmt.Println("ok")
 
 	return nil
 }

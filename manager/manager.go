@@ -594,8 +594,16 @@ func (m *Manager) AttachUprobe(ctx context.Context, spec bpfman.UprobeAttachSpec
 		return bpfman.LinkSummary{}, fmt.Errorf("attach uprobe %s to %s: %w", fnName, target, err)
 	}
 
+	// Get kernel link ID (0 for perf_event-based links which have no kernel link)
+	var kernelLinkID uint32
+	if link.Kernel != nil {
+		kernelLinkID = link.Kernel.ID()
+	} else {
+		kernelLinkID = link.Managed.KernelLinkID
+	}
+
 	// COMPUTE: Build save action from kernel result
-	saveAction := computeAttachUprobeAction(programKernelID, link.Kernel.ID(), link.Managed.PinPath, target, fnName, offset, retprobe, containerPid)
+	saveAction := computeAttachUprobeAction(programKernelID, kernelLinkID, link.Managed.PinPath, target, fnName, offset, retprobe, containerPid)
 
 	// EXECUTE: Save link metadata
 	if err := m.executor.Execute(ctx, saveAction); err != nil {
@@ -607,7 +615,7 @@ func (m *Manager) AttachUprobe(ctx context.Context, spec bpfman.UprobeAttachSpec
 		probeType = "uretprobe"
 	}
 	m.logger.Info("attached "+probeType,
-		"kernel_link_id", link.Kernel.ID(),
+		"kernel_link_id", kernelLinkID,
 		"program_id", programKernelID,
 		"target", target,
 		"fn_name", fnName,
