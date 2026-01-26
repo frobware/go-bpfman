@@ -377,14 +377,21 @@ func (s *Server) Load(ctx context.Context, req *pb.LoadRequest) (*pb.LoadRespons
 			loadedAt = loaded.Kernel.LoadedAt().Format(time.RFC3339)
 		}
 
+		progInfo := &pb.ProgramInfo{
+			Name:       info.Name,
+			Bytecode:   req.Bytecode,
+			Metadata:   req.Metadata,
+			GlobalData: req.GlobalData,
+			MapPinPath: loaded.Managed.PinDir, // maps directory computed from kernel ID
+		}
+		// Set MapOwnerId for dependent programs (those sharing maps with the first)
+		if spec.MapOwnerID() != 0 {
+			ownerID := spec.MapOwnerID()
+			progInfo.MapOwnerId = &ownerID
+		}
+
 		resp.Programs = append(resp.Programs, &pb.LoadResponseInfo{
-			Info: &pb.ProgramInfo{
-				Name:       info.Name,
-				Bytecode:   req.Bytecode,
-				Metadata:   req.Metadata,
-				GlobalData: req.GlobalData,
-				MapPinPath: loaded.Managed.PinDir, // maps directory computed from kernel ID
-			},
+			Info: progInfo,
 			KernelInfo: &pb.KernelProgramInfo{
 				Id:            loaded.Kernel.ID(),
 				Name:          loaded.Kernel.Name(),
@@ -770,14 +777,19 @@ func (s *Server) List(ctx context.Context, req *pb.ListRequest) (*pb.ListRespons
 			continue
 		}
 
+		info := &pb.ProgramInfo{
+			Name:       metadata.ProgramName,
+			Bytecode:   &pb.BytecodeLocation{Location: &pb.BytecodeLocation_File{File: metadata.ObjectPath}},
+			Metadata:   metadata.UserMetadata,
+			GlobalData: metadata.GlobalData,
+			MapPinPath: metadata.MapPinPath,
+		}
+		if metadata.MapOwnerID != 0 {
+			info.MapOwnerId = &metadata.MapOwnerID
+		}
+
 		results = append(results, &pb.ListResponse_ListResult{
-			Info: &pb.ProgramInfo{
-				Name:       metadata.ProgramName,
-				Bytecode:   &pb.BytecodeLocation{Location: &pb.BytecodeLocation_File{File: metadata.ObjectPath}},
-				Metadata:   metadata.UserMetadata,
-				GlobalData: metadata.GlobalData,
-				MapPinPath: metadata.PinPath,
-			},
+			Info: info,
 			KernelInfo: &pb.KernelProgramInfo{
 				Id:          kernelID,
 				Name:        kp.Name,
@@ -830,15 +842,20 @@ func (s *Server) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, 
 
 	s.logger.Info("Get response: success", "program_id", req.Id, "program_name", metadata.ProgramName, "link_count", len(linkIDs))
 
+	info := &pb.ProgramInfo{
+		Name:       metadata.ProgramName,
+		Bytecode:   &pb.BytecodeLocation{Location: &pb.BytecodeLocation_File{File: metadata.ObjectPath}},
+		Metadata:   metadata.UserMetadata,
+		GlobalData: metadata.GlobalData,
+		MapPinPath: metadata.MapPinPath,
+		Links:      linkIDs,
+	}
+	if metadata.MapOwnerID != 0 {
+		info.MapOwnerId = &metadata.MapOwnerID
+	}
+
 	return &pb.GetResponse{
-		Info: &pb.ProgramInfo{
-			Name:       metadata.ProgramName,
-			Bytecode:   &pb.BytecodeLocation{Location: &pb.BytecodeLocation_File{File: metadata.ObjectPath}},
-			Metadata:   metadata.UserMetadata,
-			GlobalData: metadata.GlobalData,
-			MapPinPath: metadata.PinPath,
-			Links:      linkIDs,
-		},
+		Info: info,
 		KernelInfo: &pb.KernelProgramInfo{
 			Id:          req.Id,
 			Name:        kp.Name,

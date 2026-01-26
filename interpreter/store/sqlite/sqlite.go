@@ -159,6 +159,7 @@ type sqliteStore struct {
 	stmtListPrograms               *sql.Stmt
 	stmtFindProgramByMetadata      *sql.Stmt
 	stmtFindAllProgramsByMetadata  *sql.Stmt
+	stmtCountDependentPrograms     *sql.Stmt
 
 	// Prepared statements for program tags
 	stmtInsertTag  *sql.Stmt
@@ -288,7 +289,7 @@ func (s *sqliteStore) prepareProgramStatements() error {
 
 	const sqlGetProgram = `
 		SELECT m.program_name, m.program_type, m.object_path, m.pin_path, m.attach_func,
-		       m.global_data, m.map_owner_id, m.image_source, m.owner, m.description, m.created_at,
+		       m.global_data, m.map_owner_id, m.map_pin_path, m.image_source, m.owner, m.description, m.created_at,
 		       GROUP_CONCAT(t.tag) as tags
 		FROM managed_programs m
 		LEFT JOIN program_tags t ON m.kernel_id = t.kernel_id
@@ -301,8 +302,8 @@ func (s *sqliteStore) prepareProgramStatements() error {
 	const sqlSaveProgram = `
 		INSERT OR REPLACE INTO managed_programs
 		(kernel_id, program_name, program_type, object_path, pin_path, attach_func,
-		 global_data, map_owner_id, image_source, owner, description, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		 global_data, map_owner_id, map_pin_path, image_source, owner, description, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	if s.stmtSaveProgram, err = s.db.Prepare(sqlSaveProgram); err != nil {
 		return fmt.Errorf("prepare SaveProgram: %w", err)
 	}
@@ -324,7 +325,7 @@ func (s *sqliteStore) prepareProgramStatements() error {
 
 	const sqlListPrograms = `
 		SELECT m.kernel_id, m.program_name, m.program_type, m.object_path, m.pin_path, m.attach_func,
-		       m.global_data, m.map_owner_id, m.image_source, m.owner, m.description, m.created_at,
+		       m.global_data, m.map_owner_id, m.map_pin_path, m.image_source, m.owner, m.description, m.created_at,
 		       GROUP_CONCAT(t.tag) as tags
 		FROM managed_programs m
 		LEFT JOIN program_tags t ON m.kernel_id = t.kernel_id
@@ -335,7 +336,7 @@ func (s *sqliteStore) prepareProgramStatements() error {
 
 	const sqlFindProgramByMetadata = `
 		SELECT m.kernel_id, m.program_name, m.program_type, m.object_path, m.pin_path, m.attach_func,
-		       m.global_data, m.map_owner_id, m.image_source, m.owner, m.description, m.created_at,
+		       m.global_data, m.map_owner_id, m.map_pin_path, m.image_source, m.owner, m.description, m.created_at,
 		       GROUP_CONCAT(t.tag) as tags
 		FROM managed_programs m
 		JOIN program_metadata_index i ON m.kernel_id = i.kernel_id
@@ -349,7 +350,7 @@ func (s *sqliteStore) prepareProgramStatements() error {
 
 	const sqlFindAllProgramsByMetadata = `
 		SELECT m.kernel_id, m.program_name, m.program_type, m.object_path, m.pin_path, m.attach_func,
-		       m.global_data, m.map_owner_id, m.image_source, m.owner, m.description, m.created_at,
+		       m.global_data, m.map_owner_id, m.map_pin_path, m.image_source, m.owner, m.description, m.created_at,
 		       GROUP_CONCAT(t.tag) as tags
 		FROM managed_programs m
 		JOIN program_metadata_index i ON m.kernel_id = i.kernel_id
@@ -358,6 +359,11 @@ func (s *sqliteStore) prepareProgramStatements() error {
 		GROUP BY m.kernel_id`
 	if s.stmtFindAllProgramsByMetadata, err = s.db.Prepare(sqlFindAllProgramsByMetadata); err != nil {
 		return fmt.Errorf("prepare FindAllProgramsByMetadata: %w", err)
+	}
+
+	const sqlCountDependentPrograms = "SELECT COUNT(*) FROM managed_programs WHERE map_owner_id = ?"
+	if s.stmtCountDependentPrograms, err = s.db.Prepare(sqlCountDependentPrograms); err != nil {
+		return fmt.Errorf("prepare CountDependentPrograms: %w", err)
 	}
 
 	// Tag statements
@@ -601,7 +607,7 @@ func (s *sqliteStore) Get(ctx context.Context, kernelID uint32) (bpfman.Program,
 // The row must include the tags column from GROUP_CONCAT.
 func (s *sqliteStore) scanProgram(row *sql.Row) (bpfman.Program, error) {
 	var programName, programTypeStr, objectPath, pinPath string
-	var attachFunc, globalDataJSON, imageSourceJSON, owner, description, tagsStr sql.NullString
+	var attachFunc, globalDataJSON, mapPinPath, imageSourceJSON, owner, description, tagsStr sql.NullString
 	var mapOwnerID sql.NullInt64
 	var createdAtStr string
 
@@ -613,6 +619,7 @@ func (s *sqliteStore) scanProgram(row *sql.Row) (bpfman.Program, error) {
 		&attachFunc,
 		&globalDataJSON,
 		&mapOwnerID,
+		&mapPinPath,
 		&imageSourceJSON,
 		&owner,
 		&description,
@@ -629,11 +636,15 @@ func (s *sqliteStore) scanProgram(row *sql.Row) (bpfman.Program, error) {
 	// Parse nullable scalar fields
 	var attachFuncVal string
 	var mapOwnerIDVal uint32
+	var mapPinPathVal string
 	if attachFunc.Valid {
 		attachFuncVal = attachFunc.String
 	}
 	if mapOwnerID.Valid {
 		mapOwnerIDVal = uint32(mapOwnerID.Int64)
+	}
+	if mapPinPath.Valid {
+		mapPinPathVal = mapPinPath.String
 	}
 
 	// Parse JSON fields
@@ -660,6 +671,7 @@ func (s *sqliteStore) scanProgram(row *sql.Row) (bpfman.Program, error) {
 		ImageSource: imageSource,
 		AttachFunc:  attachFuncVal,
 		MapOwnerID:  mapOwnerIDVal,
+		MapPinPath:  mapPinPathVal,
 	}
 	if owner.Valid {
 		prog.Owner = owner.String
@@ -727,6 +739,10 @@ func (s *sqliteStore) Save(ctx context.Context, kernelID uint32, metadata bpfman
 	if metadata.MapOwnerID != 0 {
 		mapOwnerID = sql.NullInt64{Int64: int64(metadata.MapOwnerID), Valid: true}
 	}
+	var mapPinPath sql.NullString
+	if metadata.MapPinPath != "" {
+		mapPinPath = sql.NullString{String: metadata.MapPinPath, Valid: true}
+	}
 	var attachFunc, owner, description sql.NullString
 	if metadata.AttachFunc != "" {
 		attachFunc = sql.NullString{String: metadata.AttachFunc, Valid: true}
@@ -748,6 +764,7 @@ func (s *sqliteStore) Save(ctx context.Context, kernelID uint32, metadata bpfman
 		attachFunc,
 		globalDataJSON,
 		mapOwnerID,
+		mapPinPath,
 		imageSourceJSON,
 		owner,
 		description,
@@ -817,6 +834,20 @@ func (s *sqliteStore) Delete(ctx context.Context, kernelID uint32) error {
 	return nil
 }
 
+// CountDependentPrograms returns the number of programs that share maps with
+// the given program (i.e., programs where map_owner_id = kernelID).
+func (s *sqliteStore) CountDependentPrograms(ctx context.Context, kernelID uint32) (int, error) {
+	start := time.Now()
+	var count int
+	err := s.stmtCountDependentPrograms.QueryRowContext(ctx, kernelID).Scan(&count)
+	if err != nil {
+		s.logger.Debug("sql", "stmt", "CountDependentPrograms", "args", []any{kernelID}, "duration_ms", msec(time.Since(start)), "error", err)
+		return 0, err
+	}
+	s.logger.Debug("sql", "stmt", "CountDependentPrograms", "args", []any{kernelID}, "duration_ms", msec(time.Since(start)), "count", count)
+	return count, nil
+}
+
 // List returns all program metadata.
 func (s *sqliteStore) List(ctx context.Context) (map[uint32]bpfman.Program, error) {
 	start := time.Now()
@@ -859,7 +890,7 @@ func (s *sqliteStore) List(ctx context.Context) (map[uint32]bpfman.Program, erro
 func (s *sqliteStore) scanProgramFromRows(rows *sql.Rows) (uint32, bpfman.Program, error) {
 	var kernelID uint32
 	var programName, programTypeStr, objectPath, pinPath string
-	var attachFunc, globalDataJSON, imageSourceJSON, owner, description, tagsStr sql.NullString
+	var attachFunc, globalDataJSON, mapPinPath, imageSourceJSON, owner, description, tagsStr sql.NullString
 	var mapOwnerID sql.NullInt64
 	var createdAtStr string
 
@@ -872,6 +903,7 @@ func (s *sqliteStore) scanProgramFromRows(rows *sql.Rows) (uint32, bpfman.Progra
 		&attachFunc,
 		&globalDataJSON,
 		&mapOwnerID,
+		&mapPinPath,
 		&imageSourceJSON,
 		&owner,
 		&description,
@@ -888,11 +920,15 @@ func (s *sqliteStore) scanProgramFromRows(rows *sql.Rows) (uint32, bpfman.Progra
 	// Parse nullable scalar fields
 	var attachFuncVal string
 	var mapOwnerIDVal uint32
+	var mapPinPathVal string
 	if attachFunc.Valid {
 		attachFuncVal = attachFunc.String
 	}
 	if mapOwnerID.Valid {
 		mapOwnerIDVal = uint32(mapOwnerID.Int64)
+	}
+	if mapPinPath.Valid {
+		mapPinPathVal = mapPinPath.String
 	}
 
 	// Parse JSON fields
@@ -919,6 +955,7 @@ func (s *sqliteStore) scanProgramFromRows(rows *sql.Rows) (uint32, bpfman.Progra
 		ImageSource: imageSource,
 		AttachFunc:  attachFuncVal,
 		MapOwnerID:  mapOwnerIDVal,
+		MapPinPath:  mapPinPathVal,
 	}
 	if owner.Valid {
 		prog.Owner = owner.String
@@ -1698,6 +1735,7 @@ func (s *sqliteStore) RunInTransaction(ctx context.Context, fn func(interpreter.
 		stmtListPrograms:               tx.StmtContext(ctx, s.stmtListPrograms),
 		stmtFindProgramByMetadata:      tx.StmtContext(ctx, s.stmtFindProgramByMetadata),
 		stmtFindAllProgramsByMetadata:  tx.StmtContext(ctx, s.stmtFindAllProgramsByMetadata),
+		stmtCountDependentPrograms:     tx.StmtContext(ctx, s.stmtCountDependentPrograms),
 		// Tag statements
 		stmtInsertTag:  tx.StmtContext(ctx, s.stmtInsertTag),
 		stmtDeleteTags: tx.StmtContext(ctx, s.stmtDeleteTags),

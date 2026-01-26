@@ -565,3 +565,169 @@ func TestDispatcherStore_DifferentInterfaces(t *testing.T) {
 	require.NoError(t, err, "GetDispatcher (ifindex 2) failed")
 	assert.Equal(t, uint32(102), got2.KernelID)
 }
+
+// ----------------------------------------------------------------------------
+// Map Ownership Tests
+// ----------------------------------------------------------------------------
+
+func TestMapOwnership_CountDependentPrograms(t *testing.T) {
+	store, err := sqlite.NewInMemory(testLogger())
+	require.NoError(t, err, "failed to create store")
+	defer store.Close()
+
+	ctx := context.Background()
+
+	// Create the owner program (first program from an image).
+	ownerID := uint32(100)
+	ownerProg := testProgram()
+	ownerProg.ProgramName = "kprobe_counter"
+	ownerProg.MapPinPath = "/sys/fs/bpf/bpfman/100"
+	require.NoError(t, store.Save(ctx, ownerID, ownerProg), "Save owner failed")
+
+	// Initially no dependents.
+	count, err := store.CountDependentPrograms(ctx, ownerID)
+	require.NoError(t, err, "CountDependentPrograms failed")
+	assert.Equal(t, 0, count, "expected 0 dependents initially")
+
+	// Create dependent programs that share the owner's maps.
+	for i := uint32(1); i <= 3; i++ {
+		depProg := testProgram()
+		depProg.ProgramName = "dependent_" + string(rune('0'+i))
+		depProg.MapOwnerID = ownerID
+		depProg.MapPinPath = "/sys/fs/bpf/bpfman/100" // Same as owner
+		require.NoError(t, store.Save(ctx, 100+i, depProg), "Save dependent %d failed", i)
+	}
+
+	// Now we should have 3 dependents.
+	count, err = store.CountDependentPrograms(ctx, ownerID)
+	require.NoError(t, err, "CountDependentPrograms failed")
+	assert.Equal(t, 3, count, "expected 3 dependents")
+
+	// Delete one dependent.
+	require.NoError(t, store.Delete(ctx, 101), "Delete dependent failed")
+
+	// Now we should have 2 dependents.
+	count, err = store.CountDependentPrograms(ctx, ownerID)
+	require.NoError(t, err, "CountDependentPrograms failed")
+	assert.Equal(t, 2, count, "expected 2 dependents after delete")
+}
+
+func TestMapOwnership_ForeignKeyPreventsDeletingOwner(t *testing.T) {
+	store, err := sqlite.NewInMemory(testLogger())
+	require.NoError(t, err, "failed to create store")
+	defer store.Close()
+
+	ctx := context.Background()
+
+	// Create the owner program.
+	ownerID := uint32(100)
+	ownerProg := testProgram()
+	ownerProg.ProgramName = "owner"
+	ownerProg.MapPinPath = "/sys/fs/bpf/bpfman/100"
+	require.NoError(t, store.Save(ctx, ownerID, ownerProg), "Save owner failed")
+
+	// Create a dependent program.
+	depProg := testProgram()
+	depProg.ProgramName = "dependent"
+	depProg.MapOwnerID = ownerID
+	depProg.MapPinPath = "/sys/fs/bpf/bpfman/100"
+	require.NoError(t, store.Save(ctx, 101, depProg), "Save dependent failed")
+
+	// Attempt to delete the owner while dependent exists - should fail due to FK.
+	err = store.Delete(ctx, ownerID)
+	require.Error(t, err, "expected FK constraint violation when deleting owner")
+	assert.Contains(t, err.Error(), "FOREIGN KEY constraint failed",
+		"expected FK constraint error, got: %v", err)
+
+	// Delete the dependent first.
+	require.NoError(t, store.Delete(ctx, 101), "Delete dependent failed")
+
+	// Now we can delete the owner.
+	require.NoError(t, store.Delete(ctx, ownerID), "Delete owner failed after dependents removed")
+}
+
+func TestMapOwnership_MapPinPathPersisted(t *testing.T) {
+	store, err := sqlite.NewInMemory(testLogger())
+	require.NoError(t, err, "failed to create store")
+	defer store.Close()
+
+	ctx := context.Background()
+
+	// Create a program with MapPinPath set.
+	kernelID := uint32(42)
+	prog := testProgram()
+	prog.MapPinPath = "/sys/fs/bpf/bpfman/42"
+
+	require.NoError(t, store.Save(ctx, kernelID, prog), "Save failed")
+
+	// Retrieve and verify MapPinPath is persisted.
+	got, err := store.Get(ctx, kernelID)
+	require.NoError(t, err, "Get failed")
+	assert.Equal(t, "/sys/fs/bpf/bpfman/42", got.MapPinPath, "MapPinPath mismatch")
+}
+
+func TestMapOwnership_MapOwnerIDPersisted(t *testing.T) {
+	store, err := sqlite.NewInMemory(testLogger())
+	require.NoError(t, err, "failed to create store")
+	defer store.Close()
+
+	ctx := context.Background()
+
+	// Create the owner program first.
+	ownerID := uint32(100)
+	ownerProg := testProgram()
+	ownerProg.ProgramName = "owner"
+	require.NoError(t, store.Save(ctx, ownerID, ownerProg), "Save owner failed")
+
+	// Create a dependent program with MapOwnerID set.
+	depID := uint32(101)
+	depProg := testProgram()
+	depProg.ProgramName = "dependent"
+	depProg.MapOwnerID = ownerID
+	depProg.MapPinPath = "/sys/fs/bpf/bpfman/100"
+
+	require.NoError(t, store.Save(ctx, depID, depProg), "Save dependent failed")
+
+	// Retrieve and verify MapOwnerID is persisted.
+	got, err := store.Get(ctx, depID)
+	require.NoError(t, err, "Get failed")
+	assert.Equal(t, ownerID, got.MapOwnerID, "MapOwnerID mismatch")
+}
+
+func TestMapOwnership_ListIncludesMapFields(t *testing.T) {
+	store, err := sqlite.NewInMemory(testLogger())
+	require.NoError(t, err, "failed to create store")
+	defer store.Close()
+
+	ctx := context.Background()
+
+	// Create owner.
+	ownerID := uint32(100)
+	ownerProg := testProgram()
+	ownerProg.ProgramName = "owner"
+	ownerProg.MapPinPath = "/sys/fs/bpf/bpfman/100"
+	require.NoError(t, store.Save(ctx, ownerID, ownerProg), "Save owner failed")
+
+	// Create dependent.
+	depID := uint32(101)
+	depProg := testProgram()
+	depProg.ProgramName = "dependent"
+	depProg.MapOwnerID = ownerID
+	depProg.MapPinPath = "/sys/fs/bpf/bpfman/100"
+	require.NoError(t, store.Save(ctx, depID, depProg), "Save dependent failed")
+
+	// List all programs.
+	programs, err := store.List(ctx)
+	require.NoError(t, err, "List failed")
+	require.Len(t, programs, 2, "expected 2 programs")
+
+	// Verify owner has MapPinPath but no MapOwnerID.
+	owner := programs[ownerID]
+	assert.Equal(t, "/sys/fs/bpf/bpfman/100", owner.MapPinPath, "owner MapPinPath mismatch")
+	assert.Equal(t, uint32(0), owner.MapOwnerID, "owner should have no MapOwnerID")
+
+	// Verify dependent has both fields.
+	dep := programs[depID]
+	assert.Equal(t, "/sys/fs/bpf/bpfman/100", dep.MapPinPath, "dependent MapPinPath mismatch")
+	assert.Equal(t, ownerID, dep.MapOwnerID, "dependent MapOwnerID mismatch")
+}

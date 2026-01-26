@@ -250,7 +250,17 @@ func (f *fakeKernel) Load(_ context.Context, spec bpfman.LoadSpec) (bpfman.Manag
 	id := f.nextID.Add(1)
 	// Compute paths the same way the real kernel does - using kernel ID
 	progPinPath := fmt.Sprintf("%s/prog_%d", spec.PinPath(), id)
-	mapsDir := fmt.Sprintf("%s/maps/%d", spec.PinPath(), id)
+
+	// Map sharing: if MapOwnerID is set, use the owner's maps directory
+	var mapsDir string
+	if spec.MapOwnerID() != 0 {
+		// Share maps with the owner program
+		mapsDir = fmt.Sprintf("%s/maps/%d", spec.PinPath(), spec.MapOwnerID())
+	} else {
+		// Own maps - use our kernel ID
+		mapsDir = fmt.Sprintf("%s/maps/%d", spec.PinPath(), id)
+	}
+
 	fp := fakeProgram{
 		id:          id,
 		name:        spec.ProgramName(),
@@ -277,7 +287,8 @@ func (f *fakeKernel) Load(_ context.Context, spec bpfman.LoadSpec) (bpfman.Manag
 
 func (f *fakeKernel) Unload(_ context.Context, pinPath string) error {
 	for id, p := range f.programs {
-		if p.pinDir == pinPath {
+		// Match by either program pin path or maps directory
+		if p.pinPath == pinPath || p.pinDir == pinPath {
 			delete(f.programs, id)
 			f.recordOp("unload", p.name, id, nil)
 			return nil
@@ -3709,4 +3720,96 @@ func TestGetLink_NonExistentLink_ReturnsNotFound(t *testing.T) {
 	st, ok := status.FromError(err)
 	require.True(t, ok, "error should be a gRPC status")
 	assert.Equal(t, codes.NotFound, st.Code(), "should return NotFound")
+}
+
+// ----------------------------------------------------------------------------
+// Map Sharing Tests
+// ----------------------------------------------------------------------------
+
+// TestMapSharing_MultiProgramLoad_FirstIsOwner verifies that:
+//
+//	Given a Load request with multiple programs (like from an OCI image),
+//	When all programs are successfully loaded,
+//	Then the first program has no MapOwnerID (it owns the maps),
+//	And subsequent programs have MapOwnerID set to the first program's ID,
+//	And all programs share the same MapPinPath.
+func TestMapSharing_MultiProgramLoad_FirstIsOwner(t *testing.T) {
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	req := &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_File{File: "/path/to/multi.o"},
+		},
+		Info: []*pb.LoadInfo{
+			{Name: "kprobe_counter", ProgramType: pb.BpfmanProgramType_KPROBE},
+			{Name: "tracepoint_counter", ProgramType: pb.BpfmanProgramType_TRACEPOINT},
+			{Name: "xdp_stats", ProgramType: pb.BpfmanProgramType_XDP},
+		},
+		Metadata: map[string]string{
+			"bpfman.io/ProgramName": "multi-prog-image",
+		},
+	}
+
+	resp, err := fix.Server.Load(ctx, req)
+	require.NoError(t, err, "Load should succeed")
+	require.Len(t, resp.Programs, 3, "expected 3 programs")
+
+	// Get detailed info for each program
+	ownerID := resp.Programs[0].KernelInfo.Id
+	ownerResp, err := fix.Server.Get(ctx, &pb.GetRequest{Id: ownerID})
+	require.NoError(t, err, "Get owner failed")
+
+	// First program is the map owner - MapOwnerId should be 0 (not set)
+	assert.Zero(t, ownerResp.Info.MapOwnerId, "first program should have no MapOwnerId (it owns the maps)")
+	assert.NotEmpty(t, ownerResp.Info.MapPinPath, "first program should have MapPinPath set")
+	ownerMapPinPath := ownerResp.Info.MapPinPath
+
+	// Check subsequent programs
+	for i := 1; i < len(resp.Programs); i++ {
+		progID := resp.Programs[i].KernelInfo.Id
+		progResp, err := fix.Server.Get(ctx, &pb.GetRequest{Id: progID})
+		require.NoError(t, err, "Get program %d failed", i)
+
+		// Subsequent programs should reference the owner
+		assert.Equal(t, ownerID, progResp.Info.GetMapOwnerId(),
+			"program %d should have MapOwnerId set to owner's ID", i)
+		// All programs share the same maps directory
+		assert.Equal(t, ownerMapPinPath, progResp.Info.MapPinPath,
+			"program %d should share owner's MapPinPath", i)
+	}
+}
+
+// TestMapSharing_SingleProgram_NoMapOwner verifies that:
+//
+//	Given a Load request with a single program,
+//	When it is successfully loaded,
+//	Then MapOwnerID is 0 (it owns its own maps).
+func TestMapSharing_SingleProgram_NoMapOwner(t *testing.T) {
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	req := &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_File{File: "/path/to/single.o"},
+		},
+		Info: []*pb.LoadInfo{
+			{Name: "single_prog", ProgramType: pb.BpfmanProgramType_KPROBE},
+		},
+		Metadata: map[string]string{
+			"bpfman.io/ProgramName": "single-program",
+		},
+	}
+
+	resp, err := fix.Server.Load(ctx, req)
+	require.NoError(t, err, "Load should succeed")
+	require.Len(t, resp.Programs, 1, "expected 1 program")
+
+	progID := resp.Programs[0].KernelInfo.Id
+	getResp, err := fix.Server.Get(ctx, &pb.GetRequest{Id: progID})
+	require.NoError(t, err, "Get failed")
+
+	// Single program owns its own maps
+	assert.Zero(t, getResp.Info.MapOwnerId, "single program should have no MapOwnerID")
+	assert.NotEmpty(t, getResp.Info.MapPinPath, "single program should have MapPinPath set")
 }

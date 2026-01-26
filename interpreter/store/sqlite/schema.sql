@@ -13,11 +13,16 @@ CREATE TABLE IF NOT EXISTS managed_programs (
     pin_path TEXT NOT NULL,
     attach_func TEXT,
     global_data TEXT,            -- JSON map<string, bytes>, opaque
-    map_owner_id INTEGER,
+    map_owner_id INTEGER,        -- Self-reference: program that owns shared maps
+    map_pin_path TEXT,           -- Directory where maps are pinned
     image_source TEXT,           -- JSON ImageSource struct, NULL if file-loaded
     owner TEXT,
     description TEXT,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+
+    FOREIGN KEY (map_owner_id)
+        REFERENCES managed_programs(kernel_id)
+        ON DELETE RESTRICT       -- Prevent deleting owner while dependents exist
 ) STRICT;
 
 -- Tags table for program tags (one-to-many)

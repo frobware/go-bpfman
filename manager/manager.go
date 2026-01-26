@@ -121,7 +121,8 @@ func (m *Manager) Load(ctx context.Context, spec bpfman.LoadSpec, opts LoadOpts)
 		ProgramName:  spec.ProgramName(),
 		ProgramType:  loaded.Managed.Type,
 		ObjectPath:   spec.ObjectPath(),
-		PinPath:      loaded.Managed.PinDir, // Store maps directory for CSI/unload
+		PinPath:      loaded.Managed.PinPath,
+		MapPinPath:   loaded.Managed.PinDir, // Maps directory for CSI/unload
 		GlobalData:   spec.GlobalData(),
 		ImageSource:  spec.ImageSource(),
 		AttachFunc:   spec.AttachFunc(),

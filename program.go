@@ -119,8 +119,9 @@ type Program struct {
 	// Load-time configuration (stored for reference/potential reload)
 	GlobalData  map[string][]byte `json:"global_data,omitempty"`
 	ImageSource *ImageSource      `json:"image_source,omitempty"`
-	AttachFunc  string            `json:"attach_func,omitempty"` // For fentry/fexit
-	MapOwnerID  uint32            `json:"map_owner_id,omitempty"`
+	AttachFunc  string            `json:"attach_func,omitempty"`  // For fentry/fexit
+	MapOwnerID  uint32            `json:"map_owner_id,omitempty"` // Program that owns shared maps (0 = self)
+	MapPinPath  string            `json:"map_pin_path,omitempty"` // Directory where maps are pinned
 
 	// Management metadata
 	Tags         []string          `json:"tags,omitempty"`

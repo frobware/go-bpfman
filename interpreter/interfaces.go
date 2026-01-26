@@ -104,12 +104,21 @@ type ProgramFinder interface {
 	FindProgramByMetadata(ctx context.Context, key, value string) (bpfman.Program, uint32, error)
 }
 
+// MapOwnershipReader provides access to map ownership information.
+type MapOwnershipReader interface {
+	// CountDependentPrograms returns the number of programs that share maps
+	// with the given program (i.e., programs where map_owner_id = kernelID).
+	// This is used to determine if a program's maps can be safely deleted.
+	CountDependentPrograms(ctx context.Context, kernelID uint32) (int, error)
+}
+
 // ProgramStore combines all store operations.
 type ProgramStore interface {
 	ProgramReader
 	ProgramWriter
 	ProgramLister
 	ProgramFinder
+	MapOwnershipReader
 }
 
 // KernelSource provides access to kernel BPF objects.
