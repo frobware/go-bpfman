@@ -14,10 +14,15 @@ import (
 	"github.com/frobware/go-bpfman"
 )
 
-// ProgramStore provides metadata lookup for BPF programs.
-type ProgramStore interface {
-	// FindProgramByMetadata finds a program by a metadata key/value pair.
-	FindProgramByMetadata(ctx context.Context, key, value string) (bpfman.Program, uint32, error)
+// ProgramFinder finds BPF programs by metadata.
+// The implementation should reconcile DB state with kernel state,
+// returning only programs that exist in both.
+type ProgramFinder interface {
+	// FindLoadedProgramByMetadata finds a program by a metadata key/value pair.
+	// Only programs that exist in both the database and the kernel are considered.
+	// Returns an error if multiple programs match (data inconsistency) or if
+	// no matching program is found.
+	FindLoadedProgramByMetadata(ctx context.Context, key, value string) (bpfman.Program, uint32, error)
 }
 
 // KernelOperations provides BPF map operations.
@@ -37,9 +42,9 @@ type Driver struct {
 	endpoint string // CSI socket endpoint (unix:// or tcp://).
 	logger   *slog.Logger
 
-	// store provides program metadata lookups. When nil, the driver
+	// programFinder provides reconciled program lookups. When nil, the driver
 	// operates in simple bind-mount mode without bpfman integration.
-	store ProgramStore
+	programFinder ProgramFinder
 
 	// kernel provides BPF map operations. When nil, map re-pinning
 	// is unavailable.
@@ -54,10 +59,10 @@ type Driver struct {
 // Option configures the Driver.
 type Option func(*Driver)
 
-// WithStore configures the program store for metadata lookups.
-func WithStore(store ProgramStore) Option {
+// WithProgramFinder configures the program finder for metadata lookups.
+func WithProgramFinder(finder ProgramFinder) Option {
 	return func(d *Driver) {
-		d.store = store
+		d.programFinder = finder
 	}
 }
 

@@ -109,6 +109,10 @@ func Run(ctx context.Context, cfg RunConfig) error {
 		return fmt.Errorf("failed to create image puller: %w", err)
 	}
 
+	// Create manager for orchestrating store + kernel operations.
+	// The manager is needed by CSI for reconciled program lookups.
+	mgr := manager.New(dirs, st, kernel, logger)
+
 	// Track CSI driver for graceful shutdown
 	var csiDriver *driver.Driver
 
@@ -130,7 +134,7 @@ func Run(ctx context.Context, cfg RunConfig) error {
 			nodeID,
 			"unix://"+csiSocketPath,
 			logger,
-			driver.WithStore(st),
+			driver.WithProgramFinder(mgr),
 			driver.WithKernel(kernel),
 		)
 
@@ -155,7 +159,7 @@ func Run(ctx context.Context, cfg RunConfig) error {
 	}()
 
 	// Start bpfman gRPC server
-	srv := newWithStore(dirs, st, puller, logger)
+	srv := newWithStore(dirs, st, puller, mgr, logger)
 	return srv.serve(ctx, dirs.SocketPath(), cfg.TCPAddress)
 }
 
@@ -173,8 +177,8 @@ type Server struct {
 	logger   *slog.Logger
 }
 
-// newWithStore creates a new bpfman gRPC server with a pre-configured store.
-func newWithStore(dirs config.RuntimeDirs, store interpreter.Store, puller interpreter.ImagePuller, logger *slog.Logger) *Server {
+// newWithStore creates a new bpfman gRPC server with a pre-configured store and manager.
+func newWithStore(dirs config.RuntimeDirs, store interpreter.Store, puller interpreter.ImagePuller, mgr *manager.Manager, logger *slog.Logger) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -184,6 +188,7 @@ func newWithStore(dirs config.RuntimeDirs, store interpreter.Store, puller inter
 		store:    store,
 		puller:   puller,
 		netIface: DefaultNetIfaceResolver{},
+		mgr:      mgr,
 		logger:   logger.With("component", "server"),
 	}
 }
@@ -209,6 +214,11 @@ func New(dirs config.RuntimeDirs, store interpreter.Store, kernel interpreter.Ke
 func (s *Server) Load(ctx context.Context, req *pb.LoadRequest) (*pb.LoadResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if err := s.mgr.GCIfNeeded(ctx, true); err != nil {
+		return nil, status.Errorf(codes.Internal, "gc: %v", err)
+	}
+	defer s.mgr.MarkMutated()
 
 	if req.Bytecode == nil {
 		return nil, status.Error(codes.InvalidArgument, "bytecode location is required")
@@ -418,6 +428,11 @@ func (s *Server) Unload(ctx context.Context, req *pb.UnloadRequest) (*pb.UnloadR
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if err := s.mgr.GCIfNeeded(ctx, true); err != nil {
+		return nil, status.Errorf(codes.Internal, "gc: %v", err)
+	}
+	defer s.mgr.MarkMutated()
+
 	if err := s.mgr.Unload(ctx, req.Id); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return nil, status.Errorf(codes.NotFound, "program with ID %d not found", req.Id)
@@ -432,6 +447,11 @@ func (s *Server) Unload(ctx context.Context, req *pb.UnloadRequest) (*pb.UnloadR
 func (s *Server) Attach(ctx context.Context, req *pb.AttachRequest) (*pb.AttachResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if err := s.mgr.GCIfNeeded(ctx, true); err != nil {
+		return nil, status.Errorf(codes.Internal, "gc: %v", err)
+	}
+	defer s.mgr.MarkMutated()
 
 	if req.Attach == nil {
 		return nil, status.Error(codes.InvalidArgument, "attach info is required")
@@ -727,6 +747,11 @@ func (s *Server) Detach(ctx context.Context, req *pb.DetachRequest) (*pb.DetachR
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if err := s.mgr.GCIfNeeded(ctx, true); err != nil {
+		return nil, status.Errorf(codes.Internal, "gc: %v", err)
+	}
+	defer s.mgr.MarkMutated()
+
 	if err := s.mgr.Detach(ctx, req.LinkId); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return nil, status.Errorf(codes.NotFound, "link with ID %d not found", req.LinkId)
@@ -739,19 +764,24 @@ func (s *Server) Detach(ctx context.Context, req *pb.DetachRequest) (*pb.DetachR
 
 // List implements the List RPC method.
 func (s *Server) List(ctx context.Context, req *pb.ListRequest) (*pb.ListResponse, error) {
+	if err := s.mgr.GCIfNeeded(ctx, false); err != nil {
+		return nil, status.Errorf(codes.Internal, "gc: %v", err)
+	}
+
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	stored, err := s.store.List(ctx)
+	// Get reconciled list (programs in both DB and kernel)
+	loaded, err := s.mgr.ListLoadedPrograms(ctx)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to list programs: %v", err)
 	}
 
 	var results []*pb.ListResponse_ListResult
 
-	for kernelID, metadata := range stored {
+	for _, lp := range loaded {
 		// Filter by program type if specified
-		if req.ProgramType != nil && *req.ProgramType != uint32(metadata.ProgramType) {
+		if req.ProgramType != nil && *req.ProgramType != uint32(lp.Program.ProgramType) {
 			continue
 		}
 
@@ -759,7 +789,7 @@ func (s *Server) List(ctx context.Context, req *pb.ListRequest) (*pb.ListRespons
 		if len(req.MatchMetadata) > 0 {
 			match := true
 			for k, v := range req.MatchMetadata {
-				if metadata.UserMetadata[k] != v {
+				if lp.Program.UserMetadata[k] != v {
 					match = false
 					break
 				}
@@ -769,37 +799,29 @@ func (s *Server) List(ctx context.Context, req *pb.ListRequest) (*pb.ListRespons
 			}
 		}
 
-		// Query kernel for actual program info
-		kp, err := s.kernel.GetProgramByID(ctx, kernelID)
-		if err != nil {
-			// Program exists in store but not in kernel - skip (needs reconciliation)
-			s.logger.Warn("program in store but not in kernel", "kernel_id", kernelID, "error", err)
-			continue
-		}
-
 		info := &pb.ProgramInfo{
-			Name:       metadata.ProgramName,
-			Bytecode:   &pb.BytecodeLocation{Location: &pb.BytecodeLocation_File{File: metadata.ObjectPath}},
-			Metadata:   metadata.UserMetadata,
-			GlobalData: metadata.GlobalData,
-			MapPinPath: metadata.MapPinPath,
+			Name:       lp.Program.ProgramName,
+			Bytecode:   &pb.BytecodeLocation{Location: &pb.BytecodeLocation_File{File: lp.Program.ObjectPath}},
+			Metadata:   lp.Program.UserMetadata,
+			GlobalData: lp.Program.GlobalData,
+			MapPinPath: lp.Program.MapPinPath,
 		}
-		if metadata.MapOwnerID != 0 {
-			info.MapOwnerId = &metadata.MapOwnerID
+		if lp.Program.MapOwnerID != 0 {
+			info.MapOwnerId = &lp.Program.MapOwnerID
 		}
 
 		results = append(results, &pb.ListResponse_ListResult{
 			Info: info,
 			KernelInfo: &pb.KernelProgramInfo{
-				Id:          kernelID,
-				Name:        kp.Name,
-				ProgramType: uint32(metadata.ProgramType),
-				Tag:         kp.Tag,
-				LoadedAt:    kp.LoadedAt.Format(time.RFC3339),
-				MapIds:      kp.MapIDs,
-				BtfId:       kp.BTFId,
-				BytesXlated: kp.XlatedSize,
-				BytesJited:  kp.JitedSize,
+				Id:          lp.KernelID,
+				Name:        lp.KernelInfo.Name,
+				ProgramType: uint32(lp.Program.ProgramType),
+				Tag:         lp.KernelInfo.Tag,
+				LoadedAt:    lp.KernelInfo.LoadedAt.Format(time.RFC3339),
+				MapIds:      lp.KernelInfo.MapIDs,
+				BtfId:       lp.KernelInfo.BTFId,
+				BytesXlated: lp.KernelInfo.XlatedSize,
+				BytesJited:  lp.KernelInfo.JitedSize,
 			},
 		})
 	}
@@ -809,6 +831,10 @@ func (s *Server) List(ctx context.Context, req *pb.ListRequest) (*pb.ListRespons
 
 // Get implements the Get RPC method.
 func (s *Server) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, error) {
+	if err := s.mgr.GCIfNeeded(ctx, false); err != nil {
+		return nil, status.Errorf(codes.Internal, "gc: %v", err)
+	}
+
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -907,6 +933,10 @@ func (s *Server) PullBytecode(ctx context.Context, req *pb.PullBytecodeRequest) 
 
 // ListLinks implements the ListLinks RPC method.
 func (s *Server) ListLinks(ctx context.Context, req *pb.ListLinksRequest) (*pb.ListLinksResponse, error) {
+	if err := s.mgr.GCIfNeeded(ctx, false); err != nil {
+		return nil, status.Errorf(codes.Internal, "gc: %v", err)
+	}
+
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -936,6 +966,10 @@ func (s *Server) ListLinks(ctx context.Context, req *pb.ListLinksRequest) (*pb.L
 
 // GetLink implements the GetLink RPC method.
 func (s *Server) GetLink(ctx context.Context, req *pb.GetLinkRequest) (*pb.GetLinkResponse, error) {
+	if err := s.mgr.GCIfNeeded(ctx, false); err != nil {
+		return nil, status.Errorf(codes.Internal, "gc: %v", err)
+	}
+
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -1117,8 +1151,19 @@ func (s *Server) serve(ctx context.Context, socketPath, tcpAddr string) error {
 		}
 	}
 
-	// Create manager for transactional load/unload operations
-	s.mgr = manager.New(s.dirs, s.store, s.kernel, s.logger)
+	// Create manager for transactional load/unload operations (if not already set)
+	if s.mgr == nil {
+		s.mgr = manager.New(s.dirs, s.store, s.kernel, s.logger)
+	}
+
+	// GC stale DB entries before accepting requests.
+	// This cleans up entries from previous runs that no longer exist in kernel.
+	s.mu.Lock()
+	_, err := s.mgr.GC(ctx)
+	s.mu.Unlock()
+	if err != nil {
+		return fmt.Errorf("gc: %w", err)
+	}
 
 	// Ensure socket directory exists
 	socketDir := filepath.Dir(socketPath)

@@ -409,7 +409,18 @@ func (f *fakeKernel) Maps(_ context.Context) iter.Seq2[kernel.Map, error] {
 }
 
 func (f *fakeKernel) Links(_ context.Context) iter.Seq2[kernel.Link, error] {
-	return func(yield func(kernel.Link, error) bool) {}
+	return func(yield func(kernel.Link, error) bool) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		for id := range f.links {
+			kl := kernel.Link{
+				ID: id,
+			}
+			if !yield(kl, nil) {
+				return
+			}
+		}
+	}
 }
 
 func (f *fakeKernel) ListPinDir(pinDir string, includeMaps bool) (*kernel.PinDirContents, error) {
@@ -603,6 +614,13 @@ func (f *fakeKernel) AttachXDPDispatcher(ifindex int, pinDir string, numProgs in
 func (f *fakeKernel) AttachXDPDispatcherWithPaths(ifindex int, progPinPath, linkPinPath string, numProgs int, proceedOn uint32, netns string) (*interpreter.XDPDispatcherResult, error) {
 	dispatcherID := f.nextID.Add(1)
 	linkID := f.nextID.Add(1)
+	// Add dispatcher program to programs map so GC sees it as valid
+	f.programs[dispatcherID] = fakeProgram{
+		id:          dispatcherID,
+		name:        "xdp_dispatcher",
+		programType: bpfman.ProgramTypeXDP,
+		pinPath:     progPinPath,
+	}
 	return &interpreter.XDPDispatcherResult{
 		DispatcherID:  dispatcherID,
 		LinkID:        linkID,
@@ -637,6 +655,13 @@ func (f *fakeKernel) AttachXDPExtension(dispatcherPinPath, objectPath, programNa
 func (f *fakeKernel) AttachTCDispatcherWithPaths(ifindex int, progPinPath, linkPinPath, direction string, numProgs int, proceedOn uint32, netns string) (*interpreter.TCDispatcherResult, error) {
 	dispatcherID := f.nextID.Add(1)
 	linkID := f.nextID.Add(1)
+	// Add dispatcher program to programs map so GC sees it as valid
+	f.programs[dispatcherID] = fakeProgram{
+		id:          dispatcherID,
+		name:        "tc_dispatcher",
+		programType: bpfman.ProgramTypeTC,
+		pinPath:     progPinPath,
+	}
 	return &interpreter.TCDispatcherResult{
 		DispatcherID:  dispatcherID,
 		LinkID:        linkID,
@@ -690,7 +715,14 @@ func (f *fakeKernel) AttachTCX(ifindex int, direction, programPinPath, linkPinPa
 }
 
 func (f *fakeKernel) RemovePin(path string) error {
-	return nil // Fake implementation - no-op
+	// Remove programs matching this pin path (for dispatcher cleanup)
+	for id, prog := range f.programs {
+		if prog.pinPath == path {
+			delete(f.programs, id)
+			break
+		}
+	}
+	return nil
 }
 
 func (f *fakeKernel) RepinMap(srcPath, dstPath string) error {
@@ -2292,7 +2324,8 @@ func TestXDPDispatcher_FullLifecycle(t *testing.T) {
 	}
 
 	// Verify state after attachments
-	assert.Equal(t, 1, fix.Kernel.ProgramCount(), "should have 1 program")
+	// 2 programs: 1 user XDP program + 1 XDP dispatcher program
+	assert.Equal(t, 2, fix.Kernel.ProgramCount(), "should have 2 programs (user + dispatcher)")
 	assert.Equal(t, numAttachments, fix.Kernel.LinkCount(), "should have %d links", numAttachments)
 
 	// Step 3: Detach all links one by one
@@ -2634,7 +2667,8 @@ func TestTC_FullLifecycle(t *testing.T) {
 	}
 
 	// Verify state after attachments (4 links: 2 interfaces x 2 directions)
-	assert.Equal(t, 1, fix.Kernel.ProgramCount(), "should have 1 program")
+	// 5 programs: 1 user TC program + 4 TC dispatchers (2 interfaces x 2 directions)
+	assert.Equal(t, 5, fix.Kernel.ProgramCount(), "should have 5 programs (user + 4 dispatchers)")
 	assert.Equal(t, 4, fix.Kernel.LinkCount(), "should have 4 links")
 
 	// Step 3: Detach all links

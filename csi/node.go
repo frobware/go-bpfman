@@ -2,6 +2,7 @@ package driver
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -11,6 +12,9 @@ import (
 	"golang.org/x/sys/unix"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"github.com/frobware/go-bpfman/interpreter/store"
+	"github.com/frobware/go-bpfman/manager"
 )
 
 // mapsMode is the permission mode for CSI-exposed maps (owner+group read/write).
@@ -121,19 +125,27 @@ func (d *Driver) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolu
 			"csi.bpfman.io/program and csi.bpfman.io/maps are required")
 	}
 
-	if d.store == nil || d.kernel == nil {
+	if d.programFinder == nil || d.kernel == nil {
 		return nil, status.Error(codes.FailedPrecondition,
-			"bpfman integration not configured; store and kernel required")
+			"bpfman integration not configured; programFinder and kernel required")
 	}
 
-	// 1. Find program by metadata
-	metadata, _, err := d.store.FindProgramByMetadata(ctx, MetadataKeyProgramName, programName)
+	// 1. Find program by metadata (reconciled with kernel state)
+	metadata, _, err := d.programFinder.FindLoadedProgramByMetadata(ctx, MetadataKeyProgramName, programName)
 	if err != nil {
 		d.logger.Error("failed to find program",
 			"programName", programName,
 			"error", err,
 		)
-		return nil, status.Errorf(codes.NotFound, "program %q not found: %v", programName, err)
+		// Return appropriate gRPC code based on error type
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			return nil, status.Errorf(codes.NotFound, "program %q not found", programName)
+		case errors.Is(err, manager.ErrMultipleProgramsFound), errors.Is(err, manager.ErrMultipleMapOwners):
+			return nil, status.Errorf(codes.FailedPrecondition, "program %q: %v", programName, err)
+		default:
+			return nil, status.Errorf(codes.Internal, "failed to find program %q: %v", programName, err)
+		}
 	}
 
 	// 2. Get the maps directory from the program (may differ from PinPath if sharing maps)
