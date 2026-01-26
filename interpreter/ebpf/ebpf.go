@@ -31,8 +31,8 @@ import (
 // generated in the range 0x80000000-0xFFFFFFFF to avoid collision with real
 // kernel link IDs which are small sequential numbers.
 func generateSyntheticLinkID() uint32 {
-	// Generate random ID in high range (0x80000000+)
-	return 0x80000000 | rand.Uint32()
+	// Generate random ID in high range (SyntheticLinkIDBase+)
+	return bpfman.SyntheticLinkIDBase | rand.Uint32()
 }
 
 // inferProgramType returns the program type based on the ELF section name.

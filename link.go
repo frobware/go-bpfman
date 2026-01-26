@@ -37,6 +37,21 @@ type AttachedLink struct {
 	Type    AttachType `json:"type"`
 }
 
+// SyntheticLinkIDBase is the base value for synthetic link IDs.
+// Synthetic IDs are generated in the range 0x80000000-0xFFFFFFFF for
+// perf_event-based links (e.g., container uprobes) that lack kernel link IDs.
+// Real kernel link IDs are small sequential numbers, so this range avoids
+// collision. GC should skip links with synthetic IDs since they can't be
+// enumerated via the kernel's link iterator.
+const SyntheticLinkIDBase = 0x80000000
+
+// IsSyntheticLinkID returns true if the link ID is synthetic (not from kernel).
+// Synthetic IDs are used for perf_event-based links that cannot be pinned
+// and don't have real kernel link IDs.
+func IsSyntheticLinkID(id uint32) bool {
+	return id >= SyntheticLinkIDBase
+}
+
 // LinkType represents the type of BPF link/attachment.
 type LinkType string
 

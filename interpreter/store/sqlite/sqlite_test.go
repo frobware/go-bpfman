@@ -892,3 +892,381 @@ func TestListTCXLinksByInterface_EmptyResult(t *testing.T) {
 	assert.NotNil(t, links, "result should not be nil")
 	assert.Empty(t, links, "result should be empty")
 }
+
+// -----------------------------------------------------------------------------
+// GC Tests
+// -----------------------------------------------------------------------------
+
+func TestGC_EmptyStore(t *testing.T) {
+	store, err := sqlite.NewInMemory(testLogger())
+	require.NoError(t, err)
+	defer store.Close()
+
+	ctx := context.Background()
+
+	// GC with empty kernel state on empty store
+	result, err := store.GC(ctx, map[uint32]bool{}, map[uint32]bool{})
+	require.NoError(t, err)
+	assert.Equal(t, 0, result.ProgramsRemoved)
+	assert.Equal(t, 0, result.DispatchersRemoved)
+	assert.Equal(t, 0, result.LinksRemoved)
+}
+
+func TestGC_AllProgramsInKernel(t *testing.T) {
+	store, err := sqlite.NewInMemory(testLogger())
+	require.NoError(t, err)
+	defer store.Close()
+
+	ctx := context.Background()
+
+	// Save a program
+	prog := testProgram()
+	err = store.Save(ctx, 100, prog)
+	require.NoError(t, err)
+
+	// GC with program ID in kernel - nothing should be removed
+	result, err := store.GC(ctx, map[uint32]bool{100: true}, map[uint32]bool{})
+	require.NoError(t, err)
+	assert.Equal(t, 0, result.ProgramsRemoved)
+
+	// Verify program still exists
+	_, err = store.Get(ctx, 100)
+	require.NoError(t, err, "program should still exist")
+}
+
+func TestGC_StalePrograms(t *testing.T) {
+	store, err := sqlite.NewInMemory(testLogger())
+	require.NoError(t, err)
+	defer store.Close()
+
+	ctx := context.Background()
+
+	// Save multiple programs
+	prog := testProgram()
+	err = store.Save(ctx, 100, prog)
+	require.NoError(t, err)
+	err = store.Save(ctx, 101, prog)
+	require.NoError(t, err)
+	err = store.Save(ctx, 102, prog)
+	require.NoError(t, err)
+
+	// GC with only program 100 in kernel - 101 and 102 should be removed
+	result, err := store.GC(ctx, map[uint32]bool{100: true}, map[uint32]bool{})
+	require.NoError(t, err)
+	assert.Equal(t, 2, result.ProgramsRemoved)
+
+	// Verify 100 still exists, 101 and 102 are gone
+	_, err = store.Get(ctx, 100)
+	require.NoError(t, err, "program 100 should still exist")
+	_, err = store.Get(ctx, 101)
+	require.Error(t, err, "program 101 should be deleted")
+	_, err = store.Get(ctx, 102)
+	require.Error(t, err, "program 102 should be deleted")
+}
+
+func TestGC_MapOwnerOrdering(t *testing.T) {
+	// Test that GC correctly handles map_owner_id FK constraint.
+	// Programs with MapOwnerID (dependents) must be deleted before
+	// the programs they reference (owners).
+	store, err := sqlite.NewInMemory(testLogger())
+	require.NoError(t, err)
+	defer store.Close()
+
+	ctx := context.Background()
+
+	// Create owner first (must exist for FK)
+	owner := testProgram()
+	owner.ProgramName = "owner"
+	err = store.Save(ctx, 100, owner)
+	require.NoError(t, err)
+
+	// Create dependents that reference the owner
+	dep1 := testProgram()
+	dep1.ProgramName = "dep1"
+	dep1.MapOwnerID = 100
+	err = store.Save(ctx, 101, dep1)
+	require.NoError(t, err)
+
+	dep2 := testProgram()
+	dep2.ProgramName = "dep2"
+	dep2.MapOwnerID = 100
+	err = store.Save(ctx, 102, dep2)
+	require.NoError(t, err)
+
+	// GC with empty kernel state - all should be removed
+	// If ordering is wrong, FK constraint will fail
+	result, err := store.GC(ctx, map[uint32]bool{}, map[uint32]bool{})
+	require.NoError(t, err, "GC should handle FK ordering correctly")
+	assert.Equal(t, 3, result.ProgramsRemoved)
+
+	// Verify all are gone
+	_, err = store.Get(ctx, 100)
+	require.Error(t, err)
+	_, err = store.Get(ctx, 101)
+	require.Error(t, err)
+	_, err = store.Get(ctx, 102)
+	require.Error(t, err)
+}
+
+func TestGC_StaleDispatchers(t *testing.T) {
+	store, err := sqlite.NewInMemory(testLogger())
+	require.NoError(t, err)
+	defer store.Close()
+
+	ctx := context.Background()
+
+	// Create dispatchers referencing different program IDs
+	disp1 := dispatcher.State{
+		Type:        dispatcher.DispatcherTypeXDP,
+		Nsid:        4026531840,
+		Ifindex:     2,
+		Revision:    1,
+		KernelID:    100,
+		LinkID:      200,
+		LinkPinPath: "/sys/fs/bpf/link",
+		ProgPinPath: "/sys/fs/bpf/prog",
+	}
+	err = store.SaveDispatcher(ctx, disp1)
+	require.NoError(t, err)
+
+	disp2 := dispatcher.State{
+		Type:        dispatcher.DispatcherTypeTCIngress,
+		Nsid:        4026531840,
+		Ifindex:     3,
+		Revision:    1,
+		KernelID:    101,
+		LinkID:      201,
+		LinkPinPath: "/sys/fs/bpf/link2",
+		ProgPinPath: "/sys/fs/bpf/prog2",
+	}
+	err = store.SaveDispatcher(ctx, disp2)
+	require.NoError(t, err)
+
+	// GC with only program 100 in kernel - dispatcher for 101 should be removed
+	result, err := store.GC(ctx, map[uint32]bool{100: true}, map[uint32]bool{})
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.DispatchersRemoved)
+
+	// Verify disp1 still exists, disp2 is gone
+	_, err = store.GetDispatcher(ctx, "xdp", 4026531840, 2)
+	require.NoError(t, err, "dispatcher for program 100 should exist")
+	_, err = store.GetDispatcher(ctx, "tc-ingress", 4026531840, 3)
+	require.Error(t, err, "dispatcher for program 101 should be deleted")
+}
+
+func TestGC_StaleLinks(t *testing.T) {
+	store, err := sqlite.NewInMemory(testLogger())
+	require.NoError(t, err)
+	defer store.Close()
+
+	ctx := context.Background()
+
+	// Create a program first (FK requirement)
+	prog := testProgram()
+	err = store.Save(ctx, 100, prog)
+	require.NoError(t, err)
+
+	// Create links
+	summary1 := bpfman.LinkSummary{
+		LinkType:        bpfman.LinkTypeTracepoint,
+		KernelProgramID: 100,
+		KernelLinkID:    200,
+		CreatedAt:       time.Now(),
+	}
+	details1 := bpfman.TracepointDetails{Group: "syscalls", Name: "sys_enter_openat"}
+	err = store.SaveTracepointLink(ctx, summary1, details1)
+	require.NoError(t, err)
+
+	summary2 := bpfman.LinkSummary{
+		LinkType:        bpfman.LinkTypeTracepoint,
+		KernelProgramID: 100,
+		KernelLinkID:    201,
+		CreatedAt:       time.Now(),
+	}
+	details2 := bpfman.TracepointDetails{Group: "syscalls", Name: "sys_exit_openat"}
+	err = store.SaveTracepointLink(ctx, summary2, details2)
+	require.NoError(t, err)
+
+	// GC with program in kernel but only link 200 in kernel
+	result, err := store.GC(ctx, map[uint32]bool{100: true}, map[uint32]bool{200: true})
+	require.NoError(t, err)
+	assert.Equal(t, 0, result.ProgramsRemoved)
+	assert.Equal(t, 1, result.LinksRemoved)
+
+	// Verify link 200 exists, link 201 is gone
+	links, err := store.ListLinks(ctx)
+	require.NoError(t, err)
+	require.Len(t, links, 1)
+	assert.Equal(t, uint32(200), links[0].KernelLinkID)
+}
+
+func TestGC_Comprehensive(t *testing.T) {
+	// Test GC with mixed stale entries across all types
+	store, err := sqlite.NewInMemory(testLogger())
+	require.NoError(t, err)
+	defer store.Close()
+
+	ctx := context.Background()
+
+	// Create programs: 100 (alive), 101 (stale owner), 102 (stale dependent)
+	prog := testProgram()
+	err = store.Save(ctx, 100, prog)
+	require.NoError(t, err)
+
+	ownerProg := testProgram()
+	ownerProg.ProgramName = "stale_owner"
+	err = store.Save(ctx, 101, ownerProg)
+	require.NoError(t, err)
+
+	depProg := testProgram()
+	depProg.ProgramName = "stale_dep"
+	depProg.MapOwnerID = 101
+	err = store.Save(ctx, 102, depProg)
+	require.NoError(t, err)
+
+	// Create dispatchers: one for alive program, one for stale
+	aliveDisp := dispatcher.State{
+		Type:        dispatcher.DispatcherTypeXDP,
+		Nsid:        4026531840,
+		Ifindex:     2,
+		Revision:    1,
+		KernelID:    100,
+		LinkID:      300,
+		LinkPinPath: "/sys/fs/bpf/link",
+		ProgPinPath: "/sys/fs/bpf/prog",
+	}
+	err = store.SaveDispatcher(ctx, aliveDisp)
+	require.NoError(t, err)
+
+	staleDisp := dispatcher.State{
+		Type:        dispatcher.DispatcherTypeTCIngress,
+		Nsid:        4026531840,
+		Ifindex:     3,
+		Revision:    1,
+		KernelID:    101,
+		LinkID:      301,
+		LinkPinPath: "/sys/fs/bpf/link2",
+		ProgPinPath: "/sys/fs/bpf/prog2",
+	}
+	err = store.SaveDispatcher(ctx, staleDisp)
+	require.NoError(t, err)
+
+	// Create links: one alive, one stale
+	aliveLink := bpfman.LinkSummary{
+		LinkType:        bpfman.LinkTypeTracepoint,
+		KernelProgramID: 100,
+		KernelLinkID:    400,
+		CreatedAt:       time.Now(),
+	}
+	err = store.SaveTracepointLink(ctx, aliveLink, bpfman.TracepointDetails{Group: "syscalls", Name: "test"})
+	require.NoError(t, err)
+
+	staleLink := bpfman.LinkSummary{
+		LinkType:        bpfman.LinkTypeTracepoint,
+		KernelProgramID: 100,
+		KernelLinkID:    401,
+		CreatedAt:       time.Now(),
+	}
+	err = store.SaveTracepointLink(ctx, staleLink, bpfman.TracepointDetails{Group: "syscalls", Name: "test2"})
+	require.NoError(t, err)
+
+	// GC with only program 100 and link 400 in kernel
+	result, err := store.GC(ctx,
+		map[uint32]bool{100: true},
+		map[uint32]bool{400: true})
+	require.NoError(t, err)
+
+	// Should remove: 2 programs (101, 102), 1 dispatcher, 1 link
+	assert.Equal(t, 2, result.ProgramsRemoved, "should remove 2 stale programs")
+	assert.Equal(t, 1, result.DispatchersRemoved, "should remove 1 stale dispatcher")
+	assert.Equal(t, 1, result.LinksRemoved, "should remove 1 stale link")
+
+	// Verify remaining state
+	programs, err := store.List(ctx)
+	require.NoError(t, err)
+	assert.Len(t, programs, 1, "should have 1 program remaining")
+	_, exists := programs[100]
+	assert.True(t, exists, "program 100 should exist")
+
+	dispatchers, err := store.ListDispatchers(ctx)
+	require.NoError(t, err)
+	assert.Len(t, dispatchers, 1, "should have 1 dispatcher remaining")
+	assert.Equal(t, uint32(100), dispatchers[0].KernelID)
+
+	links, err := store.ListLinks(ctx)
+	require.NoError(t, err)
+	assert.Len(t, links, 1, "should have 1 link remaining")
+	assert.Equal(t, uint32(400), links[0].KernelLinkID)
+}
+
+func TestGC_SyntheticLinkIDsSkipped(t *testing.T) {
+	// Test that GC skips links with synthetic IDs (>= 0x80000000).
+	// These are used for perf_event-based links (e.g., container uprobes)
+	// that cannot be enumerated via the kernel's link iterator.
+	store, err := sqlite.NewInMemory(testLogger())
+	require.NoError(t, err)
+	defer store.Close()
+
+	ctx := context.Background()
+
+	// Create a program first (FK requirement)
+	prog := testProgram()
+	err = store.Save(ctx, 100, prog)
+	require.NoError(t, err)
+
+	// Create a real kernel link (ID 200)
+	realLink := bpfman.LinkSummary{
+		LinkType:        bpfman.LinkTypeUprobe,
+		KernelProgramID: 100,
+		KernelLinkID:    200,
+		CreatedAt:       time.Now(),
+	}
+	realDetails := bpfman.UprobeDetails{Target: "/usr/bin/test", FnName: "main"}
+	err = store.SaveUprobeLink(ctx, realLink, realDetails)
+	require.NoError(t, err)
+
+	// Create a synthetic link (ID >= 0x80000000)
+	// This simulates a container uprobe with perf_event-based link
+	syntheticID := uint32(bpfman.SyntheticLinkIDBase | 0x12345678)
+	syntheticLink := bpfman.LinkSummary{
+		LinkType:        bpfman.LinkTypeUprobe,
+		KernelProgramID: 100,
+		KernelLinkID:    syntheticID,
+		CreatedAt:       time.Now(),
+	}
+	syntheticDetails := bpfman.UprobeDetails{Target: "/app/binary", FnName: "handler", ContainerPid: 12345}
+	err = store.SaveUprobeLink(ctx, syntheticLink, syntheticDetails)
+	require.NoError(t, err)
+
+	// Verify both links exist
+	links, err := store.ListLinks(ctx)
+	require.NoError(t, err)
+	require.Len(t, links, 2)
+
+	// GC with program in kernel but only real link 200 in kernel
+	// (synthetic link cannot be in kernelLinkIDs since it's not a real kernel ID)
+	result, err := store.GC(ctx, map[uint32]bool{100: true}, map[uint32]bool{200: true})
+	require.NoError(t, err)
+
+	// Should NOT remove synthetic link even though it's not in kernelLinkIDs
+	assert.Equal(t, 0, result.ProgramsRemoved, "should not remove any programs")
+	assert.Equal(t, 0, result.LinksRemoved, "should not remove any links (synthetic should be skipped)")
+
+	// Verify both links still exist
+	links, err = store.ListLinks(ctx)
+	require.NoError(t, err)
+	assert.Len(t, links, 2, "both links should remain")
+
+	// Find both links by ID
+	var foundReal, foundSynthetic bool
+	for _, link := range links {
+		if link.KernelLinkID == 200 {
+			foundReal = true
+		}
+		if link.KernelLinkID == syntheticID {
+			foundSynthetic = true
+		}
+	}
+	assert.True(t, foundReal, "real link should exist")
+	assert.True(t, foundSynthetic, "synthetic link should exist")
+}
