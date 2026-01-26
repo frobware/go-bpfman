@@ -24,6 +24,7 @@ COPY interpreter/ interpreter/
 COPY kernel/ kernel/
 COPY logging/ logging/
 COPY manager/ manager/
+COPY mntns/ mntns/
 COPY netns/ netns/
 COPY server/ server/
 

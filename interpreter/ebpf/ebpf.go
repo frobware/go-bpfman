@@ -1621,7 +1621,22 @@ func (k *kernelAdapter) AttachKprobe(progPinPath, fnName string, offset uint64, 
 // AttachUprobe attaches a pinned program to a user-space function.
 // target is the path to the binary or library (e.g., /usr/lib/libc.so.6).
 // If retprobe is true, attaches as a uretprobe instead of uprobe.
-func (k *kernelAdapter) AttachUprobe(progPinPath, target, fnName string, offset uint64, retprobe bool, linkPinPath string) (bpfman.ManagedLink, error) {
+// If containerPid > 0, the target path is resolved in that container's
+// mount namespace, allowing attachment to binaries in other containers.
+//
+// NOTE: Container uprobe support currently does not support link pinning
+// due to Go runtime limitations with mount namespace switching (setns).
+// The uprobe will be attached but the link cannot be persisted to bpffs.
+func (k *kernelAdapter) AttachUprobe(progPinPath, target, fnName string, offset uint64, retprobe bool, linkPinPath string, containerPid int32) (bpfman.ManagedLink, error) {
+	k.logger.Debug("AttachUprobe called",
+		"target", target,
+		"fn_name", fnName,
+		"offset", offset,
+		"retprobe", retprobe,
+		"container_pid", containerPid,
+		"prog_pin_path", progPinPath,
+		"link_pin_path", linkPinPath)
+
 	prog, err := ebpf.LoadPinnedProgram(progPinPath, nil)
 	if err != nil {
 		return bpfman.ManagedLink{}, fmt.Errorf("load pinned program %s: %w", progPinPath, err)
@@ -1635,8 +1650,25 @@ func (k *kernelAdapter) AttachUprobe(progPinPath, target, fnName string, offset 
 	}
 	progID, _ := progInfo.ID()
 
+	// If containerPid is specified, resolve target path via /proc/<pid>/root
+	// This accesses the container's filesystem without namespace switching
+	// (setns CLONE_NEWNS fails on multi-threaded Go processes).
+	resolvedTarget := target
+	if containerPid > 0 {
+		// Try /proc/<pid>/root first, then /host/proc for Kubernetes
+		procRoot := fmt.Sprintf("/proc/%d/root", containerPid)
+		if _, err := os.Stat(procRoot); os.IsNotExist(err) {
+			procRoot = fmt.Sprintf("/host/proc/%d/root", containerPid)
+		}
+		resolvedTarget = filepath.Join(procRoot, target)
+		k.logger.Debug("resolved target via proc root",
+			"container_pid", containerPid,
+			"original_target", target,
+			"resolved_target", resolvedTarget)
+	}
+
 	// Open the executable for uprobe attachment
-	ex, err := link.OpenExecutable(target)
+	ex, err := link.OpenExecutable(resolvedTarget)
 	if err != nil {
 		return bpfman.ManagedLink{}, fmt.Errorf("open executable %s: %w", target, err)
 	}
@@ -1657,25 +1689,53 @@ func (k *kernelAdapter) AttachUprobe(progPinPath, target, fnName string, offset 
 		return bpfman.ManagedLink{}, fmt.Errorf("attach uprobe to %s in %s: %w", fnName, target, err)
 	}
 
+	// Get link info for debugging
+	linkInfo, err := lnk.Info()
+	if err != nil {
+		k.logger.Debug("failed to get link info after attach", "error", err)
+	} else {
+		k.logger.Debug("uprobe link created",
+			"link_id", linkInfo.ID,
+			"link_type", linkInfo.Type,
+			"resolved_target", resolvedTarget)
+	}
+
 	// Pin the link if a path is provided
-	if linkPinPath != "" {
-		// Ensure parent directory exists
+	// For container uprobes, pinning currently fails with EPERM because the
+	// uprobe was attached via /proc/pid/root rather than from within the
+	// target namespace. We skip pinning for container uprobes to allow the
+	// attachment to succeed, accepting that the link won't survive restarts.
+	actualPinPath := linkPinPath
+	if linkPinPath != "" && containerPid == 0 {
+		// Regular uprobe - pin normally
 		if err := os.MkdirAll(filepath.Dir(linkPinPath), 0755); err != nil {
 			lnk.Close()
 			return bpfman.ManagedLink{}, fmt.Errorf("create link pin directory: %w", err)
 		}
 
+		k.logger.Debug("pinning link", "path", linkPinPath)
 		if err := lnk.Pin(linkPinPath); err != nil {
+			k.logger.Debug("link pin failed", "error", err, "path", linkPinPath)
 			lnk.Close()
 			return bpfman.ManagedLink{}, fmt.Errorf("pin link to %s: %w", linkPinPath, err)
 		}
+		k.logger.Debug("link pinned successfully", "path", linkPinPath)
+	} else if linkPinPath != "" && containerPid > 0 {
+		// Container uprobe - skip pinning due to namespace limitations
+		// The link will remain active while the daemon is running
+		k.logger.Warn("skipping link pin for container uprobe (namespace limitations)",
+			"container_pid", containerPid,
+			"would_be_path", linkPinPath)
+		actualPinPath = "" // Don't report a pin path we didn't actually use
 	}
 
-	// Get link info
-	linkInfo, err := lnk.Info()
-	if err != nil {
-		lnk.Close()
-		return bpfman.ManagedLink{}, fmt.Errorf("get link info: %w", err)
+	// If linkInfo retrieval failed earlier (unlikely), try again
+	if linkInfo == nil {
+		linkInfo, err = lnk.Info()
+		if err != nil {
+			lnk.Close()
+			return bpfman.ManagedLink{}, fmt.Errorf("get link info: %w", err)
+		}
 	}
 
 	// Determine link type based on retprobe flag
@@ -1689,9 +1749,9 @@ func (k *kernelAdapter) AttachUprobe(progPinPath, target, fnName string, offset 
 			KernelLinkID:    uint32(linkInfo.ID),
 			KernelProgramID: uint32(progID),
 			Type:            linkType,
-			PinPath:         linkPinPath,
+			PinPath:         actualPinPath,
 			CreatedAt:       time.Now(),
-			Details:         bpfman.UprobeDetails{Target: target, FnName: fnName, Offset: offset, Retprobe: retprobe},
+			Details:         bpfman.UprobeDetails{Target: target, FnName: fnName, Offset: offset, Retprobe: retprobe, ContainerPid: containerPid},
 		},
 		Kernel: NewLinkInfo(linkInfo),
 	}, nil

@@ -603,6 +603,15 @@ func (s *Server) attachKprobe(ctx context.Context, programID uint32, info *pb.Kp
 
 // attachUprobe handles uprobe/uretprobe attachment via the manager.
 func (s *Server) attachUprobe(ctx context.Context, programID uint32, info *pb.UprobeAttachInfo) (*pb.AttachResponse, error) {
+	s.logger.Debug("attachUprobe request",
+		"program_id", programID,
+		"target", info.Target,
+		"fn_name", info.GetFnName(),
+		"offset", info.Offset,
+		"pid", info.GetPid(),
+		"container_pid", info.GetContainerPid(),
+		"container_pid_ptr", info.ContainerPid)
+
 	if info.Target == "" {
 		return nil, status.Error(codes.InvalidArgument, "target is required for uprobe attachment")
 	}
@@ -617,6 +626,10 @@ func (s *Server) attachUprobe(ctx context.Context, programID uint32, info *pb.Up
 	}
 	if info.Offset != 0 {
 		spec = spec.WithOffset(info.Offset)
+	}
+	if info.ContainerPid != nil && *info.ContainerPid > 0 {
+		s.logger.Debug("setting container_pid on spec", "container_pid", *info.ContainerPid)
+		spec = spec.WithContainerPid(*info.ContainerPid)
 	}
 
 	// Call manager with empty linkPinPath to auto-generate

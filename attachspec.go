@@ -66,10 +66,11 @@ func (s KprobeAttachSpec) WithOffset(offset uint64) KprobeAttachSpec {
 // UprobeAttachSpec specifies how to attach a uprobe/uretprobe.
 // Note: retprobe is NOT part of the spec - it's derived from the program type.
 type UprobeAttachSpec struct {
-	programID uint32
-	target    string
-	fnName    string // optional - can use offset only
-	offset    uint64
+	programID    uint32
+	target       string
+	fnName       string // optional - can use offset only
+	offset       uint64
+	containerPid int32 // if > 0, attach in this container's mount namespace
 }
 
 // NewUprobeAttachSpec creates a UprobeAttachSpec with validated fields.
@@ -83,10 +84,11 @@ func NewUprobeAttachSpec(programID uint32, target string) (UprobeAttachSpec, err
 	return UprobeAttachSpec{programID: programID, target: target}, nil
 }
 
-func (s UprobeAttachSpec) ProgramID() uint32 { return s.programID }
-func (s UprobeAttachSpec) Target() string    { return s.target }
-func (s UprobeAttachSpec) FnName() string    { return s.fnName }
-func (s UprobeAttachSpec) Offset() uint64    { return s.offset }
+func (s UprobeAttachSpec) ProgramID() uint32   { return s.programID }
+func (s UprobeAttachSpec) Target() string      { return s.target }
+func (s UprobeAttachSpec) FnName() string      { return s.fnName }
+func (s UprobeAttachSpec) Offset() uint64      { return s.offset }
+func (s UprobeAttachSpec) ContainerPid() int32 { return s.containerPid }
 
 // WithFnName returns a new UprobeAttachSpec with the function name set.
 func (s UprobeAttachSpec) WithFnName(fnName string) UprobeAttachSpec {
@@ -97,6 +99,14 @@ func (s UprobeAttachSpec) WithFnName(fnName string) UprobeAttachSpec {
 // WithOffset returns a new UprobeAttachSpec with the offset set.
 func (s UprobeAttachSpec) WithOffset(offset uint64) UprobeAttachSpec {
 	s.offset = offset
+	return s
+}
+
+// WithContainerPid returns a new UprobeAttachSpec with the container PID set.
+// If pid > 0, the uprobe will be attached in that container's mount namespace,
+// allowing the target path to resolve within the container's filesystem.
+func (s UprobeAttachSpec) WithContainerPid(pid int32) UprobeAttachSpec {
+	s.containerPid = pid
 	return s
 }
 

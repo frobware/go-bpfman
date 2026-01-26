@@ -563,6 +563,7 @@ func (m *Manager) AttachUprobe(ctx context.Context, spec bpfman.UprobeAttachSpec
 	target := spec.Target()
 	fnName := spec.FnName()
 	offset := spec.Offset()
+	containerPid := spec.ContainerPid()
 	linkPinPath := opts.LinkPinPath
 
 	// FETCH: Get program to determine if it's a uretprobe
@@ -588,13 +589,13 @@ func (m *Manager) AttachUprobe(ctx context.Context, spec bpfman.UprobeAttachSpec
 	}
 
 	// KERNEL I/O: Attach to the kernel (returns ManagedLink with full info)
-	link, err := m.kernel.AttachUprobe(progPinPath, target, fnName, offset, retprobe, linkPinPath)
+	link, err := m.kernel.AttachUprobe(progPinPath, target, fnName, offset, retprobe, linkPinPath, containerPid)
 	if err != nil {
 		return bpfman.LinkSummary{}, fmt.Errorf("attach uprobe %s to %s: %w", fnName, target, err)
 	}
 
 	// COMPUTE: Build save action from kernel result
-	saveAction := computeAttachUprobeAction(programKernelID, link.Kernel.ID(), link.Managed.PinPath, target, fnName, offset, retprobe)
+	saveAction := computeAttachUprobeAction(programKernelID, link.Kernel.ID(), link.Managed.PinPath, target, fnName, offset, retprobe, containerPid)
 
 	// EXECUTE: Save link metadata
 	if err := m.executor.Execute(ctx, saveAction); err != nil {
@@ -611,6 +612,7 @@ func (m *Manager) AttachUprobe(ctx context.Context, spec bpfman.UprobeAttachSpec
 		"target", target,
 		"fn_name", fnName,
 		"offset", offset,
+		"container_pid", containerPid,
 		"pin_path", link.Managed.PinPath)
 
 	return saveAction.Summary, nil
@@ -618,7 +620,7 @@ func (m *Manager) AttachUprobe(ctx context.Context, spec bpfman.UprobeAttachSpec
 
 // computeAttachUprobeAction is a pure function that builds the save action
 // for a uprobe/uretprobe attachment.
-func computeAttachUprobeAction(programKernelID, kernelLinkID uint32, pinPath, target, fnName string, offset uint64, retprobe bool) action.SaveUprobeLink {
+func computeAttachUprobeAction(programKernelID, kernelLinkID uint32, pinPath, target, fnName string, offset uint64, retprobe bool, containerPid int32) action.SaveUprobeLink {
 	linkType := bpfman.LinkTypeUprobe
 	if retprobe {
 		linkType = bpfman.LinkTypeUretprobe
@@ -632,10 +634,11 @@ func computeAttachUprobeAction(programKernelID, kernelLinkID uint32, pinPath, ta
 			CreatedAt:       time.Now(),
 		},
 		Details: bpfman.UprobeDetails{
-			Target:   target,
-			FnName:   fnName,
-			Offset:   offset,
-			Retprobe: retprobe,
+			Target:       target,
+			FnName:       fnName,
+			Offset:       offset,
+			Retprobe:     retprobe,
+			ContainerPid: containerPid,
 		},
 	}
 }

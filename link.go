@@ -133,11 +133,12 @@ func (KprobeDetails) linkDetails() {}
 
 // UprobeDetails contains fields specific to uprobe/uretprobe attachments.
 type UprobeDetails struct {
-	Target   string `json:"target"`
-	FnName   string `json:"fn_name,omitempty"`
-	Offset   uint64 `json:"offset,omitempty"`
-	PID      int32  `json:"pid,omitempty"`
-	Retprobe bool   `json:"retprobe,omitempty"`
+	Target       string `json:"target"`
+	FnName       string `json:"fn_name,omitempty"`
+	Offset       uint64 `json:"offset,omitempty"`
+	PID          int32  `json:"pid,omitempty"`
+	Retprobe     bool   `json:"retprobe,omitempty"`
+	ContainerPid int32  `json:"container_pid,omitempty"`
 }
 
 func (UprobeDetails) linkDetails() {}

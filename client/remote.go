@@ -276,15 +276,19 @@ func (c *remoteClient) AttachKprobe(ctx context.Context, spec bpfman.KprobeAttac
 // AttachUprobe attaches a uprobe/uretprobe program to a user-space function via gRPC.
 func (c *remoteClient) AttachUprobe(ctx context.Context, spec bpfman.UprobeAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error) {
 	fnName := spec.FnName()
+	uprobeInfo := &pb.UprobeAttachInfo{
+		Target: spec.Target(),
+		FnName: &fnName,
+		Offset: spec.Offset(),
+	}
+	if containerPid := spec.ContainerPid(); containerPid > 0 {
+		uprobeInfo.ContainerPid = &containerPid
+	}
 	req := &pb.AttachRequest{
 		Id: spec.ProgramID(),
 		Attach: &pb.AttachInfo{
 			Info: &pb.AttachInfo_UprobeAttachInfo{
-				UprobeAttachInfo: &pb.UprobeAttachInfo{
-					Target: spec.Target(),
-					FnName: &fnName,
-					Offset: spec.Offset(),
-				},
+				UprobeAttachInfo: uprobeInfo,
 			},
 		},
 	}

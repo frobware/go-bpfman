@@ -446,7 +446,7 @@ func (f *fakeKernel) AttachKprobe(progPinPath, fnName string, offset uint64, ret
 	}, nil
 }
 
-func (f *fakeKernel) AttachUprobe(progPinPath, target, fnName string, offset uint64, retprobe bool, linkPinPath string) (bpfman.ManagedLink, error) {
+func (f *fakeKernel) AttachUprobe(progPinPath, target, fnName string, offset uint64, retprobe bool, linkPinPath string, containerPid int32) (bpfman.ManagedLink, error) {
 	id := f.nextID.Add(1)
 	linkType := bpfman.LinkTypeUprobe
 	kernelLinkType := "uprobe"
@@ -467,7 +467,7 @@ func (f *fakeKernel) AttachUprobe(progPinPath, target, fnName string, offset uin
 			Type:            linkType,
 			PinPath:         linkPinPath,
 			CreatedAt:       time.Now(),
-			Details:         bpfman.UprobeDetails{Target: target, FnName: fnName, Offset: offset, Retprobe: retprobe},
+			Details:         bpfman.UprobeDetails{Target: target, FnName: fnName, Offset: offset, Retprobe: retprobe, ContainerPid: containerPid},
 		},
 		Kernel: &fakeKernelLinkInfo{id: id, programID: 0, linkType: kernelLinkType},
 	}, nil

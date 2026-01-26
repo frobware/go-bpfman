@@ -154,7 +154,9 @@ type ProgramAttacher interface {
 	// AttachUprobe attaches a pinned program to a user-space function.
 	// target is the path to the binary or library (e.g., /usr/lib/libc.so.6).
 	// If retprobe is true, attaches as a uretprobe instead of uprobe.
-	AttachUprobe(progPinPath, target, fnName string, offset uint64, retprobe bool, linkPinPath string) (bpfman.ManagedLink, error)
+	// If containerPid > 0, the target path is resolved in that container's
+	// mount namespace, allowing attachment to binaries in other containers.
+	AttachUprobe(progPinPath, target, fnName string, offset uint64, retprobe bool, linkPinPath string, containerPid int32) (bpfman.ManagedLink, error)
 	// AttachFentry attaches a pinned program to a kernel function entry point.
 	// The fnName was specified at load time and stored with the program.
 	AttachFentry(progPinPath, fnName, linkPinPath string) (bpfman.ManagedLink, error)
