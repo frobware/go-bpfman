@@ -425,7 +425,7 @@ func (m *Manager) AttachTracepoint(ctx context.Context, spec bpfman.TracepointAt
 
 	// COMPUTE: Auto-generate link pin path if not provided
 	if linkPinPath == "" {
-		linkName := fmt.Sprintf("%s_%s", sanitiseFilename(group), sanitiseFilename(name))
+		linkName := fmt.Sprintf("%s_%s", group, name)
 		linksDir := filepath.Join(m.dirs.FS, "links", fmt.Sprintf("%d", programKernelID))
 		linkPinPath = filepath.Join(linksDir, linkName)
 	}
@@ -495,7 +495,7 @@ func (m *Manager) AttachKprobe(ctx context.Context, spec bpfman.KprobeAttachSpec
 
 	// COMPUTE: Auto-generate link pin path if not provided
 	if linkPinPath == "" {
-		linkName := sanitiseFilename(fnName)
+		linkName := fnName
 		if retprobe {
 			linkName = "ret_" + linkName
 		}
@@ -579,7 +579,7 @@ func (m *Manager) AttachUprobe(ctx context.Context, spec bpfman.UprobeAttachSpec
 
 	// COMPUTE: Auto-generate link pin path if not provided
 	if linkPinPath == "" {
-		linkName := sanitiseFilename(fnName)
+		linkName := fnName
 		if retprobe {
 			linkName = "ret_" + linkName
 		}
@@ -664,7 +664,7 @@ func (m *Manager) AttachFentry(ctx context.Context, spec bpfman.FentryAttachSpec
 
 	// COMPUTE: Auto-generate link pin path if not provided
 	if linkPinPath == "" {
-		linkName := "fentry_" + sanitiseFilename(fnName)
+		linkName := "fentry_" + fnName
 		linksDir := filepath.Join(m.dirs.FS, "links", fmt.Sprintf("%d", programKernelID))
 		linkPinPath = filepath.Join(linksDir, linkName)
 	}
@@ -733,7 +733,7 @@ func (m *Manager) AttachFexit(ctx context.Context, spec bpfman.FexitAttachSpec, 
 
 	// COMPUTE: Auto-generate link pin path if not provided
 	if linkPinPath == "" {
-		linkName := "fexit_" + sanitiseFilename(fnName)
+		linkName := "fexit_" + fnName
 		linksDir := filepath.Join(m.dirs.FS, "links", fmt.Sprintf("%d", programKernelID))
 		linkPinPath = filepath.Join(linksDir, linkName)
 	}
@@ -1506,20 +1506,4 @@ func computeDispatcherCleanupActions(state dispatcher.State) []action.Action {
 			Ifindex: state.Ifindex,
 		},
 	}
-}
-
-// sanitiseFilename replaces characters that are invalid in filenames.
-// Tracepoint groups and names are typically alphanumeric with underscores,
-// but this handles edge cases defensively.
-func sanitiseFilename(s string) string {
-	var result []byte
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-' {
-			result = append(result, c)
-		} else {
-			result = append(result, '_')
-		}
-	}
-	return string(result)
 }

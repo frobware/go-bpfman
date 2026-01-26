@@ -83,9 +83,9 @@ func TestParseKeyValue_ValidInputs(t *testing.T) {
 		{"key=value", "key", "value"},
 		{"owner=acme", "owner", "acme"},
 		{"bpfman.io/application=stats", "bpfman.io/application", "stats"},
-		{"key=", "key", ""},                          // empty value is valid
-		{"key=value=with=equals", "key", "value=with=equals"}, // value can contain =
-		{"  key  =value", "key", "value"},            // whitespace in key trimmed
+		{"key=", "key", ""},                                           // empty value is valid
+		{"key=value=with=equals", "key", "value=with=equals"},         // value can contain =
+		{"  key  =value", "key", "value"},                             // whitespace in key trimmed
 		{"key=  value with spaces  ", "key", "  value with spaces  "}, // value whitespace preserved
 	}
 
@@ -154,7 +154,7 @@ func TestParseGlobalData_InvalidInputs(t *testing.T) {
 		errContains string
 	}{
 		{"noequals", "expected NAME=HEX"},
-		{"=01", "expected NAME=HEX"},    // empty name
+		{"=01", "expected NAME=HEX"}, // empty name
 		{"", "expected NAME=HEX"},
 		{"   =01", "name cannot be empty"},
 		{"name=GG", "invalid hex data"}, // invalid hex

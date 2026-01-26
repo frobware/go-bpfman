@@ -338,7 +338,7 @@ func (k *kernelAdapter) Load(ctx context.Context, spec bpfman.LoadSpec) (bpfman.
 		if strings.HasPrefix(name, ".") {
 			continue
 		}
-		mapPinPath := filepath.Join(mapsDir, sanitiseFilename(name))
+		mapPinPath := filepath.Join(mapsDir, name)
 		if err := m.Pin(mapPinPath); err != nil {
 			cleanup()
 			if rmErr := os.Remove(mapsDir); rmErr != nil && !os.IsNotExist(rmErr) {
@@ -1095,26 +1095,22 @@ func (k *kernelAdapter) AttachXDPExtension(dispatcherPinPath, objectPath, progra
 	// Load pinned maps from the original program's map directory.
 	// This ensures the extension program uses the same maps that were
 	// created during the initial Load and are exposed via CSI.
+	// We iterate over collSpec.Maps to get the exact ELF map names,
+	// which must match the MapReplacements keys.
 	mapReplacements := make(map[string]*ebpf.Map)
 	if mapPinDir != "" {
-		entries, err := os.ReadDir(mapPinDir)
-		if err != nil {
-			k.logger.Warn("failed to read map pin directory", "dir", mapPinDir, "error", err)
-		} else {
-			for _, entry := range entries {
-				if entry.IsDir() {
-					continue
-				}
-				mapPath := filepath.Join(mapPinDir, entry.Name())
-				m, err := ebpf.LoadPinnedMap(mapPath, nil)
-				if err != nil {
-					k.logger.Warn("failed to load pinned map", "path", mapPath, "error", err)
-					continue
-				}
-				// Use the original map name (entry.Name() may be sanitised)
-				mapReplacements[entry.Name()] = m
-				k.logger.Debug("loaded pinned map for extension", "name", entry.Name(), "path", mapPath)
+		for name := range collSpec.Maps {
+			// Skip internal maps (same filtering as Load)
+			if strings.HasPrefix(name, ".") {
+				continue
 			}
+			mapPath := filepath.Join(mapPinDir, name)
+			m, err := ebpf.LoadPinnedMap(mapPath, nil)
+			if err != nil {
+				return bpfman.ManagedLink{}, fmt.Errorf("load pinned map %s: %w", mapPath, err)
+			}
+			mapReplacements[name] = m
+			k.logger.Debug("loaded pinned map for extension", "name", name, "path", mapPath)
 		}
 	}
 
@@ -1373,25 +1369,22 @@ func (k *kernelAdapter) AttachTCExtension(dispatcherPinPath, objectPath, program
 	// Load pinned maps from the original program's map directory.
 	// This ensures the extension program uses the same maps that were
 	// created during the initial Load and are exposed via CSI.
+	// We iterate over collSpec.Maps to get the exact ELF map names,
+	// which must match the MapReplacements keys.
 	mapReplacements := make(map[string]*ebpf.Map)
 	if mapPinDir != "" {
-		entries, err := os.ReadDir(mapPinDir)
-		if err != nil {
-			k.logger.Warn("failed to read map pin directory", "dir", mapPinDir, "error", err)
-		} else {
-			for _, entry := range entries {
-				if entry.IsDir() {
-					continue
-				}
-				mapPath := filepath.Join(mapPinDir, entry.Name())
-				m, err := ebpf.LoadPinnedMap(mapPath, nil)
-				if err != nil {
-					k.logger.Warn("failed to load pinned map", "path", mapPath, "error", err)
-					continue
-				}
-				mapReplacements[entry.Name()] = m
-				k.logger.Debug("loaded pinned map for TC extension", "name", entry.Name(), "path", mapPath)
+		for name := range collSpec.Maps {
+			// Skip internal maps (same filtering as Load)
+			if strings.HasPrefix(name, ".") {
+				continue
 			}
+			mapPath := filepath.Join(mapPinDir, name)
+			m, err := ebpf.LoadPinnedMap(mapPath, nil)
+			if err != nil {
+				return bpfman.ManagedLink{}, fmt.Errorf("load pinned map %s: %w", mapPath, err)
+			}
+			mapReplacements[name] = m
+			k.logger.Debug("loaded pinned map for TC extension", "name", name, "path", mapPath)
 		}
 	}
 
@@ -1702,20 +1695,6 @@ func (k *kernelAdapter) AttachUprobe(progPinPath, target, fnName string, offset 
 		},
 		Kernel: NewLinkInfo(linkInfo),
 	}, nil
-}
-
-// sanitiseFilename replaces characters that are invalid in filenames.
-func sanitiseFilename(s string) string {
-	var result []byte
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-' {
-			result = append(result, c)
-		} else {
-			result = append(result, '_')
-		}
-	}
-	return string(result)
 }
 
 // AttachFentry attaches a pinned fentry program to a kernel function.

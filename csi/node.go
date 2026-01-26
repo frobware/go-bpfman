@@ -180,7 +180,7 @@ func (d *Driver) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolu
 			continue
 		}
 
-		srcPath := filepath.Join(mapPinPath, sanitiseFilename(mapName))
+		srcPath := filepath.Join(mapPinPath, mapName)
 		dstPath := filepath.Join(podBpffs, mapName)
 
 		d.logger.Debug("re-pinning map",
@@ -375,18 +375,4 @@ func (d *Driver) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandVolume
 		"volumeID", req.GetVolumeId(),
 	)
 	return nil, status.Error(codes.Unimplemented, "NodeExpandVolume not supported")
-}
-
-// sanitiseFilename replaces characters that are invalid in filenames.
-func sanitiseFilename(s string) string {
-	var result []byte
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-' {
-			result = append(result, c)
-		} else {
-			result = append(result, '_')
-		}
-	}
-	return string(result)
 }
