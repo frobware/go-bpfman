@@ -1139,6 +1139,38 @@ func (s *sqliteStore) ListLinksByProgram(ctx context.Context, programKernelID ui
 	return result, nil
 }
 
+// ListTCXLinksByInterface returns all TCX links for a given interface/direction/namespace.
+// Used for computing attach order based on priority.
+func (s *sqliteStore) ListTCXLinksByInterface(ctx context.Context, nsid uint64, ifindex uint32, direction string) ([]bpfman.TCXLinkInfo, error) {
+	start := time.Now()
+	const query = `
+		SELECT lr.kernel_link_id, lr.kernel_program_id, td.priority
+		FROM link_registry lr
+		JOIN tcx_link_details td ON lr.kernel_link_id = td.kernel_link_id
+		WHERE td.nsid = ? AND td.ifindex = ? AND td.direction = ?
+		ORDER BY td.priority ASC`
+	rows, err := s.conn.QueryContext(ctx, query, nsid, ifindex, direction)
+	if err != nil {
+		s.logger.Debug("sql", "stmt", "ListTCXLinksByInterface", "args", []any{nsid, ifindex, direction}, "duration_ms", msec(time.Since(start)), "error", err)
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]bpfman.TCXLinkInfo, 0)
+	for rows.Next() {
+		var info bpfman.TCXLinkInfo
+		if err := rows.Scan(&info.KernelLinkID, &info.KernelProgramID, &info.Priority); err != nil {
+			return nil, fmt.Errorf("scan TCX link info: %w", err)
+		}
+		result = append(result, info)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate TCX links: %w", err)
+	}
+	s.logger.Debug("sql", "stmt", "ListTCXLinksByInterface", "args", []any{nsid, ifindex, direction}, "duration_ms", msec(time.Since(start)), "rows", len(result))
+	return result, nil
+}
+
 // ----------------------------------------------------------------------------
 // Type-Specific Link Save Methods
 // ----------------------------------------------------------------------------

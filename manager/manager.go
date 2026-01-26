@@ -159,6 +159,16 @@ func (m *Manager) Unload(ctx context.Context, kernelID uint32) error {
 		return fmt.Errorf("program %d: %w", kernelID, err)
 	}
 
+	// FETCH: Check for dependent programs (map sharing)
+	// Programs that share maps with this program must be unloaded first.
+	depCount, err := m.store.CountDependentPrograms(ctx, kernelID)
+	if err != nil {
+		return fmt.Errorf("check dependent programs for %d: %w", kernelID, err)
+	}
+	if depCount > 0 {
+		return fmt.Errorf("cannot unload program %d: %d dependent program(s) share its maps; unload dependents first", kernelID, depCount)
+	}
+
 	links, err := m.store.ListLinksByProgram(ctx, kernelID)
 	if err != nil {
 		return fmt.Errorf("list links for program %d: %w", kernelID, err)
@@ -854,8 +864,9 @@ func (m *Manager) AttachXDP(ctx context.Context, spec bpfman.XDPAttachSpec, opts
 		linkPinPath = extensionLinkPath
 	}
 
-	// COMPUTE: Calculate map pin directory for the original program
-	mapPinDir := filepath.Join(m.dirs.FS_MAPS, fmt.Sprintf("%d", programKernelID))
+	// COMPUTE: Use the program's MapPinPath which points to the correct maps
+	// directory (either the program's own or the map owner's if sharing).
+	mapPinDir := prog.MapPinPath
 
 	// KERNEL I/O: Attach user program as extension (returns ManagedLink)
 	link, err := m.kernel.AttachXDPExtension(
@@ -1105,8 +1116,9 @@ func (m *Manager) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts b
 		linkPinPath = extensionLinkPath
 	}
 
-	// COMPUTE: Calculate map pin directory for the original program
-	mapPinDir := filepath.Join(m.dirs.FS_MAPS, fmt.Sprintf("%d", programKernelID))
+	// COMPUTE: Use the program's MapPinPath which points to the correct maps
+	// directory (either the program's own or the map owner's if sharing).
+	mapPinDir := prog.MapPinPath
 
 	// KERNEL I/O: Attach user program as extension (returns ManagedLink)
 	link, err := m.kernel.AttachTCExtension(
@@ -1250,14 +1262,28 @@ func (m *Manager) AttachTCX(ctx context.Context, spec bpfman.TCXAttachSpec, opts
 		linkPinPath = filepath.Join(m.dirs.FS, dirName, fmt.Sprintf("link_%d_%d", nsid, ifindex))
 	}
 
-	// COMPUTE: The stored PinPath is the maps directory (e.g., /fs/maps/8518).
-	// The program is pinned at /fs/prog_<kernelID>.
-	// So we go up two levels from maps dir to get /fs, then add prog_<id>.
-	fsRoot := filepath.Dir(filepath.Dir(prog.PinPath))
-	progPinPath := filepath.Join(fsRoot, fmt.Sprintf("prog_%d", programKernelID))
+	// COMPUTE: Use the stored program pin path directly
+	progPinPath := prog.PinPath
 
-	// KERNEL I/O: Attach program using TCX link
-	link, err := m.kernel.AttachTCX(ifindex, direction, progPinPath, linkPinPath, netnsPath)
+	// FETCH: Get existing TCX links for this interface/direction to compute order
+	existingLinks, err := m.store.ListTCXLinksByInterface(ctx, nsid, uint32(ifindex), direction)
+	if err != nil {
+		return bpfman.LinkSummary{}, fmt.Errorf("list existing TCX links: %w", err)
+	}
+
+	// COMPUTE: Determine attach order based on priority
+	// Lower priority values should run first (earlier in chain).
+	// We need to find where to insert this program in the priority-sorted chain.
+	order := computeTCXAttachOrder(existingLinks, int32(priority))
+
+	m.logger.Debug("computed TCX attach order",
+		"program_id", programKernelID,
+		"priority", priority,
+		"existing_links", len(existingLinks),
+		"order", order)
+
+	// KERNEL I/O: Attach program using TCX link with computed order
+	link, err := m.kernel.AttachTCX(ifindex, direction, progPinPath, linkPinPath, netnsPath, order)
 	if err != nil {
 		return bpfman.LinkSummary{}, fmt.Errorf("attach TCX to %s %s: %w", ifname, direction, err)
 	}
@@ -1300,6 +1326,35 @@ func (m *Manager) AttachTCX(ctx context.Context, spec bpfman.TCXAttachSpec, opts
 		"pin_path", link.Managed.PinPath)
 
 	return summary, nil
+}
+
+// computeTCXAttachOrder determines where to insert a new TCX program in the chain
+// based on its priority relative to existing programs. Lower priority values run first.
+//
+// The algorithm:
+// 1. If no existing links, attach at head (first)
+// 2. Find the first existing link with priority > newPriority, attach before it
+// 3. If all existing links have priority <= newPriority, attach after the last one
+//
+// This ensures programs are ordered by priority, with ties broken by insertion order.
+func computeTCXAttachOrder(existingLinks []bpfman.TCXLinkInfo, newPriority int32) bpfman.TCXAttachOrder {
+	if len(existingLinks) == 0 {
+		// No existing links, attach at head
+		return bpfman.TCXAttachFirst()
+	}
+
+	// Links are already sorted by priority ASC from the query
+	// Find the first link with higher priority (should come after us)
+	for _, link := range existingLinks {
+		if link.Priority > newPriority {
+			// This link has higher priority (runs later), we should attach before it
+			return bpfman.TCXAttachBefore(link.KernelProgramID)
+		}
+	}
+
+	// All existing links have priority <= ours, attach after the last one
+	lastLink := existingLinks[len(existingLinks)-1]
+	return bpfman.TCXAttachAfter(lastLink.KernelProgramID)
 }
 
 // createTCDispatcher creates a new TC dispatcher for the given interface and direction.

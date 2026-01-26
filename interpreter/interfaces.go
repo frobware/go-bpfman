@@ -37,6 +37,9 @@ type LinkReader interface {
 type LinkLister interface {
 	ListLinks(ctx context.Context) ([]bpfman.LinkSummary, error)
 	ListLinksByProgram(ctx context.Context, programKernelID uint32) ([]bpfman.LinkSummary, error)
+	// ListTCXLinksByInterface returns all TCX links for a given interface/direction/namespace.
+	// Used for computing attach order based on priority.
+	ListTCXLinksByInterface(ctx context.Context, nsid uint64, ifindex uint32, direction string) ([]bpfman.TCXLinkInfo, error)
 }
 
 // LinkStore combines all link store operations.
@@ -251,7 +254,8 @@ type DispatcherAttacher interface {
 	//   - programPinPath: Path where the program is pinned
 	//   - linkPinPath: Path to pin the TCX link
 	//   - netns: Optional network namespace path. If non-empty, attachment is performed in that namespace.
-	AttachTCX(ifindex int, direction, programPinPath, linkPinPath, netns string) (bpfman.ManagedLink, error)
+	//   - order: Specifies where to insert the program in the TCX chain based on priority.
+	AttachTCX(ifindex int, direction, programPinPath, linkPinPath, netns string, order bpfman.TCXAttachOrder) (bpfman.ManagedLink, error)
 }
 
 // LinkDetacher detaches links from hooks.

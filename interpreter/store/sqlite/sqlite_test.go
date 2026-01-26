@@ -731,3 +731,164 @@ func TestMapOwnership_ListIncludesMapFields(t *testing.T) {
 	assert.Equal(t, "/sys/fs/bpf/bpfman/100", dep.MapPinPath, "dependent MapPinPath mismatch")
 	assert.Equal(t, ownerID, dep.MapOwnerID, "dependent MapOwnerID mismatch")
 }
+
+// TestListTCXLinksByInterface_OrderByPriority verifies that TCX links are
+// returned in priority order (ascending), which is critical for correctly
+// computing attach order when inserting new TCX programs.
+func TestListTCXLinksByInterface_OrderByPriority(t *testing.T) {
+	store, err := sqlite.NewInMemory(testLogger())
+	require.NoError(t, err, "failed to create store")
+	defer store.Close()
+
+	ctx := context.Background()
+
+	// Create a program for the links to reference.
+	progID := uint32(100)
+	prog := testProgram()
+	prog.ProgramType = bpfman.ProgramTypeTCX
+	require.NoError(t, store.Save(ctx, progID, prog), "Save program failed")
+
+	// Create TCX links with varying priorities (insert out of order).
+	const (
+		nsid      = uint64(4026531840)
+		ifindex   = uint32(2)
+		direction = "ingress"
+	)
+
+	// Insert links with priorities: 300, 100, 500, 200 (intentionally unordered)
+	linksToCreate := []struct {
+		linkID   uint32
+		priority int32
+	}{
+		{linkID: 1001, priority: 300},
+		{linkID: 1002, priority: 100},
+		{linkID: 1003, priority: 500},
+		{linkID: 1004, priority: 200},
+	}
+
+	for _, link := range linksToCreate {
+		summary := bpfman.LinkSummary{
+			KernelLinkID:    link.linkID,
+			LinkType:        bpfman.LinkTypeTCX,
+			KernelProgramID: progID,
+			PinPath:         "/sys/fs/bpf/link_" + string(rune(link.linkID)),
+			CreatedAt:       time.Now(),
+		}
+		details := bpfman.TCXDetails{
+			Interface: "eth0",
+			Ifindex:   ifindex,
+			Direction: direction,
+			Priority:  link.priority,
+			Nsid:      nsid,
+		}
+		require.NoError(t, store.SaveTCXLink(ctx, summary, details),
+			"SaveTCXLink failed for link %d", link.linkID)
+	}
+
+	// Query links - they should be ordered by priority ASC.
+	links, err := store.ListTCXLinksByInterface(ctx, nsid, ifindex, direction)
+	require.NoError(t, err, "ListTCXLinksByInterface failed")
+	require.Len(t, links, 4, "expected 4 links")
+
+	// Verify order: priorities should be 100, 200, 300, 500
+	expectedPriorities := []int32{100, 200, 300, 500}
+	for i, link := range links {
+		assert.Equal(t, expectedPriorities[i], link.Priority,
+			"link at position %d has wrong priority", i)
+	}
+
+	// Verify the correct link IDs are in order
+	expectedLinkIDs := []uint32{1002, 1004, 1001, 1003}
+	for i, link := range links {
+		assert.Equal(t, expectedLinkIDs[i], link.KernelLinkID,
+			"link at position %d has wrong kernel_link_id", i)
+	}
+}
+
+// TestListTCXLinksByInterface_FiltersByInterfaceAndDirection verifies that
+// only links matching the specified nsid, ifindex, and direction are returned.
+func TestListTCXLinksByInterface_FiltersByInterfaceAndDirection(t *testing.T) {
+	store, err := sqlite.NewInMemory(testLogger())
+	require.NoError(t, err, "failed to create store")
+	defer store.Close()
+
+	ctx := context.Background()
+
+	// Create a program for the links to reference.
+	progID := uint32(100)
+	prog := testProgram()
+	prog.ProgramType = bpfman.ProgramTypeTCX
+	require.NoError(t, store.Save(ctx, progID, prog), "Save program failed")
+
+	const nsid = uint64(4026531840)
+
+	// Create links on different interfaces and directions.
+	testLinks := []struct {
+		linkID    uint32
+		ifindex   uint32
+		direction string
+		priority  int32
+	}{
+		{linkID: 1001, ifindex: 2, direction: "ingress", priority: 100},
+		{linkID: 1002, ifindex: 2, direction: "ingress", priority: 200},
+		{linkID: 1003, ifindex: 2, direction: "egress", priority: 100},  // different direction
+		{linkID: 1004, ifindex: 3, direction: "ingress", priority: 100}, // different interface
+	}
+
+	for _, link := range testLinks {
+		summary := bpfman.LinkSummary{
+			KernelLinkID:    link.linkID,
+			LinkType:        bpfman.LinkTypeTCX,
+			KernelProgramID: progID,
+			CreatedAt:       time.Now(),
+		}
+		details := bpfman.TCXDetails{
+			Interface: "eth0",
+			Ifindex:   link.ifindex,
+			Direction: link.direction,
+			Priority:  link.priority,
+			Nsid:      nsid,
+		}
+		require.NoError(t, store.SaveTCXLink(ctx, summary, details),
+			"SaveTCXLink failed for link %d", link.linkID)
+	}
+
+	// Query for ifindex=2, ingress - should return only 2 links.
+	links, err := store.ListTCXLinksByInterface(ctx, nsid, 2, "ingress")
+	require.NoError(t, err)
+	require.Len(t, links, 2, "expected 2 links for ifindex=2, ingress")
+	assert.Equal(t, uint32(1001), links[0].KernelLinkID)
+	assert.Equal(t, uint32(1002), links[1].KernelLinkID)
+
+	// Query for ifindex=2, egress - should return only 1 link.
+	links, err = store.ListTCXLinksByInterface(ctx, nsid, 2, "egress")
+	require.NoError(t, err)
+	require.Len(t, links, 1, "expected 1 link for ifindex=2, egress")
+	assert.Equal(t, uint32(1003), links[0].KernelLinkID)
+
+	// Query for ifindex=3, ingress - should return only 1 link.
+	links, err = store.ListTCXLinksByInterface(ctx, nsid, 3, "ingress")
+	require.NoError(t, err)
+	require.Len(t, links, 1, "expected 1 link for ifindex=3, ingress")
+	assert.Equal(t, uint32(1004), links[0].KernelLinkID)
+
+	// Query for non-existent interface - should return empty.
+	links, err = store.ListTCXLinksByInterface(ctx, nsid, 99, "ingress")
+	require.NoError(t, err)
+	require.Len(t, links, 0, "expected 0 links for non-existent interface")
+}
+
+// TestListTCXLinksByInterface_EmptyResult verifies that querying for
+// an interface with no TCX links returns an empty slice, not nil.
+func TestListTCXLinksByInterface_EmptyResult(t *testing.T) {
+	store, err := sqlite.NewInMemory(testLogger())
+	require.NoError(t, err, "failed to create store")
+	defer store.Close()
+
+	ctx := context.Background()
+
+	links, err := store.ListTCXLinksByInterface(ctx, 4026531840, 2, "ingress")
+	require.NoError(t, err, "ListTCXLinksByInterface should not error for empty result")
+	assert.NotNil(t, links, "result should not be nil")
+	assert.Empty(t, links, "result should be empty")
+}

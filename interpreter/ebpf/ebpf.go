@@ -1551,7 +1551,8 @@ func (k *kernelAdapter) AttachTCExtension(dispatcherPinPath, objectPath, program
 
 // AttachTCX attaches a loaded program directly to an interface using TCX link.
 // Unlike TC which uses dispatchers, TCX uses native kernel multi-program support.
-func (k *kernelAdapter) AttachTCX(ifindex int, direction, programPinPath, linkPinPath, netnsPath string) (bpfman.ManagedLink, error) {
+// The order parameter specifies where to insert the program in the TCX chain.
+func (k *kernelAdapter) AttachTCX(ifindex int, direction, programPinPath, linkPinPath, netnsPath string, order bpfman.TCXAttachOrder) (bpfman.ManagedLink, error) {
 	// Load the pinned program
 	prog, err := ebpf.LoadPinnedProgram(programPinPath, nil)
 	if err != nil {
@@ -1577,6 +1578,22 @@ func (k *kernelAdapter) AttachTCX(ifindex int, direction, programPinPath, linkPi
 		return bpfman.ManagedLink{}, fmt.Errorf("invalid TCX direction %q: must be ingress or egress", direction)
 	}
 
+	// Convert TCXAttachOrder to cilium/ebpf link.Anchor
+	var anchor link.Anchor
+	switch {
+	case order.First:
+		anchor = link.Head()
+	case order.Last:
+		anchor = link.Tail()
+	case order.BeforeProgID != 0:
+		anchor = link.BeforeProgramByID(ebpf.ProgramID(order.BeforeProgID))
+	case order.AfterProgID != 0:
+		anchor = link.AfterProgramByID(ebpf.ProgramID(order.AfterProgID))
+	default:
+		// Default to head for safety - ensures new programs run before existing ones
+		anchor = link.Head()
+	}
+
 	// Enter target network namespace if specified
 	if netnsPath != "" {
 		k.logger.Debug("entering network namespace for TCX attachment", "netns", netnsPath, "ifindex", ifindex, "direction", direction)
@@ -1591,11 +1608,12 @@ func (k *kernelAdapter) AttachTCX(ifindex int, direction, programPinPath, linkPi
 		}()
 	}
 
-	// Attach using TCX link (now in target namespace if netnsPath was provided)
+	// Attach using TCX link with ordering anchor
 	lnk, err := link.AttachTCX(link.TCXOptions{
 		Interface: ifindex,
 		Program:   prog,
 		Attach:    attachType,
+		Anchor:    anchor,
 	})
 	if err != nil {
 		return bpfman.ManagedLink{}, fmt.Errorf("attach TCX to ifindex %d %s: %w", ifindex, direction, err)

@@ -96,6 +96,42 @@ func (t LinkType) ToAttachType() AttachType {
 	}
 }
 
+// TCXAttachOrder specifies where to insert a TCX program in the chain.
+// Programs are ordered by priority, with lower priority values running first.
+// This type maps to cilium/ebpf's link.Anchor for kernel attachment.
+type TCXAttachOrder struct {
+	// First attaches at the head of the chain (runs before all others).
+	First bool
+	// Last attaches at the tail of the chain (runs after all others).
+	Last bool
+	// BeforeProgID attaches before the program with this kernel ID.
+	// Zero means not set.
+	BeforeProgID uint32
+	// AfterProgID attaches after the program with this kernel ID.
+	// Zero means not set.
+	AfterProgID uint32
+}
+
+// TCXAttachFirst returns an order that attaches at the head of the chain.
+func TCXAttachFirst() TCXAttachOrder {
+	return TCXAttachOrder{First: true}
+}
+
+// TCXAttachLast returns an order that attaches at the tail of the chain.
+func TCXAttachLast() TCXAttachOrder {
+	return TCXAttachOrder{Last: true}
+}
+
+// TCXAttachBefore returns an order that attaches before the given program.
+func TCXAttachBefore(progID uint32) TCXAttachOrder {
+	return TCXAttachOrder{BeforeProgID: progID}
+}
+
+// TCXAttachAfter returns an order that attaches after the given program.
+func TCXAttachAfter(progID uint32) TCXAttachOrder {
+	return TCXAttachOrder{AfterProgID: progID}
+}
+
 // LinkSummary contains the common fields from link_registry.
 // This is the primary polymorphic type for links - most operations
 // only need these fields without type-specific details.
@@ -199,6 +235,14 @@ type TCXDetails struct {
 }
 
 func (TCXDetails) linkDetails() {}
+
+// TCXLinkInfo combines link summary with TCX-specific details.
+// Used for computing attach order based on priority.
+type TCXLinkInfo struct {
+	KernelLinkID    uint32 `json:"kernel_link_id"`
+	KernelProgramID uint32 `json:"kernel_program_id"`
+	Priority        int32  `json:"priority"`
+}
 
 // LinkInfo holds what bpfman tracks about a link.
 type LinkInfo struct {

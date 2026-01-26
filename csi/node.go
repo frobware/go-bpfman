@@ -136,15 +136,15 @@ func (d *Driver) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolu
 		return nil, status.Errorf(codes.NotFound, "program %q not found: %v", programName, err)
 	}
 
-	// 2. Get the pin path from the program
-	mapPinPath := metadata.PinPath
+	// 2. Get the maps directory from the program (may differ from PinPath if sharing maps)
+	mapPinPath := metadata.MapPinPath
 	if mapPinPath == "" {
-		return nil, status.Errorf(codes.Internal, "program %q has no pin path", programName)
+		return nil, status.Errorf(codes.Internal, "program %q has no map pin path", programName)
 	}
 
 	d.logger.Info("found program",
 		"programName", programName,
-		"pinPath", mapPinPath,
+		"mapPinPath", mapPinPath,
 	)
 
 	// 3. Create per-pod bpffs directory

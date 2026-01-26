@@ -21,6 +21,7 @@ help:
 	@echo "  bpfman-delete               Remove bpfman from cluster"
 	@echo "  bpfman-deploy               Deploy bpfman to KIND cluster"
 	@echo "  bpfman-logs                 Follow bpfman logs"
+	@echo "  bpfman-operator-deploy      Deploy Go bpfman to bpfman-operator cluster"
 	@echo "  bpfman-proto                Generate protobuf/gRPC stubs"
 	@echo "  bpfman-test-grpc            Run gRPC integration tests"
 	@echo "  docker-build-bpfman         Build bpfman container image"
@@ -176,6 +177,13 @@ bpfman-deploy-test: bpfman-kind-load
 
 bpfman-delete-test:
 	kubectl delete -f manifests/bpfman-test-pod.yaml --ignore-not-found
+
+# Deploy Go bpfman to an existing bpfman-operator deployment (replaces Rust bpfman)
+bpfman-operator-deploy: docker-build-bpfman-upstream
+	docker tag $(BPFMAN_IMAGE):$(IMAGE_TAG) $(BPFMAN_IMAGE):latest
+	kind load docker-image $(BPFMAN_IMAGE):latest --name $(KIND_CLUSTER)
+	kubectl rollout restart daemonset/bpfman-daemon -n $(NAMESPACE)
+	kubectl rollout status daemonset/bpfman-daemon -n $(NAMESPACE) --timeout=60s
 
 bpfman-test-grpc: docker-build-bpfman
 	BPFMAN_IMAGE=$(BPFMAN_IMAGE):$(IMAGE_TAG) scripts/test-grpc.sh

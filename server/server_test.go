@@ -52,10 +52,11 @@ func testLogger() *slog.Logger {
 
 // kernelOp records an operation performed on the fake kernel.
 type kernelOp struct {
-	Op   string // "load", "unload", "attach", "detach"
-	Name string // program or link name
-	ID   uint32 // kernel ID assigned
-	Err  error  // error if operation failed
+	Op        string // "load", "unload", "attach", "detach", "attach-xdp-ext", "attach-tc-ext"
+	Name      string // program or link name
+	ID        uint32 // kernel ID assigned
+	Err       error  // error if operation failed
+	MapPinDir string // for XDP/TC extension attachments, the map directory used
 }
 
 // fakeKernel implements interpreter.KernelOperations for testing.
@@ -173,6 +174,47 @@ func (f *fakeKernel) recordOp(op, name string, id uint32, err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.ops = append(f.ops, kernelOp{Op: op, Name: name, ID: id, Err: err})
+}
+
+// recordExtensionAttach records an XDP/TC extension attachment with the mapPinDir.
+func (f *fakeKernel) recordExtensionAttach(op, programName string, id uint32, mapPinDir string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ops = append(f.ops, kernelOp{Op: op, Name: programName, ID: id, MapPinDir: mapPinDir})
+}
+
+// ExtensionAttachOps returns all XDP/TC extension attach operations.
+func (f *fakeKernel) ExtensionAttachOps() []kernelOp {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var ops []kernelOp
+	for _, op := range f.ops {
+		if op.Op == "attach-xdp-ext" || op.Op == "attach-tc-ext" {
+			ops = append(ops, op)
+		}
+	}
+	return ops
+}
+
+// recordTCXAttach records a TCX attachment with the programPinPath.
+func (f *fakeKernel) recordTCXAttach(programPinPath string, id uint32) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	// Reuse MapPinDir field to store programPinPath for TCX
+	f.ops = append(f.ops, kernelOp{Op: "attach-tcx", Name: programPinPath, ID: id})
+}
+
+// TCXAttachOps returns all TCX attach operations.
+func (f *fakeKernel) TCXAttachOps() []kernelOp {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var ops []kernelOp
+	for _, op := range f.ops {
+		if op.Op == "attach-tcx" {
+			ops = append(ops, op)
+		}
+	}
+	return ops
 }
 
 // FailOnProgram configures the kernel to fail when loading a specific program.
@@ -577,6 +619,8 @@ func (f *fakeKernel) AttachXDPExtension(dispatcherPinPath, objectPath, programNa
 		PinPath: linkPinPath,
 		Type:    bpfman.AttachXDP,
 	}
+	// Record the operation with mapPinDir for test verification
+	f.recordExtensionAttach("attach-xdp-ext", programName, id, mapPinDir)
 	return bpfman.ManagedLink{
 		Managed: &bpfman.LinkInfo{
 			KernelLinkID:    id,
@@ -609,6 +653,8 @@ func (f *fakeKernel) AttachTCExtension(dispatcherPinPath, objectPath, programNam
 		PinPath: linkPinPath,
 		Type:    bpfman.AttachTC,
 	}
+	// Record the operation with mapPinDir for test verification
+	f.recordExtensionAttach("attach-tc-ext", programName, id, mapPinDir)
 	return bpfman.ManagedLink{
 		Managed: &bpfman.LinkInfo{
 			KernelLinkID:    id,
@@ -622,13 +668,15 @@ func (f *fakeKernel) AttachTCExtension(dispatcherPinPath, objectPath, programNam
 	}, nil
 }
 
-func (f *fakeKernel) AttachTCX(ifindex int, direction, programPinPath, linkPinPath, netns string) (bpfman.ManagedLink, error) {
+func (f *fakeKernel) AttachTCX(ifindex int, direction, programPinPath, linkPinPath, netns string, order bpfman.TCXAttachOrder) (bpfman.ManagedLink, error) {
 	id := f.nextID.Add(1)
 	f.links[id] = &bpfman.AttachedLink{
 		ID:      id,
 		PinPath: linkPinPath,
 		Type:    bpfman.AttachTCX,
 	}
+	// Record the operation with programPinPath for test verification
+	f.recordTCXAttach(programPinPath, id)
 	return bpfman.ManagedLink{
 		Managed: &bpfman.LinkInfo{
 			KernelLinkID:    id,
@@ -654,6 +702,7 @@ type testFixture struct {
 	Server *server.Server
 	Kernel *fakeKernel
 	Store  interpreter.Store
+	Dirs   *config.RuntimeDirs
 	t      *testing.T
 }
 
@@ -671,6 +720,7 @@ func newTestFixture(t *testing.T) *testFixture {
 		Server: srv,
 		Kernel: kernel,
 		Store:  store,
+		Dirs:   &dirs,
 		t:      t,
 	}
 }
@@ -3812,4 +3862,297 @@ func TestMapSharing_SingleProgram_NoMapOwner(t *testing.T) {
 	// Single program owns its own maps
 	assert.Zero(t, getResp.Info.MapOwnerId, "single program should have no MapOwnerID")
 	assert.NotEmpty(t, getResp.Info.MapPinPath, "single program should have MapPinPath set")
+}
+
+// TestMapSharing_XDPAttach_UsesMapPinPath verifies that:
+//
+//	Given a loaded XDP program,
+//	When it is attached to an interface,
+//	Then the kernel receives the program's MapPinPath (not computed from kernel ID).
+func TestMapSharing_XDPAttach_UsesMapPinPath(t *testing.T) {
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	// Load an XDP program
+	loadReq := &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_File{File: "/path/to/xdp.o"},
+		},
+		Info: []*pb.LoadInfo{
+			{Name: "xdp_prog", ProgramType: pb.BpfmanProgramType_XDP},
+		},
+	}
+
+	loadResp, err := fix.Server.Load(ctx, loadReq)
+	require.NoError(t, err, "Load should succeed")
+	require.Len(t, loadResp.Programs, 1)
+
+	progID := loadResp.Programs[0].KernelInfo.Id
+
+	// Get the program's MapPinPath
+	getResp, err := fix.Server.Get(ctx, &pb.GetRequest{Id: progID})
+	require.NoError(t, err, "Get should succeed")
+	expectedMapPinPath := getResp.Info.MapPinPath
+	require.NotEmpty(t, expectedMapPinPath, "MapPinPath should be set")
+
+	// Attach the program
+	attachReq := &pb.AttachRequest{
+		Id: progID,
+		Attach: &pb.AttachInfo{
+			Info: &pb.AttachInfo_XdpAttachInfo{
+				XdpAttachInfo: &pb.XDPAttachInfo{
+					Iface: "eth0",
+				},
+			},
+		},
+	}
+
+	_, err = fix.Server.Attach(ctx, attachReq)
+	require.NoError(t, err, "Attach should succeed")
+
+	// Verify the kernel received the correct MapPinDir
+	extOps := fix.Kernel.ExtensionAttachOps()
+	require.Len(t, extOps, 1, "expected one XDP extension attach")
+	assert.Equal(t, "attach-xdp-ext", extOps[0].Op)
+	assert.Equal(t, expectedMapPinPath, extOps[0].MapPinDir,
+		"XDP attach should use the program's MapPinPath")
+}
+
+// TestMapSharing_TCAttach_UsesMapPinPath verifies that:
+//
+//	Given a loaded TC program,
+//	When it is attached to an interface,
+//	Then the kernel receives the program's MapPinPath (not computed from kernel ID).
+func TestMapSharing_TCAttach_UsesMapPinPath(t *testing.T) {
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	// Load a TC program
+	loadReq := &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_File{File: "/path/to/tc.o"},
+		},
+		Info: []*pb.LoadInfo{
+			{Name: "tc_prog", ProgramType: pb.BpfmanProgramType_TC},
+		},
+	}
+
+	loadResp, err := fix.Server.Load(ctx, loadReq)
+	require.NoError(t, err, "Load should succeed")
+	require.Len(t, loadResp.Programs, 1)
+
+	progID := loadResp.Programs[0].KernelInfo.Id
+
+	// Get the program's MapPinPath
+	getResp, err := fix.Server.Get(ctx, &pb.GetRequest{Id: progID})
+	require.NoError(t, err, "Get should succeed")
+	expectedMapPinPath := getResp.Info.MapPinPath
+	require.NotEmpty(t, expectedMapPinPath, "MapPinPath should be set")
+
+	// Attach the program
+	attachReq := &pb.AttachRequest{
+		Id: progID,
+		Attach: &pb.AttachInfo{
+			Info: &pb.AttachInfo_TcAttachInfo{
+				TcAttachInfo: &pb.TCAttachInfo{
+					Iface:     "eth0",
+					Priority:  50,
+					Direction: "ingress",
+				},
+			},
+		},
+	}
+
+	_, err = fix.Server.Attach(ctx, attachReq)
+	require.NoError(t, err, "Attach should succeed")
+
+	// Verify the kernel received the correct MapPinDir
+	extOps := fix.Kernel.ExtensionAttachOps()
+	require.Len(t, extOps, 1, "expected one TC extension attach")
+	assert.Equal(t, "attach-tc-ext", extOps[0].Op)
+	assert.Equal(t, expectedMapPinPath, extOps[0].MapPinDir,
+		"TC attach should use the program's MapPinPath")
+}
+
+// TestMapSharing_MultiProgram_XDPAttach_UsesOwnerMapPinPath verifies that:
+//
+//	Given a multi-program load where the second program has MapOwnerID set,
+//	When the second (XDP) program is attached,
+//	Then the kernel receives the map owner's MapPinPath (shared maps directory).
+func TestMapSharing_MultiProgram_XDPAttach_UsesOwnerMapPinPath(t *testing.T) {
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	// Load multiple programs - first is owner, second is XDP that shares maps
+	loadReq := &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_File{File: "/path/to/multi.o"},
+		},
+		Info: []*pb.LoadInfo{
+			{Name: "kprobe_counter", ProgramType: pb.BpfmanProgramType_KPROBE},
+			{Name: "xdp_stats", ProgramType: pb.BpfmanProgramType_XDP},
+		},
+	}
+
+	loadResp, err := fix.Server.Load(ctx, loadReq)
+	require.NoError(t, err, "Load should succeed")
+	require.Len(t, loadResp.Programs, 2)
+
+	ownerID := loadResp.Programs[0].KernelInfo.Id
+	xdpProgID := loadResp.Programs[1].KernelInfo.Id
+
+	// Get the owner's MapPinPath
+	ownerResp, err := fix.Server.Get(ctx, &pb.GetRequest{Id: ownerID})
+	require.NoError(t, err, "Get owner should succeed")
+	ownerMapPinPath := ownerResp.Info.MapPinPath
+	require.NotEmpty(t, ownerMapPinPath, "owner should have MapPinPath")
+
+	// Verify the XDP program has MapOwnerID set and same MapPinPath
+	xdpResp, err := fix.Server.Get(ctx, &pb.GetRequest{Id: xdpProgID})
+	require.NoError(t, err, "Get XDP program should succeed")
+	assert.Equal(t, ownerID, xdpResp.Info.GetMapOwnerId(),
+		"XDP program should reference the owner")
+	assert.Equal(t, ownerMapPinPath, xdpResp.Info.MapPinPath,
+		"XDP program should have same MapPinPath as owner")
+
+	// Attach the XDP program
+	attachReq := &pb.AttachRequest{
+		Id: xdpProgID,
+		Attach: &pb.AttachInfo{
+			Info: &pb.AttachInfo_XdpAttachInfo{
+				XdpAttachInfo: &pb.XDPAttachInfo{
+					Iface: "eth0",
+				},
+			},
+		},
+	}
+
+	_, err = fix.Server.Attach(ctx, attachReq)
+	require.NoError(t, err, "Attach should succeed")
+
+	// Verify the kernel received the owner's MapPinPath, not the XDP program's kernel ID
+	extOps := fix.Kernel.ExtensionAttachOps()
+	require.Len(t, extOps, 1, "expected one XDP extension attach")
+	assert.Equal(t, "attach-xdp-ext", extOps[0].Op)
+	assert.Equal(t, ownerMapPinPath, extOps[0].MapPinDir,
+		"XDP attach should use the owner's MapPinPath, not compute from kernel ID")
+}
+
+// TestMapSharing_MultiProgram_TCAttach_UsesOwnerMapPinPath verifies that:
+//
+//	Given a multi-program load where the second program has MapOwnerID set,
+//	When the second (TC) program is attached,
+//	Then the kernel receives the map owner's MapPinPath (shared maps directory).
+func TestMapSharing_MultiProgram_TCAttach_UsesOwnerMapPinPath(t *testing.T) {
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	// Load multiple programs - first is owner, second is TC that shares maps
+	loadReq := &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_File{File: "/path/to/multi.o"},
+		},
+		Info: []*pb.LoadInfo{
+			{Name: "kprobe_counter", ProgramType: pb.BpfmanProgramType_KPROBE},
+			{Name: "tc_stats", ProgramType: pb.BpfmanProgramType_TC},
+		},
+	}
+
+	loadResp, err := fix.Server.Load(ctx, loadReq)
+	require.NoError(t, err, "Load should succeed")
+	require.Len(t, loadResp.Programs, 2)
+
+	ownerID := loadResp.Programs[0].KernelInfo.Id
+	tcProgID := loadResp.Programs[1].KernelInfo.Id
+
+	// Get the owner's MapPinPath
+	ownerResp, err := fix.Server.Get(ctx, &pb.GetRequest{Id: ownerID})
+	require.NoError(t, err, "Get owner should succeed")
+	ownerMapPinPath := ownerResp.Info.MapPinPath
+	require.NotEmpty(t, ownerMapPinPath, "owner should have MapPinPath")
+
+	// Verify the TC program has MapOwnerID set and same MapPinPath
+	tcResp, err := fix.Server.Get(ctx, &pb.GetRequest{Id: tcProgID})
+	require.NoError(t, err, "Get TC program should succeed")
+	assert.Equal(t, ownerID, tcResp.Info.GetMapOwnerId(),
+		"TC program should reference the owner")
+	assert.Equal(t, ownerMapPinPath, tcResp.Info.MapPinPath,
+		"TC program should have same MapPinPath as owner")
+
+	// Attach the TC program
+	attachReq := &pb.AttachRequest{
+		Id: tcProgID,
+		Attach: &pb.AttachInfo{
+			Info: &pb.AttachInfo_TcAttachInfo{
+				TcAttachInfo: &pb.TCAttachInfo{
+					Iface:     "eth0",
+					Priority:  50,
+					Direction: "ingress",
+				},
+			},
+		},
+	}
+
+	_, err = fix.Server.Attach(ctx, attachReq)
+	require.NoError(t, err, "Attach should succeed")
+
+	// Verify the kernel received the owner's MapPinPath, not the TC program's kernel ID
+	extOps := fix.Kernel.ExtensionAttachOps()
+	require.Len(t, extOps, 1, "expected one TC extension attach")
+	assert.Equal(t, "attach-tc-ext", extOps[0].Op)
+	assert.Equal(t, ownerMapPinPath, extOps[0].MapPinDir,
+		"TC attach should use the owner's MapPinPath, not compute from kernel ID")
+}
+
+// TestTCX_AttachUsesProgramPinPath verifies that:
+//
+//	Given a loaded TCX program,
+//	When it is attached to an interface,
+//	Then the kernel receives the program's PinPath (not derived from MapPinPath).
+func TestTCX_AttachUsesProgramPinPath(t *testing.T) {
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	// Load a TCX program
+	loadReq := &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_File{File: "/path/to/tcx.o"},
+		},
+		Info: []*pb.LoadInfo{
+			{Name: "tcx_prog", ProgramType: pb.BpfmanProgramType_TCX},
+		},
+	}
+
+	loadResp, err := fix.Server.Load(ctx, loadReq)
+	require.NoError(t, err, "Load should succeed")
+	require.Len(t, loadResp.Programs, 1)
+
+	progID := loadResp.Programs[0].KernelInfo.Id
+
+	// The expected pin path follows the pattern: <fsRoot>/prog_<kernelID>
+	// The fake kernel uses spec.PinPath() (which is fix.Dirs.FS) + "/prog_" + id
+	expectedPinPath := fmt.Sprintf("%s/prog_%d", fix.Dirs.FS, progID)
+
+	// Attach the program
+	attachReq := &pb.AttachRequest{
+		Id: progID,
+		Attach: &pb.AttachInfo{
+			Info: &pb.AttachInfo_TcxAttachInfo{
+				TcxAttachInfo: &pb.TCXAttachInfo{
+					Iface:     "eth0",
+					Direction: "ingress",
+				},
+			},
+		},
+	}
+
+	_, err = fix.Server.Attach(ctx, attachReq)
+	require.NoError(t, err, "Attach should succeed")
+
+	// Verify the kernel received the correct programPinPath
+	tcxOps := fix.Kernel.TCXAttachOps()
+	require.Len(t, tcxOps, 1, "expected one TCX attach")
+	assert.Equal(t, "attach-tcx", tcxOps[0].Op)
+	assert.Equal(t, expectedPinPath, tcxOps[0].Name,
+		"TCX attach should use prog.PinPath directly, not derive from MapPinPath")
 }
