@@ -34,87 +34,49 @@ func GetNsid(path string) (uint64, error) {
 	return stat.Ino, nil
 }
 
-// Guard holds the original network namespace file descriptor and restores
-// it when Close() is called. This implements the RAII pattern used by
-// the Rust bpfman implementation.
+// Run executes fn in the network namespace specified by path.
+// If path is empty, fn is executed in the current namespace (no switch).
+// The original namespace is always restored after fn returns, even if fn panics.
 //
 // Usage:
 //
-//	guard, err := netns.Enter("/var/run/netns/target")
-//	if err != nil {
-//	    return err
-//	}
-//	defer guard.Close()
-//	// ... operations in target namespace ...
-type Guard struct {
-	originalNS *os.File
-}
-
-// Close restores the original network namespace, closes the file descriptor,
-// and unlocks the OS thread that was locked by Enter().
-// It is safe to call Close multiple times.
-func (g *Guard) Close() error {
-	if g.originalNS == nil {
-		return nil
+//	err := netns.Run("/var/run/netns/target", func() error {
+//	    // operations in target namespace
+//	    return nil
+//	})
+func Run(path string, fn func() error) error {
+	if path == "" {
+		return fn()
 	}
 
-	// Switch back to the original namespace
-	// Note: We're already locked to this thread from Enter()
-	err := unix.Setns(int(g.originalNS.Fd()), unix.CLONE_NEWNET)
-	closeErr := g.originalNS.Close()
-	g.originalNS = nil
-
-	// Unlock the thread that was locked in Enter()
-	runtime.UnlockOSThread()
-
-	if err != nil {
-		return fmt.Errorf("setns to restore original namespace: %w", err)
-	}
-	return closeErr
-}
-
-// Enter switches to the network namespace specified by path and returns a Guard
-// that will restore the original namespace when Close() is called.
-//
-// The path should be a network namespace file, typically:
-//   - /proc/<pid>/ns/net for a process's namespace
-//   - /var/run/netns/<name> for a named namespace
-//
-// The caller must call Guard.Close() to restore the original namespace,
-// typically using defer.
-//
-// Note: This function locks the current goroutine to its OS thread for the
-// duration of the namespace switch. The Guard.Close() will unlock it.
-func Enter(path string) (*Guard, error) {
-	// Lock to this OS thread - namespace switching is per-thread
 	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 
-	// Open our current namespace to restore later
-	originalNS, err := os.Open(fmt.Sprintf("/proc/%d/ns/net", os.Getpid()))
+	// Open current namespace for restoration
+	originalNS, err := os.Open("/proc/self/ns/net")
 	if err != nil {
-		runtime.UnlockOSThread()
-		return nil, fmt.Errorf("open current network namespace: %w", err)
+		return fmt.Errorf("open current netns: %w", err)
 	}
+	defer originalNS.Close()
 
 	// Open target namespace
 	targetNS, err := os.Open(path)
 	if err != nil {
-		originalNS.Close()
-		runtime.UnlockOSThread()
-		return nil, fmt.Errorf("open target network namespace %s: %w", path, err)
+		return fmt.Errorf("open target netns %s: %w", path, err)
 	}
 	defer targetNS.Close()
 
 	// Switch to target namespace
 	if err := unix.Setns(int(targetNS.Fd()), unix.CLONE_NEWNET); err != nil {
-		originalNS.Close()
-		runtime.UnlockOSThread()
-		return nil, fmt.Errorf("setns to target namespace: %w", err)
+		return fmt.Errorf("setns to target netns: %w", err)
 	}
 
-	// Note: We don't unlock the thread here. The Guard.Close() will do that
-	// after restoring the original namespace. This ensures all operations
-	// between Enter() and Close() happen in the target namespace.
+	// Ensure we restore original namespace even on panic
+	defer func() {
+		// Ignore error - we're in cleanup, and the thread will be
+		// destroyed anyway if we can't restore
+		_ = unix.Setns(int(originalNS.Fd()), unix.CLONE_NEWNET)
+	}()
 
-	return &Guard{originalNS: originalNS}, nil
+	return fn()
 }

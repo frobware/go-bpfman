@@ -67,93 +67,90 @@ func (k *kernelAdapter) AttachTCDispatcherWithPaths(ifindex int, progPinPath, li
 		return nil, fmt.Errorf("invalid TC direction %q: must be ingress or egress", direction)
 	}
 
-	// Enter target network namespace if specified
-	var nsGuard *netns.Guard
+	// Attach and pin in target namespace (if specified)
 	if netnsPath != "" {
 		k.logger.Debug("entering network namespace for TC dispatcher attachment", "netns", netnsPath, "ifindex", ifindex, "direction", direction)
-		guard, err := netns.Enter(netnsPath)
-		if err != nil {
-			return nil, fmt.Errorf("enter network namespace %s: %w", netnsPath, err)
-		}
-		nsGuard = guard
-		defer func() {
-			if err := nsGuard.Close(); err != nil {
-				k.logger.Warn("failed to restore network namespace", "error", err)
-			}
-		}()
 	}
 
-	// Attach to interface using TCX link (now in target namespace if netnsPath was provided)
-	lnk, err := link.AttachTCX(link.TCXOptions{
-		Program:   dispatcherProg,
-		Interface: ifindex,
-		Attach:    attachType,
+	var result *interpreter.TCDispatcherResult
+	err = netns.Run(netnsPath, func() error {
+		// Attach to interface using TCX link
+		lnk, err := link.AttachTCX(link.TCXOptions{
+			Program:   dispatcherProg,
+			Interface: ifindex,
+			Attach:    attachType,
+		})
+		if err != nil {
+			return fmt.Errorf("attach TC dispatcher to ifindex %d direction %s: %w", ifindex, direction, err)
+		}
+
+		result = &interpreter.TCDispatcherResult{}
+
+		// Get dispatcher program info
+		progInfo, err := dispatcherProg.Info()
+		if err != nil {
+			lnk.Close()
+			return fmt.Errorf("get TC dispatcher program info: %w", err)
+		}
+		progID, ok := progInfo.ID()
+		if !ok {
+			lnk.Close()
+			return fmt.Errorf("failed to get TC dispatcher program ID from kernel")
+		}
+		result.DispatcherID = uint32(progID)
+
+		// Get link info
+		linkInfo, err := lnk.Info()
+		if err != nil {
+			lnk.Close()
+			return fmt.Errorf("get TC dispatcher link info: %w", err)
+		}
+		result.LinkID = uint32(linkInfo.ID)
+
+		// Pin dispatcher program to the revision-specific path
+		if progPinPath != "" {
+			progDir := filepath.Dir(progPinPath)
+			if err := os.MkdirAll(progDir, 0755); err != nil {
+				lnk.Close()
+				return fmt.Errorf("create TC dispatcher program directory: %w", err)
+			}
+
+			if err := dispatcherProg.Pin(progPinPath); err != nil {
+				lnk.Close()
+				return fmt.Errorf("pin TC dispatcher program to %s: %w", progPinPath, err)
+			}
+			result.DispatcherPin = progPinPath
+		}
+
+		// Pin link to the stable path
+		if linkPinPath != "" {
+			linkDir := filepath.Dir(linkPinPath)
+			if err := os.MkdirAll(linkDir, 0755); err != nil {
+				if progPinPath != "" {
+					if rmErr := os.Remove(progPinPath); rmErr != nil && !os.IsNotExist(rmErr) {
+						k.logger.Warn("failed to remove program pin during cleanup", "path", progPinPath, "error", rmErr)
+					}
+				}
+				lnk.Close()
+				return fmt.Errorf("create TC link pin directory: %w", err)
+			}
+
+			if err := lnk.Pin(linkPinPath); err != nil {
+				if progPinPath != "" {
+					if rmErr := os.Remove(progPinPath); rmErr != nil && !os.IsNotExist(rmErr) {
+						k.logger.Warn("failed to remove program pin during cleanup", "path", progPinPath, "error", rmErr)
+					}
+				}
+				lnk.Close()
+				return fmt.Errorf("pin TC dispatcher link to %s: %w", linkPinPath, err)
+			}
+			result.LinkPin = linkPinPath
+		}
+
+		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("attach TC dispatcher to ifindex %d direction %s: %w", ifindex, direction, err)
-	}
-
-	result := &interpreter.TCDispatcherResult{}
-
-	// Get dispatcher program info
-	progInfo, err := dispatcherProg.Info()
-	if err != nil {
-		lnk.Close()
-		return nil, fmt.Errorf("get TC dispatcher program info: %w", err)
-	}
-	progID, ok := progInfo.ID()
-	if !ok {
-		lnk.Close()
-		return nil, fmt.Errorf("failed to get TC dispatcher program ID from kernel")
-	}
-	result.DispatcherID = uint32(progID)
-
-	// Get link info
-	linkInfo, err := lnk.Info()
-	if err != nil {
-		lnk.Close()
-		return nil, fmt.Errorf("get TC dispatcher link info: %w", err)
-	}
-	result.LinkID = uint32(linkInfo.ID)
-
-	// Pin dispatcher program to the revision-specific path
-	if progPinPath != "" {
-		progDir := filepath.Dir(progPinPath)
-		if err := os.MkdirAll(progDir, 0755); err != nil {
-			lnk.Close()
-			return nil, fmt.Errorf("create TC dispatcher program directory: %w", err)
-		}
-
-		if err := dispatcherProg.Pin(progPinPath); err != nil {
-			lnk.Close()
-			return nil, fmt.Errorf("pin TC dispatcher program to %s: %w", progPinPath, err)
-		}
-		result.DispatcherPin = progPinPath
-	}
-
-	// Pin link to the stable path
-	if linkPinPath != "" {
-		linkDir := filepath.Dir(linkPinPath)
-		if err := os.MkdirAll(linkDir, 0755); err != nil {
-			if progPinPath != "" {
-				if rmErr := os.Remove(progPinPath); rmErr != nil && !os.IsNotExist(rmErr) {
-					k.logger.Warn("failed to remove program pin during cleanup", "path", progPinPath, "error", rmErr)
-				}
-			}
-			lnk.Close()
-			return nil, fmt.Errorf("create TC link pin directory: %w", err)
-		}
-
-		if err := lnk.Pin(linkPinPath); err != nil {
-			if progPinPath != "" {
-				if rmErr := os.Remove(progPinPath); rmErr != nil && !os.IsNotExist(rmErr) {
-					k.logger.Warn("failed to remove program pin during cleanup", "path", progPinPath, "error", rmErr)
-				}
-			}
-			lnk.Close()
-			return nil, fmt.Errorf("pin TC dispatcher link to %s: %w", linkPinPath, err)
-		}
-		result.LinkPin = linkPinPath
+		return nil, err
 	}
 
 	return result, nil
@@ -331,59 +328,59 @@ func (k *kernelAdapter) AttachTCX(ifindex int, direction, programPinPath, linkPi
 		anchor = link.Head()
 	}
 
-	// Enter target network namespace if specified
+	// Attach and pin in target namespace (if specified)
 	if netnsPath != "" {
 		k.logger.Debug("entering network namespace for TCX attachment", "netns", netnsPath, "ifindex", ifindex, "direction", direction)
-		guard, err := netns.Enter(netnsPath)
-		if err != nil {
-			return bpfman.ManagedLink{}, fmt.Errorf("enter network namespace %s: %w", netnsPath, err)
-		}
-		defer func() {
-			if err := guard.Close(); err != nil {
-				k.logger.Warn("failed to restore network namespace", "error", err)
-			}
-		}()
 	}
 
-	// Attach using TCX link with ordering anchor
-	lnk, err := link.AttachTCX(link.TCXOptions{
-		Interface: ifindex,
-		Program:   prog,
-		Attach:    attachType,
-		Anchor:    anchor,
+	var result bpfman.ManagedLink
+	err = netns.Run(netnsPath, func() error {
+		// Attach using TCX link with ordering anchor
+		lnk, err := link.AttachTCX(link.TCXOptions{
+			Interface: ifindex,
+			Program:   prog,
+			Attach:    attachType,
+			Anchor:    anchor,
+		})
+		if err != nil {
+			return fmt.Errorf("attach TCX to ifindex %d %s: %w", ifindex, direction, err)
+		}
+
+		// Pin the link if path provided
+		if linkPinPath != "" {
+			if err := os.MkdirAll(filepath.Dir(linkPinPath), 0755); err != nil {
+				lnk.Close()
+				return fmt.Errorf("create TCX link pin directory: %w", err)
+			}
+
+			if err := lnk.Pin(linkPinPath); err != nil {
+				lnk.Close()
+				return fmt.Errorf("pin TCX link to %s: %w", linkPinPath, err)
+			}
+		}
+
+		// Get link info
+		linkInfo, err := lnk.Info()
+		if err != nil {
+			lnk.Close()
+			return fmt.Errorf("get TCX link info: %w", err)
+		}
+
+		result = bpfman.ManagedLink{
+			Managed: &bpfman.LinkInfo{
+				KernelLinkID:    uint32(linkInfo.ID),
+				KernelProgramID: uint32(progID),
+				Type:            bpfman.LinkTypeTCX,
+				PinPath:         linkPinPath,
+				CreatedAt:       time.Now(),
+			},
+			Kernel: NewLinkInfo(linkInfo),
+		}
+		return nil
 	})
 	if err != nil {
-		return bpfman.ManagedLink{}, fmt.Errorf("attach TCX to ifindex %d %s: %w", ifindex, direction, err)
+		return bpfman.ManagedLink{}, err
 	}
 
-	// Pin the link if path provided
-	if linkPinPath != "" {
-		if err := os.MkdirAll(filepath.Dir(linkPinPath), 0755); err != nil {
-			lnk.Close()
-			return bpfman.ManagedLink{}, fmt.Errorf("create TCX link pin directory: %w", err)
-		}
-
-		if err := lnk.Pin(linkPinPath); err != nil {
-			lnk.Close()
-			return bpfman.ManagedLink{}, fmt.Errorf("pin TCX link to %s: %w", linkPinPath, err)
-		}
-	}
-
-	// Get link info
-	linkInfo, err := lnk.Info()
-	if err != nil {
-		lnk.Close()
-		return bpfman.ManagedLink{}, fmt.Errorf("get TCX link info: %w", err)
-	}
-
-	return bpfman.ManagedLink{
-		Managed: &bpfman.LinkInfo{
-			KernelLinkID:    uint32(linkInfo.ID),
-			KernelProgramID: uint32(progID),
-			Type:            bpfman.LinkTypeTCX,
-			PinPath:         linkPinPath,
-			CreatedAt:       time.Now(),
-		},
-		Kernel: NewLinkInfo(linkInfo),
-	}, nil
+	return result, nil
 }
