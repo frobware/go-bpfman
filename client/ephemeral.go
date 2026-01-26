@@ -230,22 +230,10 @@ func (e *ephemeralClient) GetLink(ctx context.Context, kernelLinkID uint32) (bpf
 	return e.remote.GetLink(ctx, kernelLinkID)
 }
 
-// PlanGC creates a garbage collection plan via direct manager access.
+// GC removes stale database entries via direct manager access.
 // This bypasses gRPC as GC is a local-only operation.
-func (e *ephemeralClient) PlanGC(ctx context.Context, cfg manager.GCConfig) (manager.GCPlan, error) {
-	return e.env.Manager.PlanGC(ctx, cfg)
-}
-
-// ApplyGC executes a garbage collection plan via direct manager access.
-// This bypasses gRPC as GC is a local-only operation.
-func (e *ephemeralClient) ApplyGC(ctx context.Context, plan manager.GCPlan) (manager.GCResult, error) {
-	return e.env.Manager.ApplyGC(ctx, plan)
-}
-
-// Reconcile cleans up orphaned store entries via direct manager access.
-// This bypasses gRPC as reconciliation is a local-only operation.
-func (e *ephemeralClient) Reconcile(ctx context.Context) error {
-	return e.env.Manager.Reconcile(ctx)
+func (e *ephemeralClient) GC(ctx context.Context) (manager.GCResult, error) {
+	return e.env.Manager.GC(ctx)
 }
 
 // SetImagePuller configures the image puller for OCI operations.

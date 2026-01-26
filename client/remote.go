@@ -390,19 +390,9 @@ func (c *remoteClient) GetLink(ctx context.Context, kernelLinkID uint32) (bpfman
 	return summary, details, nil
 }
 
-// PlanGC is a local-only operation.
-func (c *remoteClient) PlanGC(ctx context.Context, cfg manager.GCConfig) (manager.GCPlan, error) {
-	return manager.GCPlan{}, fmt.Errorf("PlanGC: %w", ErrNotSupported)
-}
-
-// ApplyGC is a local-only operation.
-func (c *remoteClient) ApplyGC(ctx context.Context, plan manager.GCPlan) (manager.GCResult, error) {
-	return manager.GCResult{}, fmt.Errorf("ApplyGC: %w", ErrNotSupported)
-}
-
-// Reconcile is a local-only operation.
-func (c *remoteClient) Reconcile(ctx context.Context) error {
-	return fmt.Errorf("Reconcile: %w", ErrNotSupported)
+// GC is a local-only operation.
+func (c *remoteClient) GC(ctx context.Context) (manager.GCResult, error) {
+	return manager.GCResult{}, fmt.Errorf("GC: %w", ErrNotSupported)
 }
 
 // SetImagePuller configures the image puller for OCI operations.

@@ -123,9 +123,7 @@ type Client interface {
 	GetLink(ctx context.Context, kernelLinkID uint32) (bpfman.LinkSummary, bpfman.LinkDetails, error)
 
 	// Host-only operations (local execution required)
-	PlanGC(ctx context.Context, cfg manager.GCConfig) (manager.GCPlan, error)
-	ApplyGC(ctx context.Context, plan manager.GCPlan) (manager.GCResult, error)
-	Reconcile(ctx context.Context) error
+	GC(ctx context.Context) (manager.GCResult, error)
 
 	// Image operations
 	PullImage(ctx context.Context, ref interpreter.ImageRef) (interpreter.PulledImage, error)
