@@ -55,6 +55,9 @@ type DispatcherStore interface {
 	// Returns store.ErrNotFound if the dispatcher does not exist.
 	GetDispatcher(ctx context.Context, dispType string, nsid uint64, ifindex uint32) (dispatcher.State, error)
 
+	// ListDispatchers returns all dispatchers.
+	ListDispatchers(ctx context.Context) ([]dispatcher.State, error)
+
 	// SaveDispatcher creates or updates a dispatcher.
 	SaveDispatcher(ctx context.Context, state dispatcher.State) error
 
@@ -66,6 +69,21 @@ type DispatcherStore interface {
 	IncrementRevision(ctx context.Context, dispType string, nsid uint64, ifindex uint32) (uint32, error)
 }
 
+// GCResult contains statistics from store garbage collection.
+type GCResult struct {
+	ProgramsRemoved    int
+	DispatchersRemoved int
+	LinksRemoved       int
+}
+
+// GarbageCollector removes stale entries from the store.
+type GarbageCollector interface {
+	// GC removes all stored entries (programs, dispatchers, links)
+	// that don't exist in the provided kernel state. Handles internal
+	// ordering constraints (e.g., dependent programs before map owners).
+	GC(ctx context.Context, kernelProgramIDs, kernelLinkIDs map[uint32]bool) (GCResult, error)
+}
+
 // Store combines program, link, and dispatcher store operations.
 type Store interface {
 	io.Closer
@@ -73,6 +91,7 @@ type Store interface {
 	LinkStore
 	DispatcherStore
 	Transactional
+	GarbageCollector
 }
 
 // Transactional provides atomic execution of store operations.

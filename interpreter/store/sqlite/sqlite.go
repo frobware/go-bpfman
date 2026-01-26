@@ -194,6 +194,7 @@ type sqliteStore struct {
 
 	// Prepared statements for dispatcher operations
 	stmtGetDispatcher       *sql.Stmt
+	stmtListDispatchers     *sql.Stmt
 	stmtSaveDispatcher      *sql.Stmt
 	stmtDeleteDispatcher    *sql.Stmt
 	stmtIncrementRevision   *sql.Stmt
@@ -539,6 +540,13 @@ func (s *sqliteStore) prepareDispatcherStatements() error {
 		return fmt.Errorf("prepare GetDispatcher: %w", err)
 	}
 
+	const sqlListDispatchers = `
+		SELECT id, type, nsid, ifindex, revision, kernel_id, link_id, link_pin_path, prog_pin_path, num_extensions
+		FROM dispatchers`
+	if s.stmtListDispatchers, err = s.db.Prepare(sqlListDispatchers); err != nil {
+		return fmt.Errorf("prepare ListDispatchers: %w", err)
+	}
+
 	const sqlSaveDispatcher = `
 		INSERT INTO dispatchers (type, nsid, ifindex, revision, kernel_id, link_id, link_pin_path, prog_pin_path, num_extensions, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -832,6 +840,92 @@ func (s *sqliteStore) Delete(ctx context.Context, kernelID uint32) error {
 	rows, _ := result.RowsAffected()
 	s.logger.Debug("sql", "stmt", "DeleteProgram", "args", []any{kernelID}, "duration_ms", msec(time.Since(start)), "rows_affected", rows)
 	return nil
+}
+
+// GC removes all stale entries (programs, dispatchers, links) that don't
+// exist in the provided kernel state. Handles internal ordering constraints
+// (e.g., dependent programs before map owners for FK constraints).
+func (s *sqliteStore) GC(ctx context.Context, kernelProgramIDs, kernelLinkIDs map[uint32]bool) (interpreter.GCResult, error) {
+	start := time.Now()
+	var result interpreter.GCResult
+
+	// 1. GC programs (order: dependents before owners)
+	stored, err := s.List(ctx)
+	if err != nil {
+		return result, fmt.Errorf("list programs: %w", err)
+	}
+
+	var dependents, owners []uint32
+	for id, prog := range stored {
+		if !kernelProgramIDs[id] {
+			if prog.MapOwnerID != 0 {
+				dependents = append(dependents, id)
+			} else {
+				owners = append(owners, id)
+			}
+		}
+	}
+
+	for _, id := range dependents {
+		if err := s.Delete(ctx, id); err != nil {
+			s.logger.Warn("failed to delete dependent program", "kernel_id", id, "error", err)
+			continue
+		}
+		result.ProgramsRemoved++
+	}
+	for _, id := range owners {
+		if err := s.Delete(ctx, id); err != nil {
+			s.logger.Warn("failed to delete owner program", "kernel_id", id, "error", err)
+			continue
+		}
+		result.ProgramsRemoved++
+	}
+
+	// 2. Reconcile dispatchers (delete those referencing gone programs)
+	dispatchers, err := s.ListDispatchers(ctx)
+	if err != nil {
+		return result, fmt.Errorf("list dispatchers: %w", err)
+	}
+
+	for _, disp := range dispatchers {
+		if !kernelProgramIDs[disp.KernelID] {
+			if err := s.DeleteDispatcher(ctx, string(disp.Type), disp.Nsid, disp.Ifindex); err != nil {
+				s.logger.Warn("failed to delete dispatcher", "type", disp.Type, "nsid", disp.Nsid, "ifindex", disp.Ifindex, "error", err)
+				continue
+			}
+			result.DispatchersRemoved++
+		}
+	}
+
+	// 3. Reconcile links (delete those not in kernel)
+	// Skip synthetic link IDs (>= 0x80000000) since they're not real kernel links
+	// and cannot be enumerated via the kernel's link iterator. These are used for
+	// perf_event-based attachments (e.g., container uprobes) that lack kernel link IDs.
+	links, err := s.ListLinks(ctx)
+	if err != nil {
+		return result, fmt.Errorf("list links: %w", err)
+	}
+
+	for _, link := range links {
+		// Skip synthetic link IDs - they're not in kernelLinkIDs but are valid
+		if bpfman.IsSyntheticLinkID(link.KernelLinkID) {
+			continue
+		}
+		if !kernelLinkIDs[link.KernelLinkID] {
+			if err := s.DeleteLink(ctx, link.KernelLinkID); err != nil {
+				s.logger.Warn("failed to delete link", "kernel_link_id", link.KernelLinkID, "error", err)
+				continue
+			}
+			result.LinksRemoved++
+		}
+	}
+
+	s.logger.Debug("reconcile", "duration_ms", msec(time.Since(start)),
+		"programs_removed", result.ProgramsRemoved,
+		"dispatchers_removed", result.DispatchersRemoved,
+		"links_removed", result.LinksRemoved)
+
+	return result, nil
 }
 
 // CountDependentPrograms returns the number of programs that share maps with
@@ -1653,6 +1747,38 @@ func (s *sqliteStore) GetDispatcher(ctx context.Context, dispType string, nsid u
 	return state, nil
 }
 
+// ListDispatchers returns all dispatchers.
+func (s *sqliteStore) ListDispatchers(ctx context.Context) ([]dispatcher.State, error) {
+	start := time.Now()
+	rows, err := s.stmtListDispatchers.QueryContext(ctx)
+	if err != nil {
+		s.logger.Debug("sql", "stmt", "ListDispatchers", "duration_ms", msec(time.Since(start)), "error", err)
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []dispatcher.State
+	for rows.Next() {
+		var state dispatcher.State
+		var id int64
+		var dispTypeStr string
+		if err := rows.Scan(&id, &dispTypeStr, &state.Nsid, &state.Ifindex, &state.Revision,
+			&state.KernelID, &state.LinkID, &state.LinkPinPath, &state.ProgPinPath, &state.NumExtensions); err != nil {
+			s.logger.Debug("sql", "stmt", "ListDispatchers", "duration_ms", msec(time.Since(start)), "error", err)
+			return nil, err
+		}
+		state.Type = dispatcher.DispatcherType(dispTypeStr)
+		result = append(result, state)
+	}
+	if err := rows.Err(); err != nil {
+		s.logger.Debug("sql", "stmt", "ListDispatchers", "duration_ms", msec(time.Since(start)), "error", err)
+		return nil, err
+	}
+
+	s.logger.Debug("sql", "stmt", "ListDispatchers", "duration_ms", msec(time.Since(start)), "rows", len(result))
+	return result, nil
+}
+
 // SaveDispatcher creates or updates a dispatcher.
 func (s *sqliteStore) SaveDispatcher(ctx context.Context, state dispatcher.State) error {
 	now := time.Now().Format(time.RFC3339)
@@ -1797,6 +1923,7 @@ func (s *sqliteStore) RunInTransaction(ctx context.Context, fn func(interpreter.
 		stmtSaveTCXDetails:        tx.StmtContext(ctx, s.stmtSaveTCXDetails),
 		// Dispatcher statements
 		stmtGetDispatcher:       tx.StmtContext(ctx, s.stmtGetDispatcher),
+		stmtListDispatchers:     tx.StmtContext(ctx, s.stmtListDispatchers),
 		stmtSaveDispatcher:      tx.StmtContext(ctx, s.stmtSaveDispatcher),
 		stmtDeleteDispatcher:    tx.StmtContext(ctx, s.stmtDeleteDispatcher),
 		stmtIncrementRevision:   tx.StmtContext(ctx, s.stmtIncrementRevision),
