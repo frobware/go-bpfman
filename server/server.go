@@ -266,6 +266,11 @@ func (s *Server) Load(ctx context.Context, req *pb.LoadRequest) (*pb.LoadRespons
 	// Track successfully loaded programs for rollback on failure
 	var loadedKernelIDs []uint32
 
+	// Track the first program's kernel ID for map sharing within this request.
+	// When loading multiple programs from the same image, subsequent programs
+	// share maps with the first program (the "map owner").
+	var mapOwnerKernelID uint32
+
 	// rollback unloads all previously loaded programs in reverse order
 	rollback := func() {
 		for i := len(loadedKernelIDs) - 1; i >= 0; i-- {
@@ -277,7 +282,7 @@ func (s *Server) Load(ctx context.Context, req *pb.LoadRequest) (*pb.LoadRespons
 
 	// Load each requested program using the manager (transactional)
 	// Pin paths are computed from kernel ID, following upstream convention
-	for _, info := range req.Info {
+	for i, info := range req.Info {
 		// Validate program name is not empty
 		if info.Name == "" {
 			rollback()
@@ -327,6 +332,26 @@ func (s *Server) Load(ctx context.Context, req *pb.LoadRequest) (*pb.LoadRespons
 			spec = spec.WithImageSource(imageSource)
 		}
 
+		// Map sharing: when loading multiple programs from the same image,
+		// the first program creates the maps and subsequent programs share them.
+		// - If req.MapOwnerId is set: use it (explicit map owner from another load)
+		// - Else if this is not the first program in this request: use first program's ID
+		if req.MapOwnerId != nil && *req.MapOwnerId != 0 {
+			spec = spec.WithMapOwnerID(*req.MapOwnerId)
+			s.logger.Info("using explicit map_owner_id from request",
+				"program", info.Name,
+				"map_owner_id", *req.MapOwnerId)
+		} else if i > 0 && mapOwnerKernelID != 0 {
+			// Subsequent programs in same request share maps with the first
+			spec = spec.WithMapOwnerID(mapOwnerKernelID)
+			s.logger.Info("sharing maps with first program in request",
+				"program", info.Name,
+				"map_owner_id", mapOwnerKernelID)
+		} else if i == 0 {
+			s.logger.Info("first program in request will own maps",
+				"program", info.Name)
+		}
+
 		opts := manager.LoadOpts{
 			UserMetadata: req.Metadata,
 			Owner:        "bpfman",
@@ -340,6 +365,11 @@ func (s *Server) Load(ctx context.Context, req *pb.LoadRequest) (*pb.LoadRespons
 
 		// Track for potential rollback
 		loadedKernelIDs = append(loadedKernelIDs, loaded.Kernel.ID())
+
+		// First program becomes the map owner for subsequent programs in this request
+		if i == 0 {
+			mapOwnerKernelID = loaded.Kernel.ID()
+		}
 
 		// Format LoadedAt as RFC3339 if available
 		var loadedAt string
