@@ -77,7 +77,6 @@ static void log_msg(int level, const char *level_str, const char *fmt, ...)
 #define log_info(fmt, ...)  log_msg(LOG_LEVEL_INFO,  "INFO",  fmt, ##__VA_ARGS__)
 #define log_error(fmt, ...) log_msg(LOG_LEVEL_ERROR, "ERROR", fmt, ##__VA_ARGS__)
 
-// Get namespace inode for logging
 static ino_t get_ns_inode(const char *ns_type)
 {
 	char path[64];
@@ -99,10 +98,8 @@ void nsexec(void)
 
 	init_log_level();
 
-	// Check if we're being invoked as a namespace helper
 	ns_path = getenv("_BPFMAN_MNT_NS");
 	if (ns_path == NULL || ns_path[0] == '\0') {
-		// Not a namespace helper invocation - return to Go runtime
 		log_debug("_BPFMAN_MNT_NS not set, returning to Go runtime");
 		return;
 	}
@@ -111,11 +108,9 @@ void nsexec(void)
 	log_debug("target namespace path: %s", ns_path);
 	log_debug("current pid: %d, ppid: %d", getpid(), getppid());
 
-	// Log current namespace before switch
 	orig_mnt_ns = get_ns_inode("mnt");
 	log_debug("current mount namespace inode: %lu", (unsigned long)orig_mnt_ns);
 
-	// Open the target mount namespace
 	log_debug("opening target namespace file: %s", ns_path);
 	fd = open(ns_path, O_RDONLY | O_CLOEXEC);
 	if (fd < 0) {
@@ -125,8 +120,6 @@ void nsexec(void)
 	}
 	log_debug("opened namespace fd: %d", fd);
 
-	// Switch to the target mount namespace
-	// This must happen before Go runtime starts (while single-threaded)
 	log_info("calling setns(fd=%d, CLONE_NEWNS) for %s", fd, ns_path);
 	if (setns(fd, CLONE_NEWNS) < 0) {
 		log_error("setns(%s, CLONE_NEWNS) failed: %s (errno=%d)",
@@ -137,15 +130,12 @@ void nsexec(void)
 
 	close(fd);
 
-	// Log new namespace after switch
 	new_mnt_ns = get_ns_inode("mnt");
 	log_info("setns succeeded: mount namespace changed %lu -> %lu",
 		(unsigned long)orig_mnt_ns, (unsigned long)new_mnt_ns);
 
-	// Clear the environment variable so child processes don't inherit it
 	unsetenv("_BPFMAN_MNT_NS");
 	log_debug("cleared _BPFMAN_MNT_NS environment variable");
 
 	log_info("returning to Go runtime in new mount namespace");
-	// Return to Go runtime - we're now in the target mount namespace
 }
