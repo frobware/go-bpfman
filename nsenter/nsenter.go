@@ -1,5 +1,3 @@
-//go:build linux && cgo
-
 // Package nsenter provides mount namespace switching for uprobe attachment
 // in containers.
 //
