@@ -28,19 +28,22 @@ type NSCmd struct {
 	Uprobe NSUprobeCmd `cmd:"" help:"Attach uprobe in target namespace."`
 }
 
+// ProgramFD is the file descriptor number where the parent passes the BPF
+// program. The parent uses Cmd.ExtraFiles which maps to fd 3, 4, 5, etc.
+const ProgramFD = 3
+
 // NSUprobeCmd attaches a uprobe in the target container's mount namespace.
 // When this code runs, the process is already in the target namespace
 // (switched by the CGO constructor before Go started).
-// The --host-pid argument provides access to the original namespace's bpffs
-// via /proc/<host-pid>/root/... paths.
+//
+// The parent process passes the BPF program via fd 3 (using Cmd.ExtraFiles),
+// so we don't need access to the host's bpffs. After attaching, we print the
+// link ID to stdout; the parent then uses link.NewFromID() to pin it.
 type NSUprobeCmd struct {
-	ProgramPinPath string `arg:"" help:"Path to pinned BPF program (in host namespace)."`
-	LinkPinPath    string `arg:"" help:"Path to pin the link (in host namespace)."`
-	Target         string `arg:"" help:"Target binary path (in container)."`
-	FnName         string `name:"fn-name" help:"Function name to attach to."`
-	Offset         uint64 `name:"offset" default:"0" help:"Offset from function start."`
-	HostPid        int32  `name:"host-pid" required:"" help:"Host PID of bpfman daemon for /proc access."`
-	Retprobe       bool   `name:"retprobe" help:"Attach as uretprobe."`
+	Target   string `arg:"" help:"Target binary path (resolved in container namespace)."`
+	FnName   string `name:"fn-name" help:"Function name to attach to."`
+	Offset   uint64 `name:"offset" default:"0" help:"Offset from function start."`
+	Retprobe bool   `name:"retprobe" help:"Attach as uretprobe."`
 }
 
 // getMntNsInode returns the inode of a mount namespace file.
@@ -57,9 +60,10 @@ func getMntNsInode(path string) uint64 {
 }
 
 // Run executes the uprobe attachment. We're already in the target namespace
-// (the CGO constructor called setns before Go started). We access the host
-// namespace's bpffs through /proc/<host-pid>/root/... which provides
-// cross-namespace filesystem access.
+// (the CGO constructor called setns before Go started).
+//
+// The BPF program is passed via fd 3 from the parent process. After attaching,
+// we print the link ID to stdout so the parent can pin it.
 func (cmd *NSUprobeCmd) Run() error {
 	// Create a logger that writes to stderr (stdout is reserved for link ID)
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
@@ -68,34 +72,36 @@ func (cmd *NSUprobeCmd) Run() error {
 
 	// Log our current state
 	currentMntNs := getMntNsInode("/proc/self/ns/mnt")
-	hostMntNs := getMntNsInode(fmt.Sprintf("/proc/%d/ns/mnt", cmd.HostPid))
 
 	logger.Info("bpfman-ns uprobe handler started",
 		"pid", os.Getpid(),
 		"ppid", os.Getppid(),
-		"host_pid", cmd.HostPid,
 		"current_mnt_ns_inode", currentMntNs,
-		"host_mnt_ns_inode", hostMntNs,
 		"target", cmd.Target,
 		"fn_name", cmd.FnName,
 		"offset", cmd.Offset,
-		"retprobe", cmd.Retprobe)
+		"retprobe", cmd.Retprobe,
+		"program_fd", ProgramFD)
 
-	// Construct paths through /proc/<host-pid>/root to access the host namespace's filesystem
-	hostRoot := fmt.Sprintf("/proc/%d/root", cmd.HostPid)
-	logger.Debug("host root path", "path", hostRoot)
+	// Create program from the inherited file descriptor.
+	// The parent opened the pinned program and passed the fd via ExtraFiles.
+	logger.Debug("creating program from inherited fd", "fd", ProgramFD)
+	prog, err := ebpf.NewProgramFromFD(ProgramFD)
+	if err != nil {
+		logger.Error("failed to create program from fd",
+			"fd", ProgramFD,
+			"error", err)
+		return fmt.Errorf("create program from fd %d: %w", ProgramFD, err)
+	}
+	// Don't close the program - we don't own the fd, and closing would
+	// close the underlying fd which we inherited from parent.
 
-	// Adjust program pin path to go through host namespace
-	adjustedProgPath := filepath.Join(hostRoot, cmd.ProgramPinPath)
-	logger.Debug("adjusted program pin path",
-		"original", cmd.ProgramPinPath,
-		"adjusted", adjustedProgPath)
-
-	// Adjust link pin path to go through host namespace
-	adjustedLinkPath := filepath.Join(hostRoot, cmd.LinkPinPath)
-	logger.Debug("adjusted link pin path",
-		"original", cmd.LinkPinPath,
-		"adjusted", adjustedLinkPath)
+	progInfo, _ := prog.Info()
+	progID, _ := progInfo.ID()
+	logger.Debug("program from inherited fd",
+		"prog_id", progID,
+		"prog_type", prog.Type(),
+		"prog_name", progInfo.Name)
 
 	// Verify target binary exists in current namespace
 	if stat, err := os.Stat(cmd.Target); err != nil {
@@ -109,33 +115,6 @@ func (cmd *NSUprobeCmd) Run() error {
 			"size", stat.Size(),
 			"mode", stat.Mode())
 	}
-
-	// Verify host root is accessible
-	if _, err := os.Stat(hostRoot); err != nil {
-		logger.Error("host root not accessible",
-			"host_root", hostRoot,
-			"error", err)
-		return fmt.Errorf("host root %s not accessible: %w", hostRoot, err)
-	}
-
-	// Load the pinned program (via host namespace's bpffs)
-	logger.Debug("loading pinned program", "path", adjustedProgPath)
-	prog, err := ebpf.LoadPinnedProgram(adjustedProgPath, nil)
-	if err != nil {
-		logger.Error("failed to load pinned program",
-			"path", adjustedProgPath,
-			"error", err)
-		return fmt.Errorf("load pinned program %s: %w", adjustedProgPath, err)
-	}
-	defer prog.Close()
-
-	progInfo, _ := prog.Info()
-	progID, _ := progInfo.ID()
-	logger.Debug("loaded pinned program",
-		"path", adjustedProgPath,
-		"prog_id", progID,
-		"prog_type", prog.Type(),
-		"prog_name", progInfo.Name)
 
 	// Open the executable (resolves in current/target namespace)
 	logger.Debug("opening executable", "target", cmd.Target)
@@ -176,46 +155,28 @@ func (cmd *NSUprobeCmd) Run() error {
 		return fmt.Errorf("attach %s to %s in %s: %w", attachType, cmd.FnName, cmd.Target, err)
 	}
 
-	// Get link info early for logging
+	// Get link info for the parent
 	linkInfo, err := lnk.Info()
 	if err != nil {
 		logger.Error("failed to get link info", "error", err)
 		lnk.Close()
 		return fmt.Errorf("get link info: %w", err)
 	}
+
 	logger.Info("probe attached successfully",
 		"type", attachType,
 		"link_id", linkInfo.ID,
 		"link_type", linkInfo.Type,
 		"prog_id", progID)
 
-	// Create link pin directory (via host namespace's bpffs)
-	linkPinDir := filepath.Dir(adjustedLinkPath)
-	logger.Debug("creating link pin directory", "path", linkPinDir)
-	if err := os.MkdirAll(linkPinDir, 0755); err != nil {
-		logger.Error("failed to create link pin directory",
-			"path", linkPinDir,
-			"error", err)
-		lnk.Close()
-		return fmt.Errorf("create link pin directory: %w", err)
-	}
-
-	// Pin the link (via host namespace's bpffs)
-	logger.Debug("pinning link", "path", adjustedLinkPath)
-	if err := lnk.Pin(adjustedLinkPath); err != nil {
-		logger.Error("failed to pin link",
-			"path", adjustedLinkPath,
-			"error", err)
-		lnk.Close()
-		return fmt.Errorf("pin link to %s: %w", adjustedLinkPath, err)
-	}
-	logger.Info("link pinned successfully",
-		"path", adjustedLinkPath,
-		"link_id", linkInfo.ID)
-
-	// Print link ID for the parent process to capture (to stdout)
+	// Print link ID for the parent process to capture (to stdout).
+	// The parent will use link.NewFromID() to get the link and pin it.
 	logger.Debug("writing link ID to stdout", "link_id", linkInfo.ID)
 	fmt.Printf("%d\n", linkInfo.ID)
+
+	// Close the link fd - the kernel link object persists because it's
+	// attached to the uprobe. The parent will re-acquire it via NewFromID.
+	lnk.Close()
 
 	logger.Info("bpfman-ns uprobe handler completed successfully",
 		"link_id", linkInfo.ID)

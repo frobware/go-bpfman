@@ -155,20 +155,27 @@ test_bpfman_ns_parsing() {
     # Test uprobe help
     output=$("$BPFMAN" bpfman-ns uprobe --help 2>&1) || true
 
-    if echo "$output" | grep -q "host-pid"; then
-        log_pass "bpfman-ns uprobe --host-pid option found"
+    if echo "$output" | grep -q "fn-name"; then
+        log_pass "bpfman-ns uprobe --fn-name option found"
     else
-        log_fail "bpfman-ns uprobe --host-pid option not found"
+        log_fail "bpfman-ns uprobe --fn-name option not found"
         echo "$output"
         return 1
+    fi
+
+    # Verify it accepts target as positional arg (not host-pid anymore)
+    if echo "$output" | grep -q "Target binary path"; then
+        log_pass "bpfman-ns uprobe takes target as positional arg"
+    else
+        log_warn "bpfman-ns uprobe help doesn't show target description (may be ok)"
     fi
 
     log_pass "bpfman-ns subcommand parsing works"
 }
 
-# Test 5: Test container uprobe attachment (requires running container)
-test_container_uprobe() {
-    log_info "Test 5: Testing container uprobe attachment..."
+# Test 5: Test container namespace switching (requires running container)
+test_container_namespace() {
+    log_info "Test 5: Testing container namespace switching..."
 
     # Check if we have a running container to test with
     if ! command -v docker &>/dev/null && ! command -v podman &>/dev/null; then
@@ -223,13 +230,14 @@ test_container_uprobe() {
         log_warn "Container appears to share our mount namespace"
     fi
 
-    # Test that we can at least invoke the namespace helper with proper logging
-    log_info "Testing namespace helper invocation (will fail without loaded program, but should show logs)..."
+    # Test namespace switching with a simple command that will fail
+    # (bpfman-ns uprobe expects program fd via ExtraFiles, which we can't provide here)
+    # But we can verify the C constructor runs and namespace switch works
+    log_info "Testing namespace switch logging (will fail on missing program fd, but should show switch logs)..."
 
     local output
     output=$(sudo _BPFMAN_MNT_NS="$ns_path" _BPFMAN_NS_LOG_LEVEL=debug \
-        "$BPFMAN" bpfman-ns uprobe /nonexistent/prog /nonexistent/link /bin/sh \
-        --fn-name main --host-pid $$ 2>&1) || true
+        "$BPFMAN" bpfman-ns uprobe /bin/sh --fn-name main 2>&1) || true
 
     echo "$output"
 
@@ -238,6 +246,16 @@ test_container_uprobe() {
     else
         log_warn "Namespace switch messages not found (may have failed for other reasons)"
     fi
+
+    # The command should fail because fd 3 (program) is not available
+    if echo "$output" | grep -q "create program from fd"; then
+        log_pass "Child correctly tried to use inherited program fd"
+    else
+        log_warn "Expected program fd error not found"
+    fi
+
+    log_info "Note: Full uprobe attachment testing requires the daemon's attach flow"
+    log_info "      which properly passes the program fd via ExtraFiles"
 
     log_pass "Container uprobe test completed"
 }
@@ -263,7 +281,7 @@ main() {
     test_bpfman_ns_parsing
     echo ""
 
-    test_container_uprobe
+    test_container_namespace
     echo ""
 
     echo "=========================================="

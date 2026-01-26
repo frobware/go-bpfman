@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/cilium/ebpf"
@@ -1753,12 +1754,12 @@ func (k *kernelAdapter) attachUprobeLocal(progPinPath, target, fnName string, of
 // single-threaded process. We solve this using a CGO constructor (in the
 // nsenter package) that runs before Go's runtime starts:
 //
-// 1. Parent sets _BPFMAN_MNT_NS env var and re-execs itself as "bpfman-ns"
-// 2. Child's C constructor calls setns() before Go runtime starts
-// 3. Child's Go code runs in target mount namespace (target binary visible)
-// 4. Child accesses host bpffs via /proc/<host-pid>/root/...
-// 5. Child attaches uprobe, pins link, prints link ID, exits
-// 6. Parent reads link ID from child's stdout
+// 1. Parent loads pinned program, passes fd via ExtraFiles (becomes fd 3)
+// 2. Parent sets _BPFMAN_MNT_NS env var and re-execs itself as "bpfman-ns"
+// 3. Child's C constructor calls setns() before Go runtime starts
+// 4. Child's Go code runs in target mount namespace (target binary visible)
+// 5. Child uses inherited program fd to attach uprobe, prints link ID, exits
+// 6. Parent reads link ID, uses link.NewFromID() to get link, and pins it
 func (k *kernelAdapter) attachUprobeViaHelper(progPinPath, target, fnName string, offset uint64, retprobe bool, linkPinPath string, containerPid int32) (uint32, error) {
 	// Find the bpfman binary (which also serves as bpfman-ns)
 	bpfmanPath, err := os.Executable()
@@ -1767,8 +1768,27 @@ func (k *kernelAdapter) attachUprobeViaHelper(progPinPath, target, fnName string
 		return 0, fmt.Errorf("get executable path: %w", err)
 	}
 
-	// Get our host PID for /proc/<pid>/root access from within the target namespace
-	hostPid := os.Getpid()
+	// Load pinned program - we'll pass the fd to the child
+	prog, err := ebpf.LoadPinnedProgram(progPinPath, nil)
+	if err != nil {
+		k.logger.Error("failed to load pinned program", "path", progPinPath, "error", err)
+		return 0, fmt.Errorf("load pinned program %s: %w", progPinPath, err)
+	}
+	defer prog.Close()
+
+	progInfo, _ := prog.Info()
+	progID, _ := progInfo.ID()
+
+	// Dup the program fd so we can pass it to child via ExtraFiles.
+	// This avoids ownership issues between ebpf.Program and os.File.
+	progFd := prog.FD()
+	dupFd, err := syscall.Dup(progFd)
+	if err != nil {
+		k.logger.Error("failed to dup program fd", "fd", progFd, "error", err)
+		return 0, fmt.Errorf("dup program fd: %w", err)
+	}
+	progFile := os.NewFile(uintptr(dupFd), "bpf-program")
+	defer progFile.Close()
 
 	// Get current mount namespace inode for logging
 	currentMntNs, _ := nsenter.GetCurrentMntNsInode()
@@ -1781,7 +1801,6 @@ func (k *kernelAdapter) attachUprobeViaHelper(progPinPath, target, fnName string
 
 	k.logger.Info("preparing container uprobe attachment",
 		"container_pid", containerPid,
-		"host_pid", hostPid,
 		"current_mnt_ns_inode", currentMntNs,
 		"target_ns_path", nsPath,
 		"target_binary", target,
@@ -1789,42 +1808,40 @@ func (k *kernelAdapter) attachUprobeViaHelper(progPinPath, target, fnName string
 		"offset", offset,
 		"retprobe", retprobe,
 		"prog_pin_path", progPinPath,
+		"prog_id", progID,
 		"link_pin_path", linkPinPath)
 
-	// Build arguments for bpfman-ns uprobe command
-	// progPinPath and linkPinPath are paths in the host namespace;
-	// bpfman-ns will access them via /proc/<host-pid>/root/...
+	// Build arguments for bpfman-ns uprobe command.
+	// The program fd is passed via ExtraFiles (becomes fd 3 in child).
+	// The child attaches and returns link ID; we handle pinning.
 	args := []string{
 		"bpfman-ns", "uprobe",
-		progPinPath,
-		linkPinPath,
 		target,
 		"--fn-name", fnName,
 		"--offset", fmt.Sprintf("%d", offset),
-		"--host-pid", fmt.Sprintf("%d", hostPid),
 	}
 	if retprobe {
 		args = append(args, "--retprobe")
 	}
 
 	// Determine log level for child process based on our logger's level
-	// If debug logging is enabled, propagate it to the child
 	childLogLevel := nsenter.LogLevelInfo
 	if k.logger.Enabled(nil, slog.LevelDebug) {
 		childLogLevel = nsenter.LogLevelDebug
 	}
 
-	// Use nsenter.CommandWithOptions for full logging support
+	// Use nsenter.CommandWithOptions with ExtraFiles to pass program fd
 	cmd := nsenter.CommandWithOptions(containerPid, bpfmanPath, nsenter.CommandOptions{
-		Logger:   k.logger,
-		LogLevel: childLogLevel,
+		Logger:     k.logger,
+		LogLevel:   childLogLevel,
+		ExtraFiles: []*os.File{progFile}, // fd 3 in child
 	}, args...)
 
 	k.logger.Debug("executing bpfman-ns helper subprocess",
 		"executable", bpfmanPath,
 		"args", args,
 		"child_log_level", childLogLevel,
-		"env_BPFMAN_MNT_NS", nsPath)
+		"program_fd_passed", true)
 
 	// Capture both stdout (link ID) and stderr (logs)
 	output, err := cmd.Output()
@@ -1852,6 +1869,45 @@ func (k *kernelAdapter) attachUprobeViaHelper(progPinPath, target, fnName string
 			"output", outputStr,
 			"error", err)
 		return 0, fmt.Errorf("parse link ID from bpfman-ns output %q: %w", outputStr, err)
+	}
+
+	k.logger.Info("child attached uprobe, now pinning link",
+		"link_id", linkID,
+		"container_pid", containerPid,
+		"target", target,
+		"fn_name", fnName)
+
+	// Get the link by ID and pin it (we're in host namespace, have bpffs access)
+	if linkPinPath != "" {
+		lnk, err := link.NewFromID(link.ID(linkID))
+		if err != nil {
+			k.logger.Error("failed to get link by ID",
+				"link_id", linkID,
+				"error", err)
+			return 0, fmt.Errorf("get link by ID %d: %w", linkID, err)
+		}
+		defer lnk.Close()
+
+		// Create link pin directory
+		if err := os.MkdirAll(filepath.Dir(linkPinPath), 0755); err != nil {
+			k.logger.Error("failed to create link pin directory",
+				"path", filepath.Dir(linkPinPath),
+				"error", err)
+			return 0, fmt.Errorf("create link pin directory: %w", err)
+		}
+
+		// Pin the link
+		if err := lnk.Pin(linkPinPath); err != nil {
+			k.logger.Error("failed to pin link",
+				"path", linkPinPath,
+				"link_id", linkID,
+				"error", err)
+			return 0, fmt.Errorf("pin link to %s: %w", linkPinPath, err)
+		}
+
+		k.logger.Info("link pinned successfully",
+			"path", linkPinPath,
+			"link_id", linkID)
 	}
 
 	k.logger.Info("container uprobe attachment succeeded",

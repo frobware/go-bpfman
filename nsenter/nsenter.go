@@ -87,6 +87,10 @@ type CommandOptions struct {
 	// NsPath overrides automatic namespace path detection.
 	// If empty, uses /proc/<pid>/ns/mnt or /host/proc/<pid>/ns/mnt.
 	NsPath string
+
+	// ExtraFiles specifies additional open files to be inherited by the
+	// child process. The files will be available as fd 3, 4, 5, etc.
+	ExtraFiles []*os.File
 }
 
 // Command creates an exec.Cmd that will run in the mount namespace of the
@@ -160,6 +164,13 @@ func CommandWithOptions(containerPid int32, name string, opts CommandOptions, ar
 		fmt.Sprintf("%s=%s", MntNsEnvVar, nsPath),
 		fmt.Sprintf("%s=%s", LogLevelEnvVar, logLevel),
 	)
+
+	// Pass any extra files (they become fd 3, 4, 5, ...)
+	if len(opts.ExtraFiles) > 0 {
+		cmd.ExtraFiles = opts.ExtraFiles
+		logger.Debug("passing extra files to child",
+			"count", len(opts.ExtraFiles))
+	}
 
 	logger.Debug("command environment configured",
 		"MntNsEnvVar", nsPath,
