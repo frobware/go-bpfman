@@ -5,28 +5,46 @@ package compute
 import (
 	"github.com/frobware/go-bpfman"
 	"github.com/frobware/go-bpfman/action"
+	"github.com/frobware/go-bpfman/dispatcher"
 	"github.com/frobware/go-bpfman/kernel"
 )
 
 // ReconcileActions computes the actions needed to reconcile store state
 // with kernel state. This is a pure function - no I/O.
+//
+// The returned actions are ordered to respect foreign key constraints:
+// programs that reference a map owner (MapOwnerID != 0) are deleted before
+// the programs they reference (MapOwnerID == 0). This ensures the schema's
+// ON DELETE RESTRICT constraint on map_owner_id is satisfied.
 func ReconcileActions(
 	stored map[uint32]bpfman.Program,
 	kps []kernel.Program,
 ) []action.Action {
-	var actions []action.Action
-
 	// Build set of kernel program IDs
 	kernelIDs := make(map[uint32]bool, len(kps))
 	for _, kp := range kps {
 		kernelIDs[kp.ID] = true
 	}
 
-	// Programs in store but not in kernel should be removed from store
-	for id := range stored {
+	// Collect stale programs, separating dependents from owners
+	var dependents, owners []uint32
+	for id, prog := range stored {
 		if !kernelIDs[id] {
-			actions = append(actions, action.DeleteProgram{KernelID: id})
+			if prog.MapOwnerID != 0 {
+				dependents = append(dependents, id)
+			} else {
+				owners = append(owners, id)
+			}
 		}
+	}
+
+	// Build actions: dependents first, then owners
+	actions := make([]action.Action, 0, len(dependents)+len(owners))
+	for _, id := range dependents {
+		actions = append(actions, action.DeleteProgram{KernelID: id})
+	}
+	for _, id := range owners {
+		actions = append(actions, action.DeleteProgram{KernelID: id})
 	}
 
 	return actions
@@ -65,4 +83,52 @@ func UnmanagedPrograms(
 		}
 	}
 	return unmanaged
+}
+
+// ReconcileDispatcherActions computes actions to remove stale dispatcher entries.
+// A dispatcher is stale if its KernelID doesn't exist in the kernel program set.
+// Pure function - no I/O.
+func ReconcileDispatcherActions(
+	dispatchers []dispatcher.State,
+	kernelPrograms []kernel.Program,
+) []action.Action {
+	// Build set of kernel program IDs
+	kernelIDs := make(map[uint32]bool, len(kernelPrograms))
+	for _, kp := range kernelPrograms {
+		kernelIDs[kp.ID] = true
+	}
+
+	var actions []action.Action
+	for _, disp := range dispatchers {
+		if !kernelIDs[disp.KernelID] {
+			actions = append(actions, action.DeleteDispatcher{
+				Type:    string(disp.Type),
+				Nsid:    disp.Nsid,
+				Ifindex: disp.Ifindex,
+			})
+		}
+	}
+	return actions
+}
+
+// ReconcileLinkActions computes actions to remove stale link entries.
+// A link is stale if its KernelLinkID doesn't exist in the kernel link set.
+// Pure function - no I/O.
+func ReconcileLinkActions(
+	links []bpfman.LinkSummary,
+	kernelLinks []kernel.Link,
+) []action.Action {
+	// Build set of kernel link IDs
+	kernelIDs := make(map[uint32]bool, len(kernelLinks))
+	for _, kl := range kernelLinks {
+		kernelIDs[kl.ID] = true
+	}
+
+	var actions []action.Action
+	for _, link := range links {
+		if !kernelIDs[link.KernelLinkID] {
+			actions = append(actions, action.DeleteLink{KernelLinkID: link.KernelLinkID})
+		}
+	}
+	return actions
 }
