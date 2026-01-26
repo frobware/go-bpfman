@@ -17,6 +17,7 @@ help:
 	@echo ""
 	@echo "bpfman (with integrated CSI):"
 	@echo "  bpfman-build                Build bpfman binary"
+	@echo "  bpfman-build-portable       Build container-compatible binary (patchelf)"
 	@echo "  bpfman-clean                Remove generated files and binary"
 	@echo "  bpfman-delete               Remove bpfman from cluster"
 	@echo "  bpfman-deploy               Deploy bpfman to KIND cluster"
@@ -25,7 +26,9 @@ help:
 	@echo "  bpfman-proto                Generate protobuf/gRPC stubs"
 	@echo "  bpfman-test-grpc            Run gRPC integration tests"
 	@echo "  docker-build-bpfman         Build bpfman container image"
+	@echo "  docker-build-bpfman-fast    Fast build using pre-built host binary"
 	@echo "  docker-build-bpfman-upstream Build bpfman using upstream image as base"
+	@echo "  docker-build-bpfman-upstream-fast Fast upstream build using host binary"
 	@echo "  docker-build-bpfman-cgo     Build bpfman with CGO (if needed)"
 	@echo ""
 	@echo "Example stats-reader app:"
@@ -124,8 +127,21 @@ bpfman-build:
 	go vet ./...
 	CGO_ENABLED=1 go build -mod=vendor -o $(BIN_DIR)/bpfman ./cmd/bpfman
 
+# Build binary patched for use in containers (fixes nix interpreter/rpath)
+# Requires patchelf to be installed
+bpfman-build-portable: bpfman-build
+	@if ! command -v patchelf >/dev/null 2>&1; then \
+		echo "Error: patchelf is required but not installed"; \
+		exit 1; \
+	fi
+	cp $(BIN_DIR)/bpfman $(BIN_DIR)/bpfman-portable
+	patchelf --set-interpreter /lib64/ld-linux-x86-64.so.2 \
+		--set-rpath /lib64:/lib/x86_64-linux-gnu \
+		$(BIN_DIR)/bpfman-portable
+	@echo "Built $(BIN_DIR)/bpfman-portable (container-compatible)"
+
 bpfman-clean:
-	$(RM) $(BIN_DIR)/bpfman
+	$(RM) $(BIN_DIR)/bpfman $(BIN_DIR)/bpfman-portable
 
 # Proto generation for bpfman gRPC API
 BPFMAN_PROTO_DIR := proto
@@ -143,9 +159,18 @@ $(BPFMAN_PB_DIR)/bpfman.pb.go $(BPFMAN_PB_DIR)/bpfman_grpc.pb.go: $(BPFMAN_PROTO
 docker-build-bpfman: testdata/stats.o
 	docker buildx build --builder=default --load -t $(BPFMAN_IMAGE):$(IMAGE_TAG) -f Dockerfile.bpfman .
 
+# Fast build: copy pre-built binary from host (skips in-container compilation)
+# Requires: make bpfman-build-portable first
+docker-build-bpfman-fast: bpfman-build-portable testdata/stats.o
+	docker buildx build --builder=default --load -t $(BPFMAN_IMAGE):$(IMAGE_TAG) -f Dockerfile.bpfman-fast .
+
 # Build bpfman using upstream image as base (for operator integration testing)
 docker-build-bpfman-upstream:
 	docker buildx build --builder=default --load -t $(BPFMAN_IMAGE):$(IMAGE_TAG) -f Dockerfile.bpfman-upstream .
+
+# Fast build using upstream image as base
+docker-build-bpfman-upstream-fast: bpfman-build-portable
+	docker buildx build --builder=default --load -t $(BPFMAN_IMAGE):$(IMAGE_TAG) -f Dockerfile.bpfman-upstream-fast .
 
 # CGO builder image (for future use if CGO is needed again)
 # Usage: make docker-build-bpfman-builder && make docker-build-bpfman-cgo
@@ -179,7 +204,7 @@ bpfman-delete-test:
 	kubectl delete -f manifests/bpfman-test-pod.yaml --ignore-not-found
 
 # Deploy Go bpfman to an existing bpfman-operator deployment (replaces Rust bpfman)
-bpfman-operator-deploy: docker-build-bpfman-upstream
+bpfman-operator-deploy: docker-build-bpfman-upstream-fast
 	docker tag $(BPFMAN_IMAGE):$(IMAGE_TAG) $(BPFMAN_IMAGE):latest
 	kind load docker-image $(BPFMAN_IMAGE):latest --name $(KIND_CLUSTER)
 	kubectl rollout restart daemonset/bpfman-daemon -n $(NAMESPACE)

@@ -1,0 +1,26 @@
+# syntax=docker/dockerfile:1.4
+# Fast build: copies pre-built binary from host instead of compiling in container.
+#
+# Usage:
+#   make docker-build-bpfman-fast
+#
+# Requires:
+#   make bpfman-build-portable (builds and patches binary for container use)
+#
+# This is useful for rapid iteration during development. The binary must be
+# built with patchelf to fix nix-specific interpreter/rpath if building on NixOS.
+
+FROM fedora:latest
+
+RUN dnf install -y sqlite bpftool && dnf clean all
+
+# Copy pre-built portable binary from host
+COPY bin/bpfman-portable /bpfman
+COPY testdata/stats.o /opt/bpf/stats.o
+
+# Create bpfman-rpc symlink for compatibility with bpfman-operator.
+# When invoked as bpfman-rpc, the binary automatically runs "serve".
+# Create bpfman-ns symlink for namespace helper (container uprobes).
+RUN ln -s /bpfman /bpfman-rpc && ln -s /bpfman /bpfman-ns
+
+ENTRYPOINT ["./bpfman-rpc"]
