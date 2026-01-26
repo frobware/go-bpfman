@@ -40,11 +40,11 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/frobware/go-bpfman"
 	"github.com/frobware/go-bpfman/action"
-	"github.com/frobware/go-bpfman/compute"
 	"github.com/frobware/go-bpfman/config"
 	"github.com/frobware/go-bpfman/dispatcher"
 	"github.com/frobware/go-bpfman/interpreter"
@@ -60,6 +60,10 @@ type Manager struct {
 	kernel   interpreter.KernelOperations
 	executor interpreter.ActionExecutor
 	logger   *slog.Logger
+
+	// GC coordination - separate from request-level locking
+	gcMu           sync.Mutex
+	mutatedSinceGC bool
 }
 
 // New creates a new Manager.
@@ -68,17 +72,98 @@ func New(dirs config.RuntimeDirs, store interpreter.Store, kernel interpreter.Ke
 		logger = slog.Default()
 	}
 	return &Manager{
-		dirs:     dirs,
-		store:    store,
-		kernel:   kernel,
-		executor: interpreter.NewExecutor(store, kernel),
-		logger:   logger.With("component", "manager"),
+		dirs:           dirs,
+		store:          store,
+		kernel:         kernel,
+		executor:       interpreter.NewExecutor(store, kernel),
+		logger:         logger.With("component", "manager"),
+		mutatedSinceGC: true, // Force GC on first operation
 	}
 }
 
 // Dirs returns the runtime directories configuration.
 func (m *Manager) Dirs() config.RuntimeDirs {
 	return m.dirs
+}
+
+// GCResult contains statistics from garbage collection.
+type GCResult = interpreter.GCResult
+
+// GC removes stale database entries that no longer exist in the kernel.
+// This should be called at startup before accepting requests. After GC,
+// the database is authoritative for the session.
+//
+// Stale entries can occur when:
+//   - The daemon restarts but kernel state was lost (e.g., system reboot)
+//   - A previous unload operation failed partway through
+//   - External tools removed BPF objects without updating the database
+func (m *Manager) GC(ctx context.Context) (GCResult, error) {
+	start := time.Now()
+
+	// Gather kernel state
+	kernelProgramIDs := make(map[uint32]bool)
+	for kp, err := range m.kernel.Programs(ctx) {
+		if err != nil {
+			m.logger.Warn("error iterating kernel programs", "error", err)
+			continue
+		}
+		kernelProgramIDs[kp.ID] = true
+	}
+
+	kernelLinkIDs := make(map[uint32]bool)
+	for kl, err := range m.kernel.Links(ctx) {
+		if err != nil {
+			m.logger.Warn("error iterating kernel links", "error", err)
+			continue
+		}
+		kernelLinkIDs[kl.ID] = true
+	}
+
+	// Delegate to store - it handles ordering constraints internally
+	result, err := m.store.GC(ctx, kernelProgramIDs, kernelLinkIDs)
+	if err != nil {
+		return result, err
+	}
+
+	elapsed := time.Since(start)
+	if result.ProgramsRemoved > 0 || result.DispatchersRemoved > 0 || result.LinksRemoved > 0 {
+		m.logger.Info("gc complete",
+			"duration", elapsed,
+			"programs_removed", result.ProgramsRemoved,
+			"dispatchers_removed", result.DispatchersRemoved,
+			"links_removed", result.LinksRemoved)
+	} else {
+		m.logger.Debug("gc complete", "duration", elapsed)
+	}
+
+	return result, nil
+}
+
+// GCIfNeeded runs GC if required, with its own mutex for coordination.
+// For mutating operations, always runs GC. For read operations, only runs
+// GC if a mutating operation occurred since the last GC.
+// This allows concurrent readers at the server level while serialising GC.
+func (m *Manager) GCIfNeeded(ctx context.Context, mutating bool) error {
+	m.gcMu.Lock()
+	defer m.gcMu.Unlock()
+
+	if !mutating && !m.mutatedSinceGC {
+		return nil // Read op and no mutations since last GC - skip
+	}
+
+	if _, err := m.GC(ctx); err != nil {
+		return err
+	}
+	m.mutatedSinceGC = false
+	return nil
+}
+
+// MarkMutated records that a mutating operation occurred.
+// Call this after successful mutating operations (Load, Unload, Attach, Detach).
+func (m *Manager) MarkMutated() {
+	m.gcMu.Lock()
+	m.mutatedSinceGC = true
+	m.gcMu.Unlock()
 }
 
 // LoadOpts contains optional metadata for a Load operation.
@@ -238,29 +323,6 @@ func (m *Manager) List(ctx context.Context) ([]ManagedProgram, error) {
 
 	// COMPUTE - join data (pure)
 	return joinManagedPrograms(stored, kernelPrograms), nil
-}
-
-// Reconcile cleans up orphaned store entries.
-func (m *Manager) Reconcile(ctx context.Context) error {
-	// FETCH
-	stored, err := m.store.List(ctx)
-	if err != nil {
-		return err
-	}
-
-	var kernelPrograms []kernel.Program
-	for kp, err := range m.kernel.Programs(ctx) {
-		if err != nil {
-			continue
-		}
-		kernelPrograms = append(kernelPrograms, kp)
-	}
-
-	// COMPUTE - determine actions (pure)
-	actions := compute.ReconcileActions(stored, kernelPrograms)
-
-	// EXECUTE - apply actions
-	return m.executor.ExecuteAll(ctx, actions)
 }
 
 // ManagedProgram combines kernel and metadata info.
@@ -1572,5 +1634,123 @@ func computeDispatcherCleanupActions(state dispatcher.State) []action.Action {
 			Nsid:    state.Nsid,
 			Ifindex: state.Ifindex,
 		},
+	}
+}
+
+// LoadedProgram pairs a program's database metadata with its kernel info.
+type LoadedProgram struct {
+	KernelID   uint32
+	Program    bpfman.Program
+	KernelInfo kernel.Program
+}
+
+// ListLoadedPrograms returns all programs that exist in both the database
+// and the kernel. This reconciles DB state with kernel state, filtering out
+// stale entries where a program exists in DB but not in the kernel (e.g.,
+// after a daemon restart or failed unload).
+func (m *Manager) ListLoadedPrograms(ctx context.Context) ([]LoadedProgram, error) {
+	// Get all programs from DB
+	dbPrograms, err := m.store.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list programs from store: %w", err)
+	}
+
+	// Filter to only those that exist in kernel
+	var loaded []LoadedProgram
+	for kernelID, prog := range dbPrograms {
+		kp, err := m.kernel.GetProgramByID(ctx, kernelID)
+		if err != nil {
+			// Program not in kernel - skip (stale DB entry)
+			m.logger.Debug("skipping stale program",
+				"kernel_id", kernelID,
+				"name", prog.ProgramName,
+				"reason", "not in kernel",
+			)
+			continue
+		}
+		loaded = append(loaded, LoadedProgram{
+			KernelID:   kernelID,
+			Program:    prog,
+			KernelInfo: kp,
+		})
+	}
+
+	return loaded, nil
+}
+
+// ErrMultipleProgramsFound is returned when multiple programs match the
+// search criteria and none is the map owner.
+var ErrMultipleProgramsFound = errors.New("multiple programs found")
+
+// ErrMultipleMapOwners is returned when multiple programs claim to be
+// the map owner (MapOwnerID == 0). This indicates a data inconsistency.
+var ErrMultipleMapOwners = errors.New("multiple map owners found")
+
+// FindLoadedProgramByMetadata finds a program by metadata key/value from
+// the reconciled list of loaded programs (those in both DB and kernel).
+//
+// When multiple programs match (e.g., multi-program applications), this
+// returns the map owner (the program with MapOwnerID == 0). All maps are
+// pinned at the owner's MapPinPath, so the CSI can find them there.
+//
+// Returns an error if no programs match, or if multiple map owners exist
+// (data inconsistency).
+func (m *Manager) FindLoadedProgramByMetadata(ctx context.Context, key, value string) (bpfman.Program, uint32, error) {
+	programs, err := m.ListLoadedPrograms(ctx)
+	if err != nil {
+		return bpfman.Program{}, 0, fmt.Errorf("list loaded programs: %w", err)
+	}
+
+	var matches []LoadedProgram
+	for _, lp := range programs {
+		if lp.Program.UserMetadata[key] == value {
+			matches = append(matches, lp)
+		}
+	}
+
+	switch len(matches) {
+	case 0:
+		return bpfman.Program{}, 0, fmt.Errorf("program with %s=%s: %w", key, value, store.ErrNotFound)
+	case 1:
+		return matches[0].Program, matches[0].KernelID, nil
+	default:
+		// Multiple programs match - find the map owner (MapOwnerID == 0).
+		// In multi-program loads, one program owns all maps and the others
+		// reference it via MapOwnerID.
+		var owners []LoadedProgram
+		for _, lp := range matches {
+			if lp.Program.MapOwnerID == 0 {
+				owners = append(owners, lp)
+			}
+		}
+
+		switch len(owners) {
+		case 0:
+			// No map owner found - all programs reference another owner
+			// that doesn't match our metadata query. This shouldn't happen.
+			ids := make([]uint32, len(matches))
+			for i, m := range matches {
+				ids[i] = m.KernelID
+			}
+			return bpfman.Program{}, 0, fmt.Errorf("%w: %d programs with %s=%s but no map owner (kernel IDs: %v)",
+				ErrMultipleProgramsFound, len(matches), key, value, ids)
+		case 1:
+			m.logger.Debug("found map owner among multiple matching programs",
+				"key", key,
+				"value", value,
+				"total_matches", len(matches),
+				"owner_kernel_id", owners[0].KernelID,
+				"owner_name", owners[0].Program.ProgramName,
+			)
+			return owners[0].Program, owners[0].KernelID, nil
+		default:
+			// Multiple map owners - data inconsistency
+			ids := make([]uint32, len(owners))
+			for i, o := range owners {
+				ids[i] = o.KernelID
+			}
+			return bpfman.Program{}, 0, fmt.Errorf("%w: %d map owners with %s=%s (kernel IDs: %v)",
+				ErrMultipleMapOwners, len(owners), key, value, ids)
+		}
 	}
 }
