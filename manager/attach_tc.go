@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/frobware/go-bpfman"
@@ -68,7 +70,7 @@ func (m *Manager) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts b
 		dispType = dispatcher.DispatcherTypeTCEgress
 	}
 
-	// FETCH: Look up existing dispatcher or create new one
+	// FETCH: Look up existing dispatcher or create new one.
 	dispState, err := m.store.GetDispatcher(ctx, string(dispType), nsid, uint32(ifindex))
 	if errors.Is(err, store.ErrNotFound) {
 		// KERNEL I/O + EXECUTE: Create new dispatcher
@@ -110,7 +112,43 @@ func (m *Manager) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts b
 		mapPinDir,
 	)
 	if err != nil {
-		return bpfman.LinkSummary{}, fmt.Errorf("attach TC extension to %s %s slot %d: %w", ifname, direction, position, err)
+		// The dispatcher DB record may be stale: the kernel program
+		// survives (held by a tc filter) but its bpffs pin is gone
+		// after a fresh mount. GC keeps the record because the kernel
+		// program exists, but the pin path is invalid. Delete the
+		// stale record and retry once with a fresh dispatcher.
+		if !errors.Is(err, os.ErrNotExist) {
+			return bpfman.LinkSummary{}, fmt.Errorf("attach TC extension to %s %s slot %d: %w", ifname, direction, position, err)
+		}
+		m.logger.Warn("dispatcher pin missing, recreating",
+			"prog_pin_path", dispState.ProgPinPath,
+			"dispatcher_id", dispState.KernelID,
+			"error", err)
+		if delErr := m.store.DeleteDispatcher(ctx, string(dispType), nsid, uint32(ifindex)); delErr != nil {
+			return bpfman.LinkSummary{}, fmt.Errorf("delete stale TC dispatcher: %w", delErr)
+		}
+		dispState, err = m.createTCDispatcher(ctx, nsid, uint32(ifindex), ifname, direction, dispType, netnsPath)
+		if err != nil {
+			return bpfman.LinkSummary{}, fmt.Errorf("recreate TC dispatcher for %s %s: %w", ifname, direction, err)
+		}
+		// Recalculate paths for the fresh dispatcher
+		revisionDir = dispatcher.DispatcherRevisionDir(m.dirs.FS, dispType, nsid, uint32(ifindex), dispState.Revision)
+		position = int(dispState.NumExtensions)
+		extensionLinkPath = dispatcher.ExtensionLinkPath(revisionDir, position)
+		if linkPinPath == "" || strings.Contains(linkPinPath, "dispatcher_") {
+			linkPinPath = extensionLinkPath
+		}
+		link, err = m.kernel.AttachTCExtension(
+			dispState.ProgPinPath,
+			prog.ObjectPath,
+			prog.ProgramName,
+			position,
+			linkPinPath,
+			mapPinDir,
+		)
+		if err != nil {
+			return bpfman.LinkSummary{}, fmt.Errorf("attach TC extension to %s %s slot %d (after recreate): %w", ifname, direction, position, err)
+		}
 	}
 
 	// COMPUTE: Build save actions from kernel result
@@ -235,11 +273,21 @@ func (m *Manager) AttachTCX(ctx context.Context, spec bpfman.TCXAttachSpec, opts
 		return bpfman.LinkSummary{}, fmt.Errorf("get nsid: %w", err)
 	}
 
-	// COMPUTE: Calculate link pin path if not provided
+	// COMPUTE: Calculate link pin path if not provided.
+	// The path must be unique per program to support multiple TCX programs
+	// on the same interface — each needs its own pinned link to keep the
+	// kernel attachment alive.
 	if linkPinPath == "" {
-		// Use a path under tcx-{direction} directory
 		dirName := fmt.Sprintf("tcx-%s", direction)
-		linkPinPath = filepath.Join(m.dirs.FS, dirName, fmt.Sprintf("link_%d_%d", nsid, ifindex))
+		linkPinPath = filepath.Join(m.dirs.FS, dirName, fmt.Sprintf("link_%d_%d_%d", nsid, ifindex, programKernelID))
+	}
+
+	// KERNEL I/O: Remove stale pin if it exists from a previous daemon run.
+	if _, statErr := os.Stat(linkPinPath); statErr == nil {
+		m.logger.Warn("removing stale TCX link pin", "path", linkPinPath)
+		if removeErr := os.Remove(linkPinPath); removeErr != nil {
+			return bpfman.LinkSummary{}, fmt.Errorf("remove stale TCX link pin %s: %w", linkPinPath, removeErr)
+		}
 	}
 
 	// COMPUTE: Use the stored program pin path directly

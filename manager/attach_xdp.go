@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/frobware/go-bpfman"
@@ -51,7 +53,7 @@ func (m *Manager) AttachXDP(ctx context.Context, spec bpfman.XDPAttachSpec, opts
 		return bpfman.LinkSummary{}, fmt.Errorf("get nsid: %w", err)
 	}
 
-	// FETCH: Look up existing dispatcher or create new one
+	// FETCH: Look up existing dispatcher or create new one.
 	dispState, err := m.store.GetDispatcher(ctx, string(dispatcher.DispatcherTypeXDP), nsid, uint32(ifindex))
 	if errors.Is(err, store.ErrNotFound) {
 		// KERNEL I/O + EXECUTE: Create new dispatcher
@@ -92,7 +94,41 @@ func (m *Manager) AttachXDP(ctx context.Context, spec bpfman.XDPAttachSpec, opts
 		mapPinDir,
 	)
 	if err != nil {
-		return bpfman.LinkSummary{}, fmt.Errorf("attach XDP extension to %s slot %d: %w", ifname, position, err)
+		// Stale dispatcher recovery: the DB record exists but the
+		// bpffs pin is gone (e.g., fresh mount after pod restart while
+		// the kernel program survives via XDP link). Delete the stale
+		// record and retry with a fresh dispatcher.
+		if !errors.Is(err, os.ErrNotExist) {
+			return bpfman.LinkSummary{}, fmt.Errorf("attach XDP extension to %s slot %d: %w", ifname, position, err)
+		}
+		m.logger.Warn("dispatcher pin missing, recreating",
+			"prog_pin_path", dispState.ProgPinPath,
+			"dispatcher_id", dispState.KernelID,
+			"error", err)
+		if delErr := m.store.DeleteDispatcher(ctx, string(dispatcher.DispatcherTypeXDP), nsid, uint32(ifindex)); delErr != nil {
+			return bpfman.LinkSummary{}, fmt.Errorf("delete stale XDP dispatcher: %w", delErr)
+		}
+		dispState, err = m.createXDPDispatcher(ctx, nsid, uint32(ifindex), netnsPath)
+		if err != nil {
+			return bpfman.LinkSummary{}, fmt.Errorf("recreate XDP dispatcher for %s: %w", ifname, err)
+		}
+		revisionDir = dispatcher.DispatcherRevisionDir(m.dirs.FS, dispatcher.DispatcherTypeXDP, nsid, uint32(ifindex), dispState.Revision)
+		position = int(dispState.NumExtensions)
+		extensionLinkPath = dispatcher.ExtensionLinkPath(revisionDir, position)
+		if linkPinPath == "" || strings.Contains(linkPinPath, "dispatcher_") {
+			linkPinPath = extensionLinkPath
+		}
+		link, err = m.kernel.AttachXDPExtension(
+			dispState.ProgPinPath,
+			prog.ObjectPath,
+			prog.ProgramName,
+			position,
+			linkPinPath,
+			mapPinDir,
+		)
+		if err != nil {
+			return bpfman.LinkSummary{}, fmt.Errorf("attach XDP extension to %s slot %d (after recreate): %w", ifname, position, err)
+		}
 	}
 
 	// COMPUTE: Build save actions from kernel result

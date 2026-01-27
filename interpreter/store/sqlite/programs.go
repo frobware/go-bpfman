@@ -350,6 +350,37 @@ func (s *sqliteStore) GC(ctx context.Context, kernelProgramIDs, kernelLinkIDs ma
 		}
 	}
 
+	// 4. Reconcile dispatcher extension counts: if link GC removed
+	// extensions, the dispatcher's NumExtensions is now stale. Delete
+	// any dispatcher that claims extensions but has none remaining so
+	// the next attach recreates a fresh dispatcher.
+	if result.LinksRemoved > 0 {
+		surviving, err := s.ListDispatchers(ctx)
+		if err != nil {
+			return result, fmt.Errorf("list dispatchers after link GC: %w", err)
+		}
+		for _, disp := range surviving {
+			if disp.NumExtensions == 0 {
+				continue
+			}
+			var liveLinks int
+			if err := s.stmtCountDispatcherLinks.QueryRowContext(ctx, disp.KernelID, disp.KernelID).Scan(&liveLinks); err != nil {
+				s.logger.Warn("failed to count dispatcher links", "kernel_id", disp.KernelID, "error", err)
+				continue
+			}
+			if liveLinks == 0 {
+				s.logger.Info("deleting dispatcher with no live extensions",
+					"type", disp.Type, "nsid", disp.Nsid, "ifindex", disp.Ifindex,
+					"kernel_id", disp.KernelID, "stale_num_extensions", disp.NumExtensions)
+				if err := s.DeleteDispatcher(ctx, string(disp.Type), disp.Nsid, disp.Ifindex); err != nil {
+					s.logger.Warn("failed to delete stale dispatcher", "kernel_id", disp.KernelID, "error", err)
+					continue
+				}
+				result.DispatchersRemoved++
+			}
+		}
+	}
+
 	s.logger.Debug("reconcile", "duration_ms", msec(time.Since(start)),
 		"programs_removed", result.ProgramsRemoved,
 		"dispatchers_removed", result.DispatchersRemoved,

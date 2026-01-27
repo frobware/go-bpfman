@@ -133,17 +133,27 @@ func (d *Driver) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolu
 	// 1. Find program by metadata (reconciled with kernel state)
 	metadata, _, err := d.programFinder.FindLoadedProgramByMetadata(ctx, MetadataKeyProgramName, programName)
 	if err != nil {
-		d.logger.Error("failed to find program",
-			"programName", programName,
-			"error", err,
-		)
-		// Return appropriate gRPC code based on error type
+		// Return appropriate gRPC code based on error type.
+		// NotFound is expected during reconciliation — the CSI
+		// driver may ask before the operator has loaded the program.
 		switch {
 		case errors.Is(err, store.ErrNotFound):
+			d.logger.Warn("program not yet loaded",
+				"programName", programName,
+				"error", err,
+			)
 			return nil, status.Errorf(codes.NotFound, "program %q not found", programName)
 		case errors.Is(err, manager.ErrMultipleProgramsFound), errors.Is(err, manager.ErrMultipleMapOwners):
+			d.logger.Error("failed to find program",
+				"programName", programName,
+				"error", err,
+			)
 			return nil, status.Errorf(codes.FailedPrecondition, "program %q: %v", programName, err)
 		default:
+			d.logger.Error("failed to find program",
+				"programName", programName,
+				"error", err,
+			)
 			return nil, status.Errorf(codes.Internal, "failed to find program %q: %v", programName, err)
 		}
 	}

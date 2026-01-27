@@ -304,5 +304,13 @@ func (s *sqliteStore) prepareDispatcherStatements() error {
 		return fmt.Errorf("prepare GetDispatcherByType: %w", err)
 	}
 
+	const sqlCountDispatcherLinks = `
+		SELECT
+			(SELECT COUNT(*) FROM tc_link_details WHERE dispatcher_id = ?) +
+			(SELECT COUNT(*) FROM xdp_link_details WHERE dispatcher_id = ?)`
+	if s.stmtCountDispatcherLinks, err = s.db.Prepare(sqlCountDispatcherLinks); err != nil {
+		return fmt.Errorf("prepare CountDispatcherLinks: %w", err)
+	}
+
 	return nil
 }
