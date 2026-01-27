@@ -5,46 +5,23 @@ FROM ${BUILDER_IMAGE} AS builder
 
 WORKDIR /build
 
-COPY go.mod go.sum Makefile ./
-COPY vendor/ vendor/
+USER root
+RUN dnf install -y glibc-static gcc && dnf clean all
+RUN chown default:root /build
+USER default
+COPY . .
 
-# Copy root-level Go files (package bpfman)
-COPY *.go ./
+RUN --mount=type=cache,target=/root/.cache/go-build make bpfman-compile
 
-# Copy all packages
-COPY action/ action/
-COPY bpffs/ bpffs/
-COPY client/ client/
-COPY cmd/ cmd/
-COPY compute/ compute/
-COPY config/ config/
-COPY csi/ csi/
-COPY dispatcher/ dispatcher/
-COPY interpreter/ interpreter/
-COPY kernel/ kernel/
-COPY logging/ logging/
-COPY manager/ manager/
-COPY netns/ netns/
-COPY nsenter/ nsenter/
-COPY server/ server/
+# Runtime image
+FROM scratch
 
-# Copy dispatcher bytecode
-COPY dispatchers/ dispatchers/
-
-RUN --mount=type=cache,target=/root/.cache/go-build \
-    make bpfman-build
-
-# Runtime image - Fedora for bpftool availability
-FROM fedora:latest
-
-RUN dnf install -y sqlite bpftool && dnf clean all
-
-COPY --from=builder /build/bin/bpfman .
+# All three are the same binary; behaviour is selected by argv[0].
+# bpfman-rpc: compatibility with bpfman-operator (auto-runs "serve").
+# bpfman-ns: namespace helper for container uprobes.
+COPY --from=builder /build/bin/bpfman /bpfman
+COPY --from=builder /build/bin/bpfman /bpfman-rpc
+COPY --from=builder /build/bin/bpfman /bpfman-ns
 COPY testdata/stats.o /opt/bpf/stats.o
 
-# Create bpfman-rpc symlink for compatibility with bpfman-operator.
-# When invoked as bpfman-rpc, the binary automatically runs "serve".
-# Create bpfman-ns symlink for namespace helper (container uprobes).
-RUN ln -s /bpfman /bpfman-rpc && ln -s /bpfman /bpfman-ns
-
-ENTRYPOINT ["./bpfman-rpc"]
+ENTRYPOINT ["/bpfman-rpc"]

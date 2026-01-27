@@ -1,7 +1,4 @@
-# Build output
-bin/
-
-# Not needed for build
+# Upstream build needs bin/bpfman from host
 build/
 manifests/
 scripts/

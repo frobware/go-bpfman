@@ -1,46 +1,18 @@
 # syntax=docker/dockerfile:1.4
-# Build Go binary and inject into upstream bpfman image
-ARG BUILDER_IMAGE=registry.access.redhat.com/ubi9/go-toolset:1.25
+# Inject pre-built static binary into upstream bpfman image.
+#
+# Usage:
+#   make docker-build-bpfman-upstream
+#
+# Requires:
+#   make bpfman-build
+
 ARG BPFMAN_IMAGE=quay.io/bpfman/bpfman:latest
 
-FROM ${BUILDER_IMAGE} AS builder
-
-WORKDIR /build
-
-COPY go.mod go.sum Makefile ./
-COPY vendor/ vendor/
-
-# Copy root-level Go files (package bpfman)
-COPY *.go ./
-
-# Copy all packages
-COPY action/ action/
-COPY bpffs/ bpffs/
-COPY client/ client/
-COPY cmd/ cmd/
-COPY compute/ compute/
-COPY config/ config/
-COPY csi/ csi/
-COPY dispatcher/ dispatcher/
-COPY interpreter/ interpreter/
-COPY kernel/ kernel/
-COPY logging/ logging/
-COPY manager/ manager/
-COPY netns/ netns/
-COPY nsenter/ nsenter/
-COPY server/ server/
-
-# Copy dispatcher bytecode
-COPY dispatchers/ dispatchers/
-
-RUN --mount=type=cache,target=/root/.cache/go-build \
-    make bpfman-build
-
-# Use upstream bpfman image, replace binary
 FROM ${BPFMAN_IMAGE}
 
-COPY --from=builder /build/bin/bpfman /bpfman
+COPY bin/bpfman /bpfman
 RUN ln -sf /bpfman /bpfman-rpc && ln -sf /bpfman /bpfman-ns
 
 # Override upstream ENTRYPOINT which passes --timeout=0 (not supported by Go daemon)
-ENTRYPOINT ["./bpfman-rpc"]
+ENTRYPOINT ["/bpfman-rpc"]

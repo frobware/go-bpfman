@@ -1,21 +1,18 @@
 # syntax=docker/dockerfile:1.4
-# Fast build: copies pre-built binary into upstream bpfman image.
+# Fast build: copies pre-built static binary into upstream bpfman image.
 #
 # Usage:
 #   make docker-build-bpfman-upstream-fast
 #
 # Requires:
-#   make bpfman-build-portable (builds and patches binary for container use)
-#
-# This is useful for rapid iteration during development with bpfman-operator.
+#   make bpfman-build
 
 ARG BPFMAN_IMAGE=quay.io/bpfman/bpfman:latest
 
 FROM ${BPFMAN_IMAGE}
 
-# Copy pre-built portable binary from host
-COPY bin/bpfman-portable /bpfman
+COPY bin/bpfman /bpfman
 RUN ln -sf /bpfman /bpfman-rpc && ln -sf /bpfman /bpfman-ns
 
 # Override upstream ENTRYPOINT which passes --timeout=0 (not supported by Go daemon)
-ENTRYPOINT ["./bpfman-rpc"]
+ENTRYPOINT ["/bpfman-rpc"]
