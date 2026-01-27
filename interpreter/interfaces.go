@@ -67,13 +67,18 @@ type DispatcherStore interface {
 	// IncrementRevision atomically increments the dispatcher revision.
 	// Returns the new revision number. Wraps from MaxUint32 to 1.
 	IncrementRevision(ctx context.Context, dispType string, nsid uint64, ifindex uint32) (uint32, error)
+
+	// CountDispatcherLinks returns the number of extension links
+	// attached to the dispatcher identified by its kernel program ID.
+	CountDispatcherLinks(ctx context.Context, dispatcherKernelID uint32) (int, error)
 }
 
-// GCResult contains statistics from store garbage collection.
+// GCResult contains statistics from garbage collection.
 type GCResult struct {
 	ProgramsRemoved    int
 	DispatchersRemoved int
 	LinksRemoved       int
+	OrphanPinsRemoved  int
 }
 
 // GarbageCollector removes stale entries from the store.
@@ -302,6 +307,11 @@ type TCFilterDetacher interface {
 	// priority, and handle. This is the counterpart to the netlink-based
 	// attachment performed by AttachTCDispatcherWithPaths.
 	DetachTCFilter(ifindex int, ifname string, parent uint32, priority uint16, handle uint32) error
+
+	// FindTCFilterHandle looks up the kernel-assigned handle for a TC
+	// BPF filter by listing filters on the given parent and matching
+	// the specified priority.
+	FindTCFilterHandle(ifindex int, parent uint32, priority uint16) (uint32, error)
 }
 
 // MapRepinner re-pins maps to new locations.

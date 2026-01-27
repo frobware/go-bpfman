@@ -29,13 +29,13 @@ func (c *GCCmd) Run(cli *CLI) error {
 		return fmt.Errorf("gc failed: %w", err)
 	}
 
-	if result.ProgramsRemoved == 0 && result.DispatchersRemoved == 0 && result.LinksRemoved == 0 {
+	if result.ProgramsRemoved == 0 && result.DispatchersRemoved == 0 && result.LinksRemoved == 0 && result.OrphanPinsRemoved == 0 {
 		fmt.Println("Nothing to clean up.")
 		return nil
 	}
 
-	fmt.Printf("GC complete: %d programs, %d dispatchers, %d links removed\n",
-		result.ProgramsRemoved, result.DispatchersRemoved, result.LinksRemoved)
+	fmt.Printf("GC complete: %d programs, %d dispatchers, %d links, %d orphan pins removed\n",
+		result.ProgramsRemoved, result.DispatchersRemoved, result.LinksRemoved, result.OrphanPinsRemoved)
 
 	return nil
 }
