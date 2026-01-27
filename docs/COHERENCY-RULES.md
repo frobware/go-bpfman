@@ -20,6 +20,19 @@ Severity levels:
   running programs but indicate incomplete cleanup. Orphan
   filesystem entries or missing pins.
 
+## Dispatcher Invariants
+
+A dispatcher is considered live if and only if:
+
+- its kernel program exists, and
+- it has at least one active attachment mechanism:
+  - **XDP**: a kernel BPF link
+  - **TC**: a netlink filter at the expected (ifindex, parent, priority)
+
+A dispatcher with zero extension links and no active attachment
+mechanism is functionally dead and eligible for GC, even if its
+kernel program is still loaded.
+
 ## Doctor Rules (read-only checks)
 
 ### DB vs Kernel
@@ -57,6 +70,10 @@ Severity levels:
 | D14 | Each DB dispatcher | `CountDispatcherLinks(KernelID)` equals count of `link_*` files in revision directory | WARNING | None |
 
 ## GC Rules (store layer)
+
+GC rules correspond directly to doctor rules, but execute
+destructive actions instead of emitting findings. The predicates
+are the same; only the response differs.
 
 These rules are enforced by `store.GC()` which receives the set of
 kernel program IDs and kernel link IDs gathered by the manager.
@@ -106,7 +123,9 @@ conditions hold: not in the DB AND not in the kernel.
   that lost their DB record (e.g., DB corruption or manual DB
   editing). Distinguishing bpfman-managed programs from unrelated
   kernel programs is the challenge — we would need to filter by pin
-  path prefix or program name convention.
+  path prefix or program name convention. Kernel objects not tracked
+  in the DB are considered leaked or unmanaged, but not correctness
+  failures (WARNING severity, not ERROR).
 
 ## Design Notes
 

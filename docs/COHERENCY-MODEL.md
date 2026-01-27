@@ -1,5 +1,13 @@
 # Coherency Model: Intent vs Reality
 
+## At a Glance
+
+- **Sources**: DB (intent), FS (pins), Kernel (reality)
+- **Doctor**: detects violations (read-only)
+- **GC**: deletes DB rows and filesystem artefacts
+- **Manager GC**: handles cases store GC cannot see
+- **Invariant**: DB intent must be satisfiable by kernel + filesystem
+
 ## The Three Sources of State
 
 bpfman maintains state in three places:
@@ -85,6 +93,9 @@ So the model is:
 - **Filesystem + kernel**: records of reality — what exists
 - **Coherency engine**: compares intent against reality
 
+The database also defines ownership boundaries: only kernel objects
+traceable to a DB record are considered bpfman-managed.
+
 The database is not a cache of kernel state. It is the only record
 of user intent. This is why it cannot be eliminated, but it is also
 why disagreements between the DB and reality are the most
@@ -162,3 +173,6 @@ the system grows to twenty or thirty checks — especially as new
 attach types, dispatcher variants, or filesystem conventions are
 added — the declarative model pays for itself in maintainability
 and correctness.
+
+This refactor is not required today. It becomes justified once the
+coherency surface grows beyond a small, reviewable set of rules.
