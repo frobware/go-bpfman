@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/signal"
 	"syscall"
 
@@ -35,9 +36,23 @@ func (c *ServeCmd) Run(cli *CLI) error {
 		Config:     appConfig,
 	}
 
-	// Create context that cancels on SIGINT/SIGTERM
+	// Create context that cancels on SIGINT/SIGTERM.
+	// The first signal initiates graceful shutdown; a second signal
+	// forces an immediate exit.
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
+
+	go func() {
+		// After the first signal, NotifyContext stops catching.
+		// Re-register so the next signal reaches us.
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+		<-ctx.Done()
+		logger.Info("shutting down gracefully, send another signal to force exit")
+		<-sig
+		logger.Warn("received second signal, forcing exit")
+		os.Exit(1)
+	}()
 
 	return server.Run(ctx, cfg)
 }
