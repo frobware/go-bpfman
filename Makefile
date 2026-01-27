@@ -72,7 +72,7 @@ clean: bpfman-clean dispatchers-clean coverage-clean
 	$(RM) -r $(BIN_DIR)
 
 test:
-	go test -v ./...
+	go test -race -v ./...
 
 lint:
 	golangci-lint run
