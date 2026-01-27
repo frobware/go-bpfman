@@ -119,8 +119,6 @@ import (
 	"path/filepath"
 	"time"
 
-	_ "modernc.org/sqlite"
-
 	"github.com/frobware/go-bpfman/interpreter"
 )
 
@@ -208,7 +206,7 @@ func New(dbPath string, logger *slog.Logger) (interpreter.Store, error) {
 		return nil, fmt.Errorf("failed to create database directory: %w", err)
 	}
 
-	db, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)")
+	db, err := sql.Open(driverName, dsn(dbPath, [][2]string{{"journal_mode", "WAL"}, {"foreign_keys", "1"}}))
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
@@ -234,7 +232,7 @@ func NewInMemory(logger *slog.Logger) (interpreter.Store, error) {
 	}
 	logger = logger.With("component", "store", "db", ":memory:")
 
-	db, err := sql.Open("sqlite", ":memory:?_pragma=foreign_keys(1)")
+	db, err := sql.Open(driverName, dsn(":memory:", [][2]string{{"foreign_keys", "1"}}))
 	if err != nil {
 		return nil, fmt.Errorf("failed to open in-memory database: %w", err)
 	}

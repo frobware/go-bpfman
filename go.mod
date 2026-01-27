@@ -1,6 +1,6 @@
 module github.com/frobware/go-bpfman
 
-go 1.25.0
+go 1.25.6
 
 require (
 	github.com/BurntSushi/toml v1.6.0
@@ -9,6 +9,7 @@ require (
 	github.com/container-storage-interface/spec v1.12.0
 	github.com/golang/protobuf v1.5.4
 	github.com/google/go-containerregistry v0.20.7
+	github.com/mattn/go-sqlite3 v1.14.33
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/sigstore/cosign/v2 v2.6.2
