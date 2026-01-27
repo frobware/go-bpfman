@@ -256,6 +256,7 @@ func (k *kernelAdapter) attachUprobeViaHelper(progPinPath, target, fnName string
 		LogLevel:   childLogLevel,
 		ExtraFiles: []*os.File{progFile, childSocket}, // fd 3, fd 4 in child
 	}, args...)
+	cmd.Env = append(cmd.Env, nsenter.ModeEnvVar+"=bpfman-ns")
 
 	k.logger.Debug("executing bpfman-ns helper subprocess",
 		"executable", bpfmanPath,

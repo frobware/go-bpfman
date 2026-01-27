@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"syscall"
 
 	"github.com/alecthomas/kong"
@@ -220,19 +219,28 @@ func (cmd *NSUprobeCmd) Run() error {
 
 // runAsNS checks if we're running as bpfman-ns and handles it specially.
 // Returns true if we handled bpfman-ns mode (caller should exit).
+//
+// Detection order:
+//  1. BPFMAN_MODE=bpfman-ns (env var, checked via resolveMode)
+//  2. argv[0] == "bpfman-ns" (symlink, checked via resolveMode)
+//  3. argv[1] == "bpfman-ns" (self-exec with subcommand)
 func runAsNS() bool {
-	// Check if invoked as bpfman-ns or with "bpfman-ns" as first arg
 	isBpfmanNS := false
-	if filepath.Base(os.Args[0]) == "bpfman-ns" {
+	if resolveMode() == "bpfman-ns" {
 		isBpfmanNS = true
 	} else if len(os.Args) > 1 && os.Args[1] == "bpfman-ns" {
-		// Remove "bpfman-ns" from args so kong sees "uprobe" as the command
-		os.Args = append(os.Args[:1], os.Args[2:]...)
 		isBpfmanNS = true
 	}
 
 	if !isBpfmanNS {
 		return false
+	}
+
+	// Strip "bpfman-ns" from args if present so kong sees "uprobe"
+	// as the command. This applies whether detected via env var or
+	// argv[1].
+	if len(os.Args) > 1 && os.Args[1] == "bpfman-ns" {
+		os.Args = append(os.Args[:1], os.Args[2:]...)
 	}
 
 	// Parse and run the NS command using kong

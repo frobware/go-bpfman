@@ -27,7 +27,7 @@
 //
 // To attach a uprobe in a container's mount namespace:
 //
-//	cmd := nsenter.Command(containerPid, os.Args[0], "bpfman-ns", "uprobe", ...)
+//	cmd := nsenter.CommandWithOptions(containerPid, selfPath, opts, "bpfman-ns", "uprobe", ...)
 //	output, err := cmd.Output()
 //
 // The child process will:
@@ -61,6 +61,11 @@ const (
 	// LogLevelEnvVar controls C-level logging verbosity.
 	// Values: "debug", "info", "error", "none"
 	LogLevelEnvVar = "_BPFMAN_NS_LOG_LEVEL"
+
+	// ModeEnvVar selects the binary's behavioural mode without
+	// relying on argv[0] or symlinks. Valid values are
+	// "bpfman-rpc" and "bpfman-ns".
+	ModeEnvVar = "BPFMAN_MODE"
 )
 
 // LogLevel represents the logging verbosity for the C nsexec code.

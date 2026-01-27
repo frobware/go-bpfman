@@ -15,6 +15,7 @@ import (
 	"github.com/frobware/go-bpfman/client"
 	"github.com/frobware/go-bpfman/config"
 	"github.com/frobware/go-bpfman/logging"
+	"github.com/frobware/go-bpfman/nsenter"
 )
 
 // CLI is the root command structure for bpfman.
@@ -40,18 +41,28 @@ func (c *CLI) RuntimeDirs() config.RuntimeDirs {
 	return config.NewRuntimeDirs(c.RuntimeDir)
 }
 
+// resolveMode returns the effective mode name by checking the
+// BPFMAN_MODE environment variable first, falling back to argv[0].
+func resolveMode() string {
+	if mode := os.Getenv(nsenter.ModeEnvVar); mode != "" {
+		return mode
+	}
+	return filepath.Base(os.Args[0])
+}
+
 // Run parses command-line arguments and executes the selected command.
-// If invoked as "bpfman-rpc", automatically runs the serve command for
-// compatibility with the bpfman-operator which expects the Rust daemon's
-// binary layout.
-// If invoked as "bpfman-ns", runs the namespace helper for container uprobes.
+// If invoked as "bpfman-rpc" (via argv[0] or BPFMAN_MODE), automatically
+// runs the serve command for compatibility with the bpfman-operator which
+// expects the Rust daemon's binary layout.
+// If invoked as "bpfman-ns" (via argv[0], argv[1], or BPFMAN_MODE), runs
+// the namespace helper for container uprobes.
 func Run() {
 	// Check for bpfman-ns mode first - needs special early handling
 	if runAsNS() {
 		return
 	}
 
-	if filepath.Base(os.Args[0]) == "bpfman-rpc" {
+	if resolveMode() == "bpfman-rpc" {
 		os.Args = append([]string{os.Args[0], "serve"}, os.Args[1:]...)
 	}
 
