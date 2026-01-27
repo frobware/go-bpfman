@@ -12,8 +12,9 @@ import (
 
 // ServeCmd starts the gRPC daemon.
 type ServeCmd struct {
-	TCPAddress string `name:"tcp-address" help:"TCP address for gRPC server." default:"[::]:50051"`
-	CSISupport bool   `name:"csi-support" help:"Enable CSI driver support."`
+	TCPAddress   string `name:"tcp-address" help:"TCP address for gRPC server." default:"[::]:50051"`
+	CSISupport   bool   `name:"csi-support" help:"Enable CSI driver support."`
+	PprofAddress string `name:"pprof-address" help:"Address for pprof HTTP server. Port 0 selects an ephemeral port. Empty string disables." env:"BPFMAN_PPROF_ADDRESS" default:"localhost:0"`
 }
 
 // Run executes the serve command.
@@ -29,11 +30,12 @@ func (c *ServeCmd) Run(cli *CLI) error {
 	}
 
 	cfg := server.RunConfig{
-		Dirs:       cli.RuntimeDirs(),
-		TCPAddress: c.TCPAddress,
-		CSISupport: c.CSISupport,
-		Logger:     logger,
-		Config:     appConfig,
+		Dirs:         cli.RuntimeDirs(),
+		TCPAddress:   c.TCPAddress,
+		CSISupport:   c.CSISupport,
+		PprofAddress: c.PprofAddress,
+		Logger:       logger,
+		Config:       appConfig,
 	}
 
 	// Create context that cancels on SIGINT/SIGTERM.

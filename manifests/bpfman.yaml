@@ -26,6 +26,9 @@ spec:
           image: bpfman:dev
           imagePullPolicy: IfNotPresent
           args: ["--csi-support", "--runtime-dir", "/run/bpfman", "--tcp-address", "[::]:50051"]
+          env:
+            - name: BPFMAN_PPROF_ADDRESS
+              value: "localhost:6060"
           securityContext:
             privileged: true
           ports:

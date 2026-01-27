@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"path/filepath"
 	"sync"
@@ -46,11 +48,12 @@ func (DefaultNetIfaceResolver) InterfaceByName(name string) (*net.Interface, err
 
 // RunConfig configures the server daemon.
 type RunConfig struct {
-	Dirs       config.RuntimeDirs
-	TCPAddress string // Optional TCP address (e.g., ":50051") for remote access
-	CSISupport bool
-	Logger     *slog.Logger
-	Config     config.Config
+	Dirs         config.RuntimeDirs
+	TCPAddress   string // Optional TCP address (e.g., ":50051") for remote access
+	CSISupport   bool
+	PprofAddress string // Optional address for pprof HTTP server (e.g., "localhost:2026")
+	Logger       *slog.Logger
+	Config       config.Config
 }
 
 // Run starts the bpfman daemon with the given configuration.
@@ -150,6 +153,27 @@ func Run(ctx context.Context, cfg RunConfig) error {
 			csiDriver.Stop()
 		}
 	}()
+
+	// Start pprof HTTP server if configured.
+	if cfg.PprofAddress != "" {
+		pprofListener, err := net.Listen("tcp", cfg.PprofAddress)
+		if err != nil {
+			return fmt.Errorf("pprof listen on %s: %w", cfg.PprofAddress, err)
+		}
+		pprofServer := &http.Server{}
+		logger.Info("pprof HTTP server listening", "address", pprofListener.Addr().String())
+		go func() {
+			if err := pprofServer.Serve(pprofListener); err != nil && err != http.ErrServerClosed {
+				logger.Error("pprof HTTP server failed", "error", err)
+			}
+		}()
+		go func() {
+			<-ctx.Done()
+			pprofServer.Close()
+		}()
+	} else {
+		logger.Info("pprof HTTP server disabled")
+	}
 
 	// Start bpfman gRPC server
 	srv := newWithStore(dirs, st, puller, mgr, logger)
