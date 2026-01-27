@@ -135,7 +135,7 @@ bpfman-build: ensure-dispatchers bpfman-compile
 bpfman-fmt:
 	go fmt ./...
 
-bpfman-vet:
+bpfman-vet: ensure-dispatchers
 	go vet ./...
 
 # Compile bpfman without the dispatcher dependency. Used directly by
