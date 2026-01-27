@@ -107,9 +107,10 @@ func (m *Manager) Unload(ctx context.Context, kernelID uint32) error {
 	// COMPUTE: Build paths from convention (kernel ID + bpffs root)
 	progPinPath := filepath.Join(m.dirs.FS, fmt.Sprintf("prog_%d", kernelID))
 	mapsDir := filepath.Join(m.dirs.FS, "maps", fmt.Sprintf("%d", kernelID))
+	linksDir := filepath.Join(m.dirs.FS, "links", fmt.Sprintf("%d", kernelID))
 
 	// COMPUTE: Build unload actions
-	actions := computeUnloadActions(kernelID, progPinPath, mapsDir, links)
+	actions := computeUnloadActions(kernelID, progPinPath, mapsDir, linksDir, links)
 
 	m.logger.Info("unloading program", "kernel_id", kernelID, "links", len(links))
 
@@ -130,15 +131,16 @@ func (m *Manager) Unload(ctx context.Context, kernelID uint32) error {
 // 2. UnloadProgram (program pin)
 // 3. UnloadProgram (maps directory)
 // 4. DeleteProgram
-func computeUnloadActions(kernelID uint32, progPinPath, mapsDir string, links []bpfman.LinkSummary) []action.Action {
+func computeUnloadActions(kernelID uint32, progPinPath, mapsDir, linksDir string, links []bpfman.LinkSummary) []action.Action {
 	var actions []action.Action
 
-	// Detach links first
+	// Detach links first, then remove the links directory.
 	for _, link := range links {
 		if link.PinPath != "" {
 			actions = append(actions, action.DetachLink{PinPath: link.PinPath})
 		}
 	}
+	actions = append(actions, action.RemovePin{Path: linksDir})
 
 	// Unload program pin and maps directory, then delete metadata
 	actions = append(actions,
