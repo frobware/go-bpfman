@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1.4
 
 ARG BUILDER_IMAGE=registry.access.redhat.com/ubi9/go-toolset:1.25
+ARG BASE_IMAGE=registry.access.redhat.com/ubi9/ubi-minimal:latest
 
 # BPF toolchain stage — builds dispatcher .bpf.o files
 FROM fedora:latest AS bpf-builder
@@ -33,14 +34,11 @@ COPY --from=bpf-builder /build/dispatcher/*.bpf.o dispatcher/
 RUN --mount=type=cache,target=/root/.cache/go-build make bpfman-compile
 
 # Runtime image
-FROM scratch
+FROM ${BASE_IMAGE}
 
-# All three are the same binary; behaviour is selected by argv[0].
-# bpfman-rpc: compatibility with bpfman-operator (auto-runs "serve").
-# bpfman-ns: namespace helper for container uprobes.
+# Single binary; behavioural mode is selected via BPFMAN_MODE.
 COPY --from=builder /build/bin/bpfman /bpfman
-COPY --from=builder /build/bin/bpfman /bpfman-rpc
-COPY --from=builder /build/bin/bpfman /bpfman-ns
 COPY testdata/stats.o /opt/bpf/stats.o
 
-ENTRYPOINT ["/bpfman-rpc"]
+ENV BPFMAN_MODE=bpfman-rpc
+ENTRYPOINT ["/bpfman"]

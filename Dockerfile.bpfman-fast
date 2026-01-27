@@ -8,11 +8,11 @@
 # Requires:
 #   make bpfman-build
 
-FROM scratch
+ARG BASE_IMAGE=registry.access.redhat.com/ubi9/ubi-minimal:latest
+FROM ${BASE_IMAGE}
 
 COPY bin/bpfman /bpfman
-COPY bin/bpfman /bpfman-rpc
-COPY bin/bpfman /bpfman-ns
 COPY testdata/stats.o /opt/bpf/stats.o
 
-ENTRYPOINT ["/bpfman-rpc"]
+ENV BPFMAN_MODE=bpfman-rpc
+ENTRYPOINT ["/bpfman"]

@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.4
-# Fast build: copies pre-built static binary into upstream bpfman image.
+# Fast build: copies pre-built static binary for operator integration testing.
 #
 # Usage:
 #   make docker-build-bpfman-upstream-fast
@@ -7,12 +7,10 @@
 # Requires:
 #   make bpfman-build
 
-ARG BPFMAN_IMAGE=quay.io/bpfman/bpfman:latest
-
-FROM ${BPFMAN_IMAGE}
+ARG BASE_IMAGE=registry.access.redhat.com/ubi9/ubi-minimal:latest
+FROM ${BASE_IMAGE}
 
 COPY bin/bpfman /bpfman
-RUN ln -sf /bpfman /bpfman-rpc && ln -sf /bpfman /bpfman-ns
 
-# Override upstream ENTRYPOINT which passes --timeout=0 (not supported by Go daemon)
-ENTRYPOINT ["/bpfman-rpc"]
+ENV BPFMAN_MODE=bpfman-rpc
+ENTRYPOINT ["/bpfman"]
