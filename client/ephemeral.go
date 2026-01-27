@@ -69,7 +69,9 @@ func newEphemeral(dirs config.RuntimeDirs, cfg config.Config, logger *slog.Logge
 		oci.WithVerifier(verifier),
 	)
 	if err != nil {
-		env.Close()
+		if closeErr := env.Close(); closeErr != nil {
+			logger.Warn("failed to close runtime env during cleanup", "error", closeErr)
+		}
 		return nil, fmt.Errorf("create image puller: %w", err)
 	}
 
@@ -85,7 +87,9 @@ func newEphemeral(dirs config.RuntimeDirs, cfg config.Config, logger *slog.Logge
 	socketPath := fmt.Sprintf("/tmp/bpfman-ephemeral-%d-%d.sock", os.Getpid(), time.Now().UnixNano())
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
-		env.Close()
+		if closeErr := env.Close(); closeErr != nil {
+			logger.Warn("failed to close runtime env during cleanup", "error", closeErr)
+		}
 		return nil, fmt.Errorf("listen on socket %s: %w", socketPath, err)
 	}
 
@@ -120,7 +124,9 @@ func newEphemeral(dirs config.RuntimeDirs, cfg config.Config, logger *slog.Logge
 	if err != nil {
 		cancel()
 		grpcServer.GracefulStop()
-		env.Close()
+		if closeErr := env.Close(); closeErr != nil {
+			logger.Warn("failed to close runtime env during cleanup", "error", closeErr)
+		}
 		if rmErr := os.Remove(socketPath); rmErr != nil && !os.IsNotExist(rmErr) {
 			logger.Warn("failed to remove socket during cleanup", "path", socketPath, "error", rmErr)
 		}
@@ -135,12 +141,16 @@ func newEphemeral(dirs config.RuntimeDirs, cfg config.Config, logger *slog.Logge
 func (e *ephemeralClient) Close() error {
 	e.cancel()
 	if e.remote != nil {
-		e.remote.Close()
+		if err := e.remote.Close(); err != nil {
+			e.logger.Warn("failed to close remote client", "error", err)
+		}
 	}
 	e.grpcServer.GracefulStop()
 	e.wg.Wait()
 	if e.env != nil {
-		e.env.Close()
+		if err := e.env.Close(); err != nil {
+			e.logger.Warn("failed to close runtime env", "error", err)
+		}
 	}
 	if e.socketPath != "" {
 		if err := os.Remove(e.socketPath); err != nil && !os.IsNotExist(err) {
