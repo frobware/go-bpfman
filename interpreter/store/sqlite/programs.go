@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -20,7 +21,7 @@ func (s *sqliteStore) Get(ctx context.Context, kernelID uint32) (bpfman.Program,
 	row := s.stmtGetProgram.QueryRowContext(ctx, kernelID)
 
 	prog, err := s.scanProgram(row)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		s.logger.Debug("sql", "stmt", "GetProgram", "args", []any{kernelID}, "duration_ms", msec(time.Since(start)), "rows", 0)
 		return bpfman.Program{}, fmt.Errorf("program %d: %w", kernelID, store.ErrNotFound)
 	}
