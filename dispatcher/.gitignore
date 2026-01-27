@@ -1,2 +1,5 @@
-# Compiled eBPF dispatcher bytecode (copied from dispatchers/ during build)
-*.bpf.o
+# Compiled eBPF object files
+*.o
+
+# Dependency files
+*.d
