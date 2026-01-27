@@ -40,7 +40,6 @@ linters:
     - nilnesserr        # Detects returning nil errors.
     - noctx             # Detects HTTP requests without context.Context.
     - nosprintfhostport # Detects misuse of Sprintf to construct host:port URLs.
-    - prealloc          # Finds slice declarations that could be preallocated.
     - reassign          # Detects reassigning a top-level variable in another package.
     - revive            # Metalinter; drop-in replacement for golint.
     - sqlclosecheck     # Checks that sql.Rows and sql.Stmt are closed.
