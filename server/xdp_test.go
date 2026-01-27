@@ -2,11 +2,14 @@ package server_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/frobware/go-bpfman"
+	"github.com/frobware/go-bpfman/dispatcher"
 	pb "github.com/frobware/go-bpfman/server/pb"
 )
 
@@ -260,6 +263,182 @@ func TestXDPDispatcher_FullLifecycle(t *testing.T) {
 	assert.Empty(t, listResp.Results, "should have 0 programs in database")
 
 	t.Log("Step 5: Verified clean state - test passed")
+}
+
+// TestXDP_ExtensionPositionsAreSequential verifies that multiple XDP
+// extensions on the same interface get sequential positions derived
+// from CountDispatcherLinks rather than cached state.
+func TestXDP_ExtensionPositionsAreSequential(t *testing.T) {
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	loadResp, err := fix.Server.Load(ctx, &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_File{File: "/path/to/xdp.o"},
+		},
+		Info: []*pb.LoadInfo{
+			{Name: "xdp_pass", ProgramType: pb.BpfmanProgramType_XDP},
+		},
+		Metadata: map[string]string{
+			"bpfman.io/ProgramName": "xdp-position-test",
+		},
+	})
+	require.NoError(t, err)
+	programID := loadResp.Programs[0].KernelInfo.Id
+
+	var linkIDs []uint32
+	for i := 0; i < 3; i++ {
+		attachResp, err := fix.Server.Attach(ctx, &pb.AttachRequest{
+			Id: programID,
+			Attach: &pb.AttachInfo{
+				Info: &pb.AttachInfo_XdpAttachInfo{
+					XdpAttachInfo: &pb.XDPAttachInfo{
+						Iface: "lo",
+					},
+				},
+			},
+		})
+		require.NoError(t, err, "attach %d should succeed", i)
+		linkIDs = append(linkIDs, attachResp.LinkId)
+	}
+
+	for i, linkID := range linkIDs {
+		_, details, err := fix.Store.GetLink(ctx, linkID)
+		require.NoError(t, err)
+		xdpDetails, ok := details.(bpfman.XDPDetails)
+		require.True(t, ok, "expected XDPDetails, got %T", details)
+		assert.Equal(t, int32(i), xdpDetails.Position,
+			"link %d should have position %d", linkID, i)
+	}
+}
+
+// TestXDP_DispatcherStateInStore verifies that the store tracks
+// dispatcher state and cleans it up when the last extension is
+// detached.
+func TestXDP_DispatcherStateInStore(t *testing.T) {
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	loadResp, err := fix.Server.Load(ctx, &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_File{File: "/path/to/xdp.o"},
+		},
+		Info: []*pb.LoadInfo{
+			{Name: "xdp_pass", ProgramType: pb.BpfmanProgramType_XDP},
+		},
+		Metadata: map[string]string{
+			"bpfman.io/ProgramName": "xdp-disp-state-test",
+		},
+	})
+	require.NoError(t, err)
+	programID := loadResp.Programs[0].KernelInfo.Id
+
+	// Attach two extensions
+	var linkIDs []uint32
+	for i := 0; i < 2; i++ {
+		resp, err := fix.Server.Attach(ctx, &pb.AttachRequest{
+			Id: programID,
+			Attach: &pb.AttachInfo{
+				Info: &pb.AttachInfo_XdpAttachInfo{
+					XdpAttachInfo: &pb.XDPAttachInfo{
+						Iface: "lo",
+					},
+				},
+			},
+		})
+		require.NoError(t, err)
+		linkIDs = append(linkIDs, resp.LinkId)
+	}
+
+	// Verify dispatcher state
+	dispatchers, err := fix.Store.ListDispatchers(ctx)
+	require.NoError(t, err)
+	require.Len(t, dispatchers, 1)
+	assert.Equal(t, dispatcher.DispatcherTypeXDP, dispatchers[0].Type)
+	assert.Equal(t, uint32(1), dispatchers[0].Ifindex) // lo = ifindex 1
+
+	count, err := fix.Store.CountDispatcherLinks(ctx, dispatchers[0].KernelID)
+	require.NoError(t, err)
+	assert.Equal(t, 2, count)
+
+	// Detach first — dispatcher should still exist
+	_, err = fix.Server.Detach(ctx, &pb.DetachRequest{LinkId: linkIDs[0]})
+	require.NoError(t, err)
+
+	dispatchers, err = fix.Store.ListDispatchers(ctx)
+	require.NoError(t, err)
+	assert.Len(t, dispatchers, 1, "dispatcher should still exist with 1 extension")
+
+	// Detach second — dispatcher should be cleaned up
+	_, err = fix.Server.Detach(ctx, &pb.DetachRequest{LinkId: linkIDs[1]})
+	require.NoError(t, err)
+
+	dispatchers, err = fix.Store.ListDispatchers(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, dispatchers, "dispatcher should be removed after last extension detached")
+}
+
+// TestXDP_PinPathConventions verifies that dispatcher cleanup removes
+// pins at convention-derived paths, including the link pin (XDP
+// dispatchers use BPF links, unlike TC which uses netlink).
+func TestXDP_PinPathConventions(t *testing.T) {
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	loadResp, err := fix.Server.Load(ctx, &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_File{File: "/path/to/xdp.o"},
+		},
+		Info: []*pb.LoadInfo{
+			{Name: "xdp_pass", ProgramType: pb.BpfmanProgramType_XDP},
+		},
+		Metadata: map[string]string{
+			"bpfman.io/ProgramName": "xdp-pin-path-test",
+		},
+	})
+	require.NoError(t, err)
+	programID := loadResp.Programs[0].KernelInfo.Id
+
+	attachResp, err := fix.Server.Attach(ctx, &pb.AttachRequest{
+		Id: programID,
+		Attach: &pb.AttachInfo{
+			Info: &pb.AttachInfo_XdpAttachInfo{
+				XdpAttachInfo: &pb.XDPAttachInfo{
+					Iface: "lo",
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	// Capture dispatcher state before cleanup
+	dispatchers, err := fix.Store.ListDispatchers(ctx)
+	require.NoError(t, err)
+	require.Len(t, dispatchers, 1)
+	disp := dispatchers[0]
+
+	// Detach (triggers full dispatcher cleanup)
+	_, err = fix.Server.Detach(ctx, &pb.DetachRequest{LinkId: attachResp.LinkId})
+	require.NoError(t, err)
+
+	removedPins := fix.Kernel.RemovedPins()
+	bpffsRoot := fix.Dirs.FS
+
+	revisionDir := dispatcher.DispatcherRevisionDir(bpffsRoot, disp.Type, disp.Nsid, disp.Ifindex, disp.Revision)
+	expectedProgPin := dispatcher.DispatcherProgPath(revisionDir)
+	expectedLinkPin := dispatcher.DispatcherLinkPath(bpffsRoot, disp.Type, disp.Nsid, disp.Ifindex)
+
+	// XDP dispatchers should have link pin, prog pin, and revision dir removed
+	assert.Contains(t, removedPins, expectedLinkPin,
+		"should remove link pin at %s", expectedLinkPin)
+	assert.Contains(t, removedPins, expectedProgPin,
+		"should remove prog pin at %s", expectedProgPin)
+	assert.Contains(t, removedPins, revisionDir,
+		"should remove revision dir at %s", revisionDir)
+
+	typeDir := dispatcher.TypeDir(bpffsRoot, dispatcher.DispatcherTypeXDP)
+	assert.True(t, strings.HasPrefix(revisionDir, typeDir),
+		"revision dir %s should be under %s", revisionDir, typeDir)
 }
 
 // TestXDP_AttachToNonExistentInterface verifies that:

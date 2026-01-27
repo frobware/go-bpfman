@@ -22,6 +22,13 @@ type kernelOp struct {
 	MapPinDir string // for XDP/TC extension attachments, the map directory used
 }
 
+// tcFilterKey identifies a TC filter by its location on an interface.
+type tcFilterKey struct {
+	ifindex  int
+	parent   uint32
+	priority uint16
+}
+
 // fakeKernel implements interpreter.KernelOperations for testing.
 // It simulates kernel BPF operations without actual syscalls.
 type fakeKernel struct {
@@ -29,9 +36,14 @@ type fakeKernel struct {
 	programs map[uint32]fakeProgram
 	links    map[uint32]*bpfman.AttachedLink
 
+	// TC filter handle tracking for FindTCFilterHandle
+	tcFilters map[tcFilterKey]uint32
+
 	// Operation recording for verification
-	ops []kernelOp
-	mu  sync.Mutex
+	ops        []kernelOp
+	removePins []string      // paths passed to RemovePin
+	tcDetaches []tcFilterKey // TC filters detached
+	mu         sync.Mutex
 
 	// Error injection - set these to control behaviour
 	failOnProgram map[string]error // fail Load if program name matches
@@ -92,6 +104,7 @@ func newFakeKernel() *fakeKernel {
 	fk := &fakeKernel{
 		programs:      make(map[uint32]fakeProgram),
 		links:         make(map[uint32]*bpfman.AttachedLink),
+		tcFilters:     make(map[tcFilterKey]uint32),
 		failOnProgram: make(map[string]error),
 		failOnAttach:  make(map[string]error),
 		failOnDetach:  make(map[uint32]error),
@@ -191,6 +204,9 @@ func (f *fakeKernel) Reset() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.ops = nil
+	f.removePins = nil
+	f.tcDetaches = nil
+	f.tcFilters = make(map[tcFilterKey]uint32)
 	f.failOnProgram = make(map[string]error)
 	f.failOnAttach = make(map[string]error)
 	f.failOnDetach = make(map[uint32]error)
@@ -602,6 +618,21 @@ func (f *fakeKernel) AttachTCDispatcherWithPaths(ifindex int, ifname, progPinPat
 		programType: bpfman.ProgramTypeTC,
 		pinPath:     progPinPath,
 	}
+
+	// Determine parent handle from direction
+	var parent uint32
+	switch direction {
+	case "ingress":
+		parent = 0xFFFFFFF2 // netlink.HANDLE_MIN_INGRESS
+	case "egress":
+		parent = 0xFFFFFFF3 // netlink.HANDLE_MIN_EGRESS
+	}
+
+	// Store TC filter so FindTCFilterHandle can look it up
+	f.mu.Lock()
+	f.tcFilters[tcFilterKey{ifindex: ifindex, parent: parent, priority: 50}] = handle
+	f.mu.Unlock()
+
 	return &interpreter.TCDispatcherResult{
 		DispatcherID:  dispatcherID,
 		DispatcherPin: progPinPath,
@@ -611,7 +642,23 @@ func (f *fakeKernel) AttachTCDispatcherWithPaths(ifindex int, ifname, progPinPat
 }
 
 func (f *fakeKernel) DetachTCFilter(ifindex int, ifname string, parent uint32, priority uint16, handle uint32) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	key := tcFilterKey{ifindex: ifindex, parent: parent, priority: priority}
+	f.tcDetaches = append(f.tcDetaches, key)
+	delete(f.tcFilters, key)
 	return nil
+}
+
+func (f *fakeKernel) FindTCFilterHandle(ifindex int, parent uint32, priority uint16) (uint32, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	key := tcFilterKey{ifindex: ifindex, parent: parent, priority: priority}
+	handle, ok := f.tcFilters[key]
+	if !ok {
+		return 0, fmt.Errorf("no TC filter for ifindex=%d parent=%x priority=%d", ifindex, parent, priority)
+	}
+	return handle, nil
 }
 
 func (f *fakeKernel) AttachTCExtension(dispatcherPinPath, objectPath, programName string, position int, linkPinPath, mapPinDir string) (bpfman.ManagedLink, error) {
@@ -659,6 +706,10 @@ func (f *fakeKernel) AttachTCX(ifindex int, direction, programPinPath, linkPinPa
 }
 
 func (f *fakeKernel) RemovePin(path string) error {
+	f.mu.Lock()
+	f.removePins = append(f.removePins, path)
+	f.mu.Unlock()
+
 	// Remove programs matching this pin path (for dispatcher cleanup)
 	for id, prog := range f.programs {
 		if prog.pinPath == path {
@@ -667,6 +718,31 @@ func (f *fakeKernel) RemovePin(path string) error {
 		}
 	}
 	return nil
+}
+
+// RemovedPins returns a copy of all paths passed to RemovePin.
+func (f *fakeKernel) RemovedPins() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	result := make([]string, len(f.removePins))
+	copy(result, f.removePins)
+	return result
+}
+
+// TCDetaches returns a copy of all TC filter detach operations.
+func (f *fakeKernel) TCDetaches() []tcFilterKey {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	result := make([]tcFilterKey, len(f.tcDetaches))
+	copy(result, f.tcDetaches)
+	return result
+}
+
+// TCFilterCount returns the number of TC filters currently tracked.
+func (f *fakeKernel) TCFilterCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.tcFilters)
 }
 
 func (f *fakeKernel) RepinMap(srcPath, dstPath string) error {

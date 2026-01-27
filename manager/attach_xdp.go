@@ -74,7 +74,10 @@ func (m *Manager) AttachXDP(ctx context.Context, spec bpfman.XDPAttachSpec, opts
 
 	// COMPUTE: Calculate extension link path
 	revisionDir := dispatcher.DispatcherRevisionDir(m.dirs.FS, dispatcher.DispatcherTypeXDP, nsid, uint32(ifindex), dispState.Revision)
-	position := int(dispState.NumExtensions)
+	position, err := m.store.CountDispatcherLinks(ctx, dispState.KernelID)
+	if err != nil {
+		return bpfman.LinkSummary{}, fmt.Errorf("count dispatcher links: %w", err)
+	}
 	extensionLinkPath := dispatcher.ExtensionLinkPath(revisionDir, position)
 	if linkPinPath == "" {
 		linkPinPath = extensionLinkPath
@@ -85,8 +88,9 @@ func (m *Manager) AttachXDP(ctx context.Context, spec bpfman.XDPAttachSpec, opts
 	mapPinDir := prog.MapPinPath
 
 	// KERNEL I/O: Attach user program as extension (returns ManagedLink)
+	progPinPath := dispatcher.DispatcherProgPath(revisionDir)
 	link, err := m.kernel.AttachXDPExtension(
-		dispState.ProgPinPath,
+		progPinPath,
 		prog.ObjectPath,
 		prog.ProgramName,
 		position,
@@ -102,7 +106,7 @@ func (m *Manager) AttachXDP(ctx context.Context, spec bpfman.XDPAttachSpec, opts
 			return bpfman.LinkSummary{}, fmt.Errorf("attach XDP extension to %s slot %d: %w", ifname, position, err)
 		}
 		m.logger.Warn("dispatcher pin missing, recreating",
-			"prog_pin_path", dispState.ProgPinPath,
+			"prog_pin_path", progPinPath,
 			"dispatcher_id", dispState.KernelID,
 			"error", err)
 		if delErr := m.store.DeleteDispatcher(ctx, string(dispatcher.DispatcherTypeXDP), nsid, uint32(ifindex)); delErr != nil {
@@ -113,13 +117,17 @@ func (m *Manager) AttachXDP(ctx context.Context, spec bpfman.XDPAttachSpec, opts
 			return bpfman.LinkSummary{}, fmt.Errorf("recreate XDP dispatcher for %s: %w", ifname, err)
 		}
 		revisionDir = dispatcher.DispatcherRevisionDir(m.dirs.FS, dispatcher.DispatcherTypeXDP, nsid, uint32(ifindex), dispState.Revision)
-		position = int(dispState.NumExtensions)
+		position, err = m.store.CountDispatcherLinks(ctx, dispState.KernelID)
+		if err != nil {
+			return bpfman.LinkSummary{}, fmt.Errorf("count dispatcher links after recreate: %w", err)
+		}
 		extensionLinkPath = dispatcher.ExtensionLinkPath(revisionDir, position)
 		if linkPinPath == "" || strings.Contains(linkPinPath, "dispatcher_") {
 			linkPinPath = extensionLinkPath
 		}
+		progPinPath = dispatcher.DispatcherProgPath(revisionDir)
 		link, err = m.kernel.AttachXDPExtension(
-			dispState.ProgPinPath,
+			progPinPath,
 			prog.ObjectPath,
 			prog.ProgramName,
 			position,
@@ -184,12 +192,7 @@ func computeAttachXDPActions(
 	position int,
 	dispState dispatcher.State,
 ) []action.Action {
-	// Update dispatcher extension count
-	updatedDispState := dispState
-	updatedDispState.NumExtensions++
-
 	return []action.Action{
-		action.SaveDispatcher{State: updatedDispState},
 		action.SaveXDPLink{
 			Summary: bpfman.LinkSummary{
 				KernelLinkID:    kernelLinkID,
@@ -244,7 +247,7 @@ func (m *Manager) createXDPDispatcher(ctx context.Context, nsid uint64, ifindex 
 	}
 
 	// COMPUTE: Build save action from kernel result
-	state := computeXDPDispatcherState(dispatcher.DispatcherTypeXDP, nsid, ifindex, revision, result, progPinPath, linkPinPath)
+	state := computeXDPDispatcherState(dispatcher.DispatcherTypeXDP, nsid, ifindex, revision, result)
 	saveAction := action.SaveDispatcher{State: state}
 
 	// EXECUTE: Save through executor
@@ -270,17 +273,13 @@ func computeXDPDispatcherState(
 	nsid uint64,
 	ifindex, revision uint32,
 	result *interpreter.XDPDispatcherResult,
-	progPinPath, linkPinPath string,
 ) dispatcher.State {
 	return dispatcher.State{
-		Type:          dispType,
-		Nsid:          nsid,
-		Ifindex:       ifindex,
-		Revision:      revision,
-		KernelID:      result.DispatcherID,
-		LinkID:        result.LinkID,
-		LinkPinPath:   linkPinPath,
-		ProgPinPath:   progPinPath,
-		NumExtensions: 0,
+		Type:     dispType,
+		Nsid:     nsid,
+		Ifindex:  ifindex,
+		Revision: revision,
+		KernelID: result.DispatcherID,
+		LinkID:   result.LinkID,
 	}
 }

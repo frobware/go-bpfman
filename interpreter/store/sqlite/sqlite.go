@@ -186,13 +186,13 @@ type sqliteStore struct {
 	stmtSaveTCXDetails        *sql.Stmt
 
 	// Prepared statements for dispatcher operations
-	stmtGetDispatcher       *sql.Stmt
-	stmtListDispatchers     *sql.Stmt
-	stmtSaveDispatcher      *sql.Stmt
-	stmtDeleteDispatcher    *sql.Stmt
-	stmtIncrementRevision   *sql.Stmt
-	stmtGetDispatcherByType    *sql.Stmt
-	stmtCountDispatcherLinks   *sql.Stmt
+	stmtGetDispatcher        *sql.Stmt
+	stmtListDispatchers      *sql.Stmt
+	stmtSaveDispatcher       *sql.Stmt
+	stmtDeleteDispatcher     *sql.Stmt
+	stmtIncrementRevision    *sql.Stmt
+	stmtGetDispatcherByType  *sql.Stmt
+	stmtCountDispatcherLinks *sql.Stmt
 }
 
 // New creates a new SQLite store at the given path.
@@ -346,13 +346,13 @@ func (s *sqliteStore) RunInTransaction(ctx context.Context, fn func(interpreter.
 		stmtSaveTCDetails:         tx.StmtContext(ctx, s.stmtSaveTCDetails),
 		stmtSaveTCXDetails:        tx.StmtContext(ctx, s.stmtSaveTCXDetails),
 		// Dispatcher statements
-		stmtGetDispatcher:       tx.StmtContext(ctx, s.stmtGetDispatcher),
-		stmtListDispatchers:     tx.StmtContext(ctx, s.stmtListDispatchers),
-		stmtSaveDispatcher:      tx.StmtContext(ctx, s.stmtSaveDispatcher),
-		stmtDeleteDispatcher:    tx.StmtContext(ctx, s.stmtDeleteDispatcher),
-		stmtIncrementRevision:   tx.StmtContext(ctx, s.stmtIncrementRevision),
-		stmtGetDispatcherByType:    tx.StmtContext(ctx, s.stmtGetDispatcherByType),
-		stmtCountDispatcherLinks:   tx.StmtContext(ctx, s.stmtCountDispatcherLinks),
+		stmtGetDispatcher:        tx.StmtContext(ctx, s.stmtGetDispatcher),
+		stmtListDispatchers:      tx.StmtContext(ctx, s.stmtListDispatchers),
+		stmtSaveDispatcher:       tx.StmtContext(ctx, s.stmtSaveDispatcher),
+		stmtDeleteDispatcher:     tx.StmtContext(ctx, s.stmtDeleteDispatcher),
+		stmtIncrementRevision:    tx.StmtContext(ctx, s.stmtIncrementRevision),
+		stmtGetDispatcherByType:  tx.StmtContext(ctx, s.stmtGetDispatcherByType),
+		stmtCountDispatcherLinks: tx.StmtContext(ctx, s.stmtCountDispatcherLinks),
 	}
 
 	if err := fn(txStore); err != nil {

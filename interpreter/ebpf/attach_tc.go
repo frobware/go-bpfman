@@ -163,6 +163,12 @@ func (k *kernelAdapter) AttachTCDispatcherWithPaths(ifindex int, ifname, progPin
 	return result, nil
 }
 
+// FindTCFilterHandle looks up the kernel-assigned handle for a TC BPF
+// filter by listing filters on the given parent and matching priority.
+func (k *kernelAdapter) FindTCFilterHandle(ifindex int, parent uint32, priority uint16) (uint32, error) {
+	return readBackTCFilterHandle(ifindex, parent, priority)
+}
+
 // readBackTCFilterHandle lists tc filters on the given parent/priority
 // and returns the handle of the first BPF filter found. This is
 // needed because vishvananda/netlink FilterAdd does not echo back the

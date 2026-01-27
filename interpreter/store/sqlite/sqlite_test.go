@@ -342,15 +342,12 @@ func TestDispatcherStore_SaveAndGet(t *testing.T) {
 
 	// Create a dispatcher
 	state := dispatcher.State{
-		Type:          dispatcher.DispatcherTypeXDP,
-		Nsid:          4026531840,
-		Ifindex:       1,
-		Revision:      1,
-		KernelID:      100,
-		LinkID:        101,
-		LinkPinPath:   "/sys/fs/bpf/bpfman/xdp/dispatcher_4026531840_1_link",
-		ProgPinPath:   "/sys/fs/bpf/bpfman/xdp/dispatcher_4026531840_1_1/dispatcher",
-		NumExtensions: 0,
+		Type:     dispatcher.DispatcherTypeXDP,
+		Nsid:     4026531840,
+		Ifindex:  1,
+		Revision: 1,
+		KernelID: 100,
+		LinkID:   101,
 	}
 
 	require.NoError(t, store.SaveDispatcher(ctx, state), "SaveDispatcher failed")
@@ -365,9 +362,6 @@ func TestDispatcherStore_SaveAndGet(t *testing.T) {
 	assert.Equal(t, state.Revision, got.Revision)
 	assert.Equal(t, state.KernelID, got.KernelID)
 	assert.Equal(t, state.LinkID, got.LinkID)
-	assert.Equal(t, state.LinkPinPath, got.LinkPinPath)
-	assert.Equal(t, state.ProgPinPath, got.ProgPinPath)
-	assert.Equal(t, state.NumExtensions, got.NumExtensions)
 }
 
 func TestDispatcherStore_Update(t *testing.T) {
@@ -379,23 +373,18 @@ func TestDispatcherStore_Update(t *testing.T) {
 
 	// Create a dispatcher
 	state := dispatcher.State{
-		Type:          dispatcher.DispatcherTypeXDP,
-		Nsid:          4026531840,
-		Ifindex:       1,
-		Revision:      1,
-		KernelID:      100,
-		LinkID:        101,
-		LinkPinPath:   "/sys/fs/bpf/bpfman/xdp/dispatcher_4026531840_1_link",
-		ProgPinPath:   "/sys/fs/bpf/bpfman/xdp/dispatcher_4026531840_1_1/dispatcher",
-		NumExtensions: 0,
+		Type:     dispatcher.DispatcherTypeXDP,
+		Nsid:     4026531840,
+		Ifindex:  1,
+		Revision: 1,
+		KernelID: 100,
+		LinkID:   101,
 	}
 
 	require.NoError(t, store.SaveDispatcher(ctx, state), "SaveDispatcher failed")
 
 	// Update it
-	state.NumExtensions = 3
 	state.Revision = 2
-	state.ProgPinPath = "/sys/fs/bpf/bpfman/xdp/dispatcher_4026531840_1_2/dispatcher"
 
 	require.NoError(t, store.SaveDispatcher(ctx, state), "SaveDispatcher (update) failed")
 
@@ -403,9 +392,7 @@ func TestDispatcherStore_Update(t *testing.T) {
 	got, err := store.GetDispatcher(ctx, string(dispatcher.DispatcherTypeXDP), 4026531840, 1)
 	require.NoError(t, err, "GetDispatcher failed")
 
-	assert.Equal(t, uint8(3), got.NumExtensions)
 	assert.Equal(t, uint32(2), got.Revision)
-	assert.Equal(t, "/sys/fs/bpf/bpfman/xdp/dispatcher_4026531840_1_2/dispatcher", got.ProgPinPath)
 }
 
 func TestDispatcherStore_Delete(t *testing.T) {
@@ -417,15 +404,12 @@ func TestDispatcherStore_Delete(t *testing.T) {
 
 	// Create a dispatcher
 	state := dispatcher.State{
-		Type:          dispatcher.DispatcherTypeXDP,
-		Nsid:          4026531840,
-		Ifindex:       1,
-		Revision:      1,
-		KernelID:      100,
-		LinkID:        101,
-		LinkPinPath:   "/sys/fs/bpf/bpfman/xdp/dispatcher_4026531840_1_link",
-		ProgPinPath:   "/sys/fs/bpf/bpfman/xdp/dispatcher_4026531840_1_1/dispatcher",
-		NumExtensions: 0,
+		Type:     dispatcher.DispatcherTypeXDP,
+		Nsid:     4026531840,
+		Ifindex:  1,
+		Revision: 1,
+		KernelID: 100,
+		LinkID:   101,
 	}
 
 	require.NoError(t, store.SaveDispatcher(ctx, state), "SaveDispatcher failed")
@@ -459,15 +443,12 @@ func TestDispatcherStore_IncrementRevision(t *testing.T) {
 
 	// Create a dispatcher with revision 1
 	state := dispatcher.State{
-		Type:          dispatcher.DispatcherTypeXDP,
-		Nsid:          4026531840,
-		Ifindex:       1,
-		Revision:      1,
-		KernelID:      100,
-		LinkID:        101,
-		LinkPinPath:   "/sys/fs/bpf/bpfman/xdp/dispatcher_4026531840_1_link",
-		ProgPinPath:   "/sys/fs/bpf/bpfman/xdp/dispatcher_4026531840_1_1/dispatcher",
-		NumExtensions: 0,
+		Type:     dispatcher.DispatcherTypeXDP,
+		Nsid:     4026531840,
+		Ifindex:  1,
+		Revision: 1,
+		KernelID: 100,
+		LinkID:   101,
 	}
 
 	require.NoError(t, store.SaveDispatcher(ctx, state), "SaveDispatcher failed")
@@ -497,30 +478,24 @@ func TestDispatcherStore_UniqueConstraint(t *testing.T) {
 
 	// Create an XDP dispatcher
 	xdpState := dispatcher.State{
-		Type:          dispatcher.DispatcherTypeXDP,
-		Nsid:          4026531840,
-		Ifindex:       1,
-		Revision:      1,
-		KernelID:      100,
-		LinkID:        101,
-		LinkPinPath:   "/sys/fs/bpf/bpfman/xdp/dispatcher_4026531840_1_link",
-		ProgPinPath:   "/sys/fs/bpf/bpfman/xdp/dispatcher_4026531840_1_1/dispatcher",
-		NumExtensions: 0,
+		Type:     dispatcher.DispatcherTypeXDP,
+		Nsid:     4026531840,
+		Ifindex:  1,
+		Revision: 1,
+		KernelID: 100,
+		LinkID:   101,
 	}
 
 	require.NoError(t, store.SaveDispatcher(ctx, xdpState), "SaveDispatcher (xdp) failed")
 
 	// Create a TC-ingress dispatcher on same nsid/ifindex - should work (different type)
 	tcState := dispatcher.State{
-		Type:          dispatcher.DispatcherTypeTCIngress,
-		Nsid:          4026531840,
-		Ifindex:       1,
-		Revision:      1,
-		KernelID:      200,
-		LinkID:        201,
-		LinkPinPath:   "/sys/fs/bpf/bpfman/tc-ingress/dispatcher_4026531840_1_link",
-		ProgPinPath:   "/sys/fs/bpf/bpfman/tc-ingress/dispatcher_4026531840_1_1/dispatcher",
-		NumExtensions: 0,
+		Type:     dispatcher.DispatcherTypeTCIngress,
+		Nsid:     4026531840,
+		Ifindex:  1,
+		Revision: 1,
+		KernelID: 200,
+		LinkID:   201,
 	}
 
 	require.NoError(t, store.SaveDispatcher(ctx, tcState), "SaveDispatcher (tc-ingress) failed")
@@ -543,15 +518,12 @@ func TestDispatcherStore_DifferentInterfaces(t *testing.T) {
 	// Create dispatchers for ifindex 1 and 2
 	for ifindex := uint32(1); ifindex <= 2; ifindex++ {
 		state := dispatcher.State{
-			Type:          dispatcher.DispatcherTypeXDP,
-			Nsid:          4026531840,
-			Ifindex:       ifindex,
-			Revision:      1,
-			KernelID:      100 + ifindex,
-			LinkID:        200 + ifindex,
-			LinkPinPath:   "/sys/fs/bpf/bpfman/xdp/dispatcher_4026531840_" + string(rune('0'+ifindex)) + "_link",
-			ProgPinPath:   "/sys/fs/bpf/bpfman/xdp/dispatcher_4026531840_" + string(rune('0'+ifindex)) + "_1/dispatcher",
-			NumExtensions: 0,
+			Type:     dispatcher.DispatcherTypeXDP,
+			Nsid:     4026531840,
+			Ifindex:  ifindex,
+			Revision: 1,
+			KernelID: 100 + ifindex,
+			LinkID:   200 + ifindex,
 		}
 		require.NoError(t, store.SaveDispatcher(ctx, state), "SaveDispatcher (ifindex %d) failed", ifindex)
 	}
@@ -1017,27 +989,23 @@ func TestGC_StaleDispatchers(t *testing.T) {
 
 	// Create dispatchers referencing different program IDs
 	disp1 := dispatcher.State{
-		Type:        dispatcher.DispatcherTypeXDP,
-		Nsid:        4026531840,
-		Ifindex:     2,
-		Revision:    1,
-		KernelID:    100,
-		LinkID:      200,
-		LinkPinPath: "/sys/fs/bpf/link",
-		ProgPinPath: "/sys/fs/bpf/prog",
+		Type:     dispatcher.DispatcherTypeXDP,
+		Nsid:     4026531840,
+		Ifindex:  2,
+		Revision: 1,
+		KernelID: 100,
+		LinkID:   200,
 	}
 	err = store.SaveDispatcher(ctx, disp1)
 	require.NoError(t, err)
 
 	disp2 := dispatcher.State{
-		Type:        dispatcher.DispatcherTypeTCIngress,
-		Nsid:        4026531840,
-		Ifindex:     3,
-		Revision:    1,
-		KernelID:    101,
-		LinkID:      201,
-		LinkPinPath: "/sys/fs/bpf/link2",
-		ProgPinPath: "/sys/fs/bpf/prog2",
+		Type:     dispatcher.DispatcherTypeTCIngress,
+		Nsid:     4026531840,
+		Ifindex:  3,
+		Revision: 1,
+		KernelID: 101,
+		LinkID:   201,
 	}
 	err = store.SaveDispatcher(ctx, disp2)
 	require.NoError(t, err)
@@ -1126,27 +1094,23 @@ func TestGC_Comprehensive(t *testing.T) {
 
 	// Create dispatchers: one for alive program, one for stale
 	aliveDisp := dispatcher.State{
-		Type:        dispatcher.DispatcherTypeXDP,
-		Nsid:        4026531840,
-		Ifindex:     2,
-		Revision:    1,
-		KernelID:    100,
-		LinkID:      300,
-		LinkPinPath: "/sys/fs/bpf/link",
-		ProgPinPath: "/sys/fs/bpf/prog",
+		Type:     dispatcher.DispatcherTypeXDP,
+		Nsid:     4026531840,
+		Ifindex:  2,
+		Revision: 1,
+		KernelID: 100,
+		LinkID:   300,
 	}
 	err = store.SaveDispatcher(ctx, aliveDisp)
 	require.NoError(t, err)
 
 	staleDisp := dispatcher.State{
-		Type:        dispatcher.DispatcherTypeTCIngress,
-		Nsid:        4026531840,
-		Ifindex:     3,
-		Revision:    1,
-		KernelID:    101,
-		LinkID:      301,
-		LinkPinPath: "/sys/fs/bpf/link2",
-		ProgPinPath: "/sys/fs/bpf/prog2",
+		Type:     dispatcher.DispatcherTypeTCIngress,
+		Nsid:     4026531840,
+		Ifindex:  3,
+		Revision: 1,
+		KernelID: 101,
+		LinkID:   301,
 	}
 	err = store.SaveDispatcher(ctx, staleDisp)
 	require.NoError(t, err)
@@ -1176,9 +1140,10 @@ func TestGC_Comprehensive(t *testing.T) {
 		map[uint32]bool{400: true})
 	require.NoError(t, err)
 
-	// Should remove: 2 programs (101, 102), 1 dispatcher, 1 link
+	// Should remove: 2 programs (101, 102), 2 dispatchers (101 stale program,
+	// 100 has no extension links), 1 link
 	assert.Equal(t, 2, result.ProgramsRemoved, "should remove 2 stale programs")
-	assert.Equal(t, 1, result.DispatchersRemoved, "should remove 1 stale dispatcher")
+	assert.Equal(t, 2, result.DispatchersRemoved, "should remove 2 dispatchers")
 	assert.Equal(t, 1, result.LinksRemoved, "should remove 1 stale link")
 
 	// Verify remaining state
@@ -1190,8 +1155,7 @@ func TestGC_Comprehensive(t *testing.T) {
 
 	dispatchers, err := store.ListDispatchers(ctx)
 	require.NoError(t, err)
-	assert.Len(t, dispatchers, 1, "should have 1 dispatcher remaining")
-	assert.Equal(t, uint32(100), dispatchers[0].KernelID)
+	assert.Len(t, dispatchers, 0, "should have 0 dispatchers remaining")
 
 	links, err := store.ListLinks(ctx)
 	require.NoError(t, err)

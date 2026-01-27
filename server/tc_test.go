@@ -2,11 +2,14 @@ package server_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/frobware/go-bpfman"
+	"github.com/frobware/go-bpfman/dispatcher"
 	pb "github.com/frobware/go-bpfman/server/pb"
 )
 
@@ -292,4 +295,230 @@ func TestTC_FullLifecycle(t *testing.T) {
 	assert.Equal(t, 0, fix.Kernel.ProgramCount(), "should have 0 programs")
 	assert.Equal(t, 0, fix.Kernel.LinkCount(), "should have 0 links")
 	t.Log("Step 5: Verified clean state - test passed")
+}
+
+// TestTC_ExtensionPositionsAreSequential verifies that multiple TC
+// extensions on the same interface/direction get sequential positions
+// derived from CountDispatcherLinks rather than cached state.
+func TestTC_ExtensionPositionsAreSequential(t *testing.T) {
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	loadReq := &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_File{File: "/path/to/tc.o"},
+		},
+		Info: []*pb.LoadInfo{
+			{Name: "tc_pass", ProgramType: pb.BpfmanProgramType_TC},
+		},
+		Metadata: map[string]string{
+			"bpfman.io/ProgramName": "tc-position-test",
+		},
+	}
+
+	loadResp, err := fix.Server.Load(ctx, loadReq)
+	require.NoError(t, err)
+	programID := loadResp.Programs[0].KernelInfo.Id
+
+	// Attach three times to the same interface/direction
+	var linkIDs []uint32
+	for i := 0; i < 3; i++ {
+		attachResp, err := fix.Server.Attach(ctx, &pb.AttachRequest{
+			Id: programID,
+			Attach: &pb.AttachInfo{
+				Info: &pb.AttachInfo_TcAttachInfo{
+					TcAttachInfo: &pb.TCAttachInfo{
+						Iface:     "eth0",
+						Direction: "ingress",
+					},
+				},
+			},
+		})
+		require.NoError(t, err, "attach %d should succeed", i)
+		linkIDs = append(linkIDs, attachResp.LinkId)
+	}
+
+	// Verify positions are 0, 1, 2 via store
+	for i, linkID := range linkIDs {
+		_, details, err := fix.Store.GetLink(ctx, linkID)
+		require.NoError(t, err, "GetLink for link %d", linkID)
+		tcDetails, ok := details.(bpfman.TCDetails)
+		require.True(t, ok, "expected TCDetails, got %T", details)
+		assert.Equal(t, int32(i), tcDetails.Position,
+			"link %d should have position %d", linkID, i)
+	}
+}
+
+// TestTC_DispatcherStateInStore verifies that the store correctly
+// tracks dispatcher state after attachment and cleans it up after the
+// last extension is detached.
+func TestTC_DispatcherStateInStore(t *testing.T) {
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	loadResp, err := fix.Server.Load(ctx, &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_File{File: "/path/to/tc.o"},
+		},
+		Info: []*pb.LoadInfo{
+			{Name: "tc_pass", ProgramType: pb.BpfmanProgramType_TC},
+		},
+		Metadata: map[string]string{
+			"bpfman.io/ProgramName": "tc-disp-state-test",
+		},
+	})
+	require.NoError(t, err)
+	programID := loadResp.Programs[0].KernelInfo.Id
+
+	// Attach one extension
+	attachResp, err := fix.Server.Attach(ctx, &pb.AttachRequest{
+		Id: programID,
+		Attach: &pb.AttachInfo{
+			Info: &pb.AttachInfo_TcAttachInfo{
+				TcAttachInfo: &pb.TCAttachInfo{
+					Iface:     "eth0",
+					Direction: "ingress",
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	// Verify dispatcher exists in store
+	dispatchers, err := fix.Store.ListDispatchers(ctx)
+	require.NoError(t, err)
+	require.Len(t, dispatchers, 1, "should have 1 dispatcher")
+	assert.Equal(t, dispatcher.DispatcherTypeTCIngress, dispatchers[0].Type)
+	assert.Equal(t, uint32(2), dispatchers[0].Ifindex) // eth0 = ifindex 2
+
+	// Verify CountDispatcherLinks returns 1
+	count, err := fix.Store.CountDispatcherLinks(ctx, dispatchers[0].KernelID)
+	require.NoError(t, err)
+	assert.Equal(t, 1, count, "should have 1 extension link")
+
+	// Detach the extension
+	_, err = fix.Server.Detach(ctx, &pb.DetachRequest{LinkId: attachResp.LinkId})
+	require.NoError(t, err)
+
+	// Dispatcher should be cleaned up
+	dispatchers, err = fix.Store.ListDispatchers(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, dispatchers, "dispatcher should be removed after last extension detached")
+}
+
+// TestTC_FilterHandleRoundTrip verifies that the TC filter handle
+// assigned at attach time is correctly looked up via
+// FindTCFilterHandle at detach time and passed to DetachTCFilter.
+func TestTC_FilterHandleRoundTrip(t *testing.T) {
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	loadResp, err := fix.Server.Load(ctx, &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_File{File: "/path/to/tc.o"},
+		},
+		Info: []*pb.LoadInfo{
+			{Name: "tc_pass", ProgramType: pb.BpfmanProgramType_TC},
+		},
+		Metadata: map[string]string{
+			"bpfman.io/ProgramName": "tc-handle-test",
+		},
+	})
+	require.NoError(t, err)
+	programID := loadResp.Programs[0].KernelInfo.Id
+
+	// Attach a single ingress extension
+	attachResp, err := fix.Server.Attach(ctx, &pb.AttachRequest{
+		Id: programID,
+		Attach: &pb.AttachInfo{
+			Info: &pb.AttachInfo_TcAttachInfo{
+				TcAttachInfo: &pb.TCAttachInfo{
+					Iface:     "eth0",
+					Direction: "ingress",
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	// Verify a TC filter was registered in fakeKernel
+	assert.Equal(t, 1, fix.Kernel.TCFilterCount(), "should have 1 TC filter tracked")
+
+	// Detach the extension (triggers dispatcher cleanup)
+	_, err = fix.Server.Detach(ctx, &pb.DetachRequest{LinkId: attachResp.LinkId})
+	require.NoError(t, err)
+
+	// Verify DetachTCFilter was called
+	tcDetaches := fix.Kernel.TCDetaches()
+	require.Len(t, tcDetaches, 1, "should have 1 TC filter detach")
+	assert.Equal(t, 2, tcDetaches[0].ifindex, "should detach from eth0 (ifindex 2)")
+	assert.Equal(t, uint32(0xFFFFFFF2), tcDetaches[0].parent, "should use HANDLE_MIN_INGRESS")
+	assert.Equal(t, uint16(50), tcDetaches[0].priority, "should use priority 50")
+
+	// TC filter should be removed
+	assert.Equal(t, 0, fix.Kernel.TCFilterCount(), "TC filter should be removed")
+}
+
+// TestTC_PinPathConventions verifies that dispatcher cleanup removes
+// pins at paths matching the convention defined in dispatcher/paths.go.
+func TestTC_PinPathConventions(t *testing.T) {
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	loadResp, err := fix.Server.Load(ctx, &pb.LoadRequest{
+		Bytecode: &pb.BytecodeLocation{
+			Location: &pb.BytecodeLocation_File{File: "/path/to/tc.o"},
+		},
+		Info: []*pb.LoadInfo{
+			{Name: "tc_pass", ProgramType: pb.BpfmanProgramType_TC},
+		},
+		Metadata: map[string]string{
+			"bpfman.io/ProgramName": "tc-pin-path-test",
+		},
+	})
+	require.NoError(t, err)
+	programID := loadResp.Programs[0].KernelInfo.Id
+
+	// Attach a single extension
+	attachResp, err := fix.Server.Attach(ctx, &pb.AttachRequest{
+		Id: programID,
+		Attach: &pb.AttachInfo{
+			Info: &pb.AttachInfo_TcAttachInfo{
+				TcAttachInfo: &pb.TCAttachInfo{
+					Iface:     "eth0",
+					Direction: "ingress",
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	// Get dispatcher state before detaching
+	dispatchers, err := fix.Store.ListDispatchers(ctx)
+	require.NoError(t, err)
+	require.Len(t, dispatchers, 1)
+	disp := dispatchers[0]
+
+	// Detach (triggers full dispatcher cleanup)
+	_, err = fix.Server.Detach(ctx, &pb.DetachRequest{LinkId: attachResp.LinkId})
+	require.NoError(t, err)
+
+	// Verify RemovePin was called with convention-derived paths
+	removedPins := fix.Kernel.RemovedPins()
+
+	bpffsRoot := fix.Dirs.FS
+	revisionDir := dispatcher.DispatcherRevisionDir(bpffsRoot, disp.Type, disp.Nsid, disp.Ifindex, disp.Revision)
+	expectedProgPin := dispatcher.DispatcherProgPath(revisionDir)
+
+	// TC dispatchers do not have a link pin (they use netlink); only
+	// the prog pin and revision directory should be removed.
+	assert.Contains(t, removedPins, expectedProgPin,
+		"should remove prog pin at %s", expectedProgPin)
+	assert.Contains(t, removedPins, revisionDir,
+		"should remove revision dir at %s", revisionDir)
+
+	// Verify the revision dir is under the correct type directory
+	typeDir := dispatcher.TypeDir(bpffsRoot, dispatcher.DispatcherTypeTCIngress)
+	assert.True(t, strings.HasPrefix(revisionDir, typeDir),
+		"revision dir %s should be under %s", revisionDir, typeDir)
 }

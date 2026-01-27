@@ -92,7 +92,10 @@ func (m *Manager) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts b
 
 	// COMPUTE: Calculate extension link path
 	revisionDir := dispatcher.DispatcherRevisionDir(m.dirs.FS, dispType, nsid, uint32(ifindex), dispState.Revision)
-	position := int(dispState.NumExtensions)
+	position, err := m.store.CountDispatcherLinks(ctx, dispState.KernelID)
+	if err != nil {
+		return bpfman.LinkSummary{}, fmt.Errorf("count dispatcher links: %w", err)
+	}
 	extensionLinkPath := dispatcher.ExtensionLinkPath(revisionDir, position)
 	if linkPinPath == "" {
 		linkPinPath = extensionLinkPath
@@ -103,8 +106,9 @@ func (m *Manager) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts b
 	mapPinDir := prog.MapPinPath
 
 	// KERNEL I/O: Attach user program as extension (returns ManagedLink)
+	progPinPath := dispatcher.DispatcherProgPath(revisionDir)
 	link, err := m.kernel.AttachTCExtension(
-		dispState.ProgPinPath,
+		progPinPath,
 		prog.ObjectPath,
 		prog.ProgramName,
 		position,
@@ -121,7 +125,7 @@ func (m *Manager) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts b
 			return bpfman.LinkSummary{}, fmt.Errorf("attach TC extension to %s %s slot %d: %w", ifname, direction, position, err)
 		}
 		m.logger.Warn("dispatcher pin missing, recreating",
-			"prog_pin_path", dispState.ProgPinPath,
+			"prog_pin_path", progPinPath,
 			"dispatcher_id", dispState.KernelID,
 			"error", err)
 		if delErr := m.store.DeleteDispatcher(ctx, string(dispType), nsid, uint32(ifindex)); delErr != nil {
@@ -133,13 +137,17 @@ func (m *Manager) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts b
 		}
 		// Recalculate paths for the fresh dispatcher
 		revisionDir = dispatcher.DispatcherRevisionDir(m.dirs.FS, dispType, nsid, uint32(ifindex), dispState.Revision)
-		position = int(dispState.NumExtensions)
+		position, err = m.store.CountDispatcherLinks(ctx, dispState.KernelID)
+		if err != nil {
+			return bpfman.LinkSummary{}, fmt.Errorf("count dispatcher links after recreate: %w", err)
+		}
 		extensionLinkPath = dispatcher.ExtensionLinkPath(revisionDir, position)
 		if linkPinPath == "" || strings.Contains(linkPinPath, "dispatcher_") {
 			linkPinPath = extensionLinkPath
 		}
+		progPinPath = dispatcher.DispatcherProgPath(revisionDir)
 		link, err = m.kernel.AttachTCExtension(
-			dispState.ProgPinPath,
+			progPinPath,
 			prog.ObjectPath,
 			prog.ProgramName,
 			position,
@@ -211,12 +219,7 @@ func computeAttachTCActions(
 	position int,
 	dispState dispatcher.State,
 ) []action.Action {
-	// Update dispatcher extension count
-	updatedDispState := dispState
-	updatedDispState.NumExtensions++
-
 	return []action.Action{
-		action.SaveDispatcher{State: updatedDispState},
 		action.SaveTCLink{
 			Summary: bpfman.LinkSummary{
 				KernelLinkID:    kernelLinkID,
@@ -422,7 +425,7 @@ func (m *Manager) createTCDispatcher(ctx context.Context, nsid uint64, ifindex u
 	}
 
 	// COMPUTE: Build save action from kernel result
-	state := computeTCDispatcherState(dispType, nsid, ifindex, revision, result, progPinPath)
+	state := computeTCDispatcherState(dispType, nsid, ifindex, revision, result)
 	saveAction := action.SaveDispatcher{State: state}
 
 	// EXECUTE: Save through executor
@@ -450,17 +453,13 @@ func computeTCDispatcherState(
 	nsid uint64,
 	ifindex, revision uint32,
 	result *interpreter.TCDispatcherResult,
-	progPinPath string,
 ) dispatcher.State {
 	return dispatcher.State{
-		Type:          dispType,
-		Nsid:          nsid,
-		Ifindex:       ifindex,
-		Revision:      revision,
-		KernelID:      result.DispatcherID,
-		ProgPinPath:   progPinPath,
-		Handle:        result.Handle,
-		Priority:      result.Priority,
-		NumExtensions: 0,
+		Type:     dispType,
+		Nsid:     nsid,
+		Ifindex:  ifindex,
+		Revision: revision,
+		KernelID: result.DispatcherID,
+		Priority: result.Priority,
 	}
 }

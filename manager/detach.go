@@ -3,7 +3,6 @@ package manager
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 
 	"github.com/vishvananda/netlink"
 
@@ -17,11 +16,11 @@ import (
 // This detaches the link from the kernel (if pinned) and removes it from the
 // store. The associated program remains loaded.
 //
-// For XDP and TC links attached via dispatchers, this also decrements the
-// dispatcher's extension count. If the dispatcher has no remaining extensions,
-// it is cleaned up automatically (pins removed and deleted from store).
+// For XDP and TC links attached via dispatchers, the dispatcher link count
+// is queried after the link is removed. If no extensions remain, the
+// dispatcher is cleaned up automatically (pins removed, deleted from store).
 //
-// Pattern: FETCH -> COMPUTE -> EXECUTE
+// Pattern: FETCH -> EXECUTE (detach link) -> QUERY -> EXECUTE (cleanup)
 func (m *Manager) Detach(ctx context.Context, kernelLinkID uint32) error {
 	// FETCH: Get link summary and details
 	summary, details, err := m.store.GetLink(ctx, kernelLinkID)
@@ -46,9 +45,6 @@ func (m *Manager) Detach(ctx context.Context, kernelLinkID uint32) error {
 		}
 	}
 
-	// COMPUTE: Build actions for detach
-	actions := computeDetachActions(summary, dispState)
-
 	// Log before executing
 	m.logger.Info("detaching link",
 		"kernel_link_id", kernelLinkID,
@@ -56,18 +52,45 @@ func (m *Manager) Detach(ctx context.Context, kernelLinkID uint32) error {
 		"program_id", summary.KernelProgramID,
 		"pin_path", summary.PinPath)
 
-	// EXECUTE: Run all actions
-	if err := m.executor.ExecuteAll(ctx, actions); err != nil {
-		return fmt.Errorf("execute detach actions: %w", err)
+	// Phase 1: Detach the link and delete it from the store.
+	linkActions := computeDetachLinkActions(summary)
+	if err := m.executor.ExecuteAll(ctx, linkActions); err != nil {
+		return fmt.Errorf("execute detach link actions: %w", err)
+	}
+
+	// Phase 2: If this was a dispatcher-based link, check whether the
+	// dispatcher has any remaining extensions. Clean up if empty.
+	if dispState != nil {
+		remaining, err := m.store.CountDispatcherLinks(ctx, dispState.KernelID)
+		if err != nil {
+			m.logger.Warn("failed to count dispatcher links", "error", err)
+		} else if remaining == 0 {
+			// For TC dispatchers, query the kernel for the filter
+			// handle since it is no longer stored.
+			var tcHandle uint32
+			if dispState.Type == dispatcher.DispatcherTypeTCIngress || dispState.Type == dispatcher.DispatcherTypeTCEgress {
+				parent := tcParentHandle(dispState.Type)
+				handle, err := m.kernel.FindTCFilterHandle(int(dispState.Ifindex), parent, dispState.Priority)
+				if err != nil {
+					m.logger.Warn("failed to find TC filter handle", "error", err)
+				} else {
+					tcHandle = handle
+				}
+			}
+			cleanupActions := computeDispatcherCleanupActions(m.dirs.FS, *dispState, tcHandle)
+			if err := m.executor.ExecuteAll(ctx, cleanupActions); err != nil {
+				return fmt.Errorf("execute dispatcher cleanup actions: %w", err)
+			}
+		}
 	}
 
 	m.logger.Info("removed link", "kernel_link_id", kernelLinkID, "type", summary.LinkType, "program_id", summary.KernelProgramID)
 	return nil
 }
 
-// computeDetachActions is a pure function that computes the actions needed
-// to detach a link and optionally clean up its dispatcher.
-func computeDetachActions(summary bpfman.LinkSummary, dispState *dispatcher.State) []action.Action {
+// computeDetachLinkActions is a pure function that computes the actions
+// needed to detach and delete a link from the store.
+func computeDetachLinkActions(summary bpfman.LinkSummary) []action.Action {
 	var actions []action.Action
 
 	// Detach link from kernel if pinned
@@ -77,12 +100,6 @@ func computeDetachActions(summary bpfman.LinkSummary, dispState *dispatcher.Stat
 
 	// Delete link from store
 	actions = append(actions, action.DeleteLink{KernelLinkID: summary.KernelLinkID})
-
-	// Handle dispatcher cleanup if applicable
-	if dispState != nil {
-		dispatcherActions := computeDispatcherCleanupActions(*dispState)
-		actions = append(actions, dispatcherActions...)
-	}
 
 	return actions
 }
@@ -107,52 +124,46 @@ func extractDispatcherKey(details bpfman.LinkDetails) (dispType dispatcher.Dispa
 	}
 }
 
-// computeDispatcherCleanupActions is a pure function that computes the actions
-// needed to update or remove a dispatcher after an extension is detached.
-func computeDispatcherCleanupActions(state dispatcher.State) []action.Action {
-	// Decrement extension count
-	newCount := state.NumExtensions
-	if newCount > 0 {
-		newCount--
+// tcParentHandle returns the netlink parent handle for a TC dispatcher type.
+func tcParentHandle(dispType dispatcher.DispatcherType) uint32 {
+	switch dispType {
+	case dispatcher.DispatcherTypeTCIngress:
+		return netlink.HANDLE_MIN_INGRESS
+	case dispatcher.DispatcherTypeTCEgress:
+		return netlink.HANDLE_MIN_EGRESS
+	default:
+		return 0
 	}
+}
 
-	// If still has extensions, just save updated count
-	if newCount > 0 {
-		updatedState := state
-		updatedState.NumExtensions = newCount
-		return []action.Action{
-			action.SaveDispatcher{State: updatedState},
-		}
-	}
-
-	// No extensions left - remove dispatcher completely.
-	revisionDir := filepath.Dir(state.ProgPinPath)
+// computeDispatcherCleanupActions computes the actions needed to fully
+// remove a dispatcher. It is only called when no extension links remain.
+// For TC dispatchers, tcHandle is the kernel-assigned filter handle
+// (queried at detach time); it is zero for XDP dispatchers.
+func computeDispatcherCleanupActions(bpffsRoot string, state dispatcher.State, tcHandle uint32) []action.Action {
+	revisionDir := dispatcher.DispatcherRevisionDir(bpffsRoot, state.Type, state.Nsid, state.Ifindex, state.Revision)
+	progPinPath := dispatcher.DispatcherProgPath(revisionDir)
 	var actions []action.Action
 
-	// TC dispatchers use legacy netlink (Handle != 0) and must be
-	// detached via RTM_DELTFILTER rather than removing a link pin.
-	// XDP dispatchers use BPF links and are detached by removing
-	// the link pin.
-	if state.Handle != 0 {
-		var parent uint32
-		switch state.Type {
-		case dispatcher.DispatcherTypeTCIngress:
-			parent = netlink.HANDLE_MIN_INGRESS
-		case dispatcher.DispatcherTypeTCEgress:
-			parent = netlink.HANDLE_MIN_EGRESS
+	// TC dispatchers use legacy netlink and must be detached via
+	// RTM_DELTFILTER. XDP dispatchers use BPF links and are
+	// detached by removing the link pin.
+	if state.Type == dispatcher.DispatcherTypeTCIngress || state.Type == dispatcher.DispatcherTypeTCEgress {
+		if tcHandle != 0 {
+			actions = append(actions, action.DetachTCFilter{
+				Ifindex:  int(state.Ifindex),
+				Parent:   tcParentHandle(state.Type),
+				Priority: state.Priority,
+				Handle:   tcHandle,
+			})
 		}
-		actions = append(actions, action.DetachTCFilter{
-			Ifindex:  int(state.Ifindex),
-			Parent:   parent,
-			Priority: state.Priority,
-			Handle:   state.Handle,
-		})
-	} else if state.LinkPinPath != "" {
-		actions = append(actions, action.RemovePin{Path: state.LinkPinPath})
+	} else {
+		linkPinPath := dispatcher.DispatcherLinkPath(bpffsRoot, state.Type, state.Nsid, state.Ifindex)
+		actions = append(actions, action.RemovePin{Path: linkPinPath})
 	}
 
 	actions = append(actions,
-		action.RemovePin{Path: state.ProgPinPath},
+		action.RemovePin{Path: progPinPath},
 		action.RemovePin{Path: revisionDir},
 		action.DeleteDispatcher{
 			Type:    string(state.Type),
