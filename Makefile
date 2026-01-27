@@ -17,6 +17,7 @@ help:
 	@echo "Testing:"
 	@echo "  test                        Run all tests"
 	@echo "  e2e-test                    Run e2e tests (requires root)"
+	@echo "  lint                        Run golangci-lint"
 	@echo "  coverage                    Generate coverage profile and show total"
 	@echo "  coverage-func               Show coverage by function"
 	@echo "  coverage-html               Generate HTML coverage report"
@@ -72,6 +73,9 @@ clean: bpfman-clean dispatchers-clean coverage-clean
 
 test:
 	go test -v ./...
+
+lint:
+	golangci-lint run
 
 # Coverage targets
 COVERAGE_DIR ?= .coverage
@@ -341,6 +345,7 @@ kind-undeploy-all: stats-reader-delete bpfman-delete
 	kind-create \
 	kind-delete \
 	kind-undeploy-all \
+	lint \
 	stats-reader-delete \
 	stats-reader-deploy \
 	stats-reader-logs \
