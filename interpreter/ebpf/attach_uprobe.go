@@ -3,6 +3,7 @@ package ebpf
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,7 +13,6 @@ import (
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
-	"log/slog"
 
 	"github.com/frobware/go-bpfman"
 	"github.com/frobware/go-bpfman/nsenter"
