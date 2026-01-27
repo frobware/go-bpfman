@@ -1,5 +1,6 @@
 # Build output
 bin/
+dispatcher/*.bpf.o
 
 # Not needed for build
 build/

@@ -163,7 +163,7 @@ $(BPFMAN_PB_DIR)/bpfman.pb.go $(BPFMAN_PB_DIR)/bpfman_grpc.pb.go: $(BPFMAN_PROTO
 		--proto_path=$(BPFMAN_PROTO_DIR) \
 		$<
 
-docker-build-bpfman: ensure-dispatchers testdata/stats.o
+docker-build-bpfman: testdata/stats.o
 	docker build -t $(BPFMAN_IMAGE):$(IMAGE_TAG) -f Dockerfile.bpfman .
 
 # Fast build: copy pre-built binary from host (skips in-container compilation)

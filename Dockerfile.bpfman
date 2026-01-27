@@ -1,6 +1,24 @@
 # syntax=docker/dockerfile:1.4
-# Build stage for Go binary
+
 ARG BUILDER_IMAGE=registry.access.redhat.com/ubi9/go-toolset:1.25
+
+# BPF toolchain stage — builds dispatcher .bpf.o files
+FROM fedora:latest AS bpf-builder
+
+RUN dnf update -y && dnf install -y \
+    clang \
+    llvm \
+    libbpf-devel \
+    pkg-config \
+    make \
+    kernel-headers \
+    && dnf clean all
+
+WORKDIR /build
+COPY dispatcher/ dispatcher/
+RUN cd dispatcher && make tc_dispatcher.bpf.o xdp_dispatcher_v1.bpf.o xdp_dispatcher_v2.bpf.o
+
+# Build stage for Go binary
 FROM ${BUILDER_IMAGE} AS builder
 
 WORKDIR /build
@@ -10,6 +28,7 @@ RUN dnf install -y glibc-static gcc && dnf clean all
 RUN chown default:root /build
 USER default
 COPY . .
+COPY --from=bpf-builder /build/dispatcher/*.bpf.o dispatcher/
 
 RUN --mount=type=cache,target=/root/.cache/go-build make bpfman-compile
 
