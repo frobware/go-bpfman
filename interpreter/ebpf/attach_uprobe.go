@@ -2,6 +2,7 @@ package ebpf
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -308,7 +309,8 @@ func (k *kernelAdapter) attachUprobeViaHelper(progPinPath, target, fnName string
 
 	// Wait for child to exit
 	if err := cmd.Wait(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
 			k.logger.Error("bpfman-ns helper failed",
 				"exit_code", exitErr.ExitCode(),
 				"container_pid", containerPid,
