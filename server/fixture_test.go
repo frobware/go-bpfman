@@ -116,6 +116,7 @@ func (f *testFixture) AssertKernelOps(expected []string) {
 
 // newTestServer creates a server with fake kernel and real in-memory SQLite.
 func newTestServer(t *testing.T) *server.Server {
+	t.Helper()
 	return newTestFixture(t).Server
 }
 
