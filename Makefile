@@ -141,7 +141,7 @@ bpfman-vet: ensure-dispatchers
 # Compile bpfman without the dispatcher dependency. Used directly by
 # container builds where dispatcher objects are already present.
 bpfman-compile: | $(BIN_DIR)
-	CGO_ENABLED=1 go build -mod=vendor -tags 'osusergo,netgo' -ldflags '-extldflags "-static"' -o $(BIN_DIR)/bpfman ./cmd/bpfman
+	CGO_ENABLED=1 go build -mod=vendor -o $(BIN_DIR)/bpfman ./cmd/bpfman
 
 # Ensure bin directory exists
 $(BIN_DIR):
