@@ -168,3 +168,16 @@ type RemovePin struct {
 }
 
 func (RemovePin) isAction() {}
+
+// DetachTCFilter removes a legacy TC BPF filter via netlink.
+// Used to detach TC dispatchers which are attached as clsact filters
+// rather than BPF links.
+type DetachTCFilter struct {
+	Ifindex  int
+	Ifname   string
+	Parent   uint32 // ingress or egress parent handle
+	Priority uint16
+	Handle   uint32
+}
+
+func (DetachTCFilter) isAction() {}

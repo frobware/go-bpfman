@@ -255,22 +255,22 @@ func (s *sqliteStore) prepareDispatcherStatements() error {
 	var err error
 
 	const sqlGetDispatcher = `
-		SELECT id, type, nsid, ifindex, revision, kernel_id, link_id, link_pin_path, prog_pin_path, num_extensions
+		SELECT id, type, nsid, ifindex, revision, kernel_id, link_id, link_pin_path, prog_pin_path, num_extensions, handle, priority
 		FROM dispatchers WHERE type = ? AND nsid = ? AND ifindex = ?`
 	if s.stmtGetDispatcher, err = s.db.Prepare(sqlGetDispatcher); err != nil {
 		return fmt.Errorf("prepare GetDispatcher: %w", err)
 	}
 
 	const sqlListDispatchers = `
-		SELECT id, type, nsid, ifindex, revision, kernel_id, link_id, link_pin_path, prog_pin_path, num_extensions
+		SELECT id, type, nsid, ifindex, revision, kernel_id, link_id, link_pin_path, prog_pin_path, num_extensions, handle, priority
 		FROM dispatchers`
 	if s.stmtListDispatchers, err = s.db.Prepare(sqlListDispatchers); err != nil {
 		return fmt.Errorf("prepare ListDispatchers: %w", err)
 	}
 
 	const sqlSaveDispatcher = `
-		INSERT INTO dispatchers (type, nsid, ifindex, revision, kernel_id, link_id, link_pin_path, prog_pin_path, num_extensions, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO dispatchers (type, nsid, ifindex, revision, kernel_id, link_id, link_pin_path, prog_pin_path, num_extensions, handle, priority, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(type, nsid, ifindex) DO UPDATE SET
 		  revision = excluded.revision,
 		  kernel_id = excluded.kernel_id,
@@ -278,6 +278,8 @@ func (s *sqliteStore) prepareDispatcherStatements() error {
 		  link_pin_path = excluded.link_pin_path,
 		  prog_pin_path = excluded.prog_pin_path,
 		  num_extensions = excluded.num_extensions,
+		  handle = excluded.handle,
+		  priority = excluded.priority,
 		  updated_at = excluded.updated_at`
 	if s.stmtSaveDispatcher, err = s.db.Prepare(sqlSaveDispatcher); err != nil {
 		return fmt.Errorf("prepare SaveDispatcher: %w", err)

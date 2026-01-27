@@ -23,7 +23,8 @@ func (s *sqliteStore) GetDispatcher(ctx context.Context, dispType string, nsid u
 	var id int64
 	var dispTypeStr string
 	err := row.Scan(&id, &dispTypeStr, &state.Nsid, &state.Ifindex, &state.Revision,
-		&state.KernelID, &state.LinkID, &state.LinkPinPath, &state.ProgPinPath, &state.NumExtensions)
+		&state.KernelID, &state.LinkID, &state.LinkPinPath, &state.ProgPinPath, &state.NumExtensions,
+		&state.Handle, &state.Priority)
 	if err == sql.ErrNoRows {
 		s.logger.Debug("sql", "stmt", "GetDispatcher", "args", []any{dispType, nsid, ifindex}, "duration_ms", msec(time.Since(start)), "rows", 0)
 		return dispatcher.State{}, fmt.Errorf("dispatcher (%s, %d, %d): %w", dispType, nsid, ifindex, store.ErrNotFound)
@@ -54,7 +55,8 @@ func (s *sqliteStore) ListDispatchers(ctx context.Context) ([]dispatcher.State, 
 		var id int64
 		var dispTypeStr string
 		if err := rows.Scan(&id, &dispTypeStr, &state.Nsid, &state.Ifindex, &state.Revision,
-			&state.KernelID, &state.LinkID, &state.LinkPinPath, &state.ProgPinPath, &state.NumExtensions); err != nil {
+			&state.KernelID, &state.LinkID, &state.LinkPinPath, &state.ProgPinPath, &state.NumExtensions,
+			&state.Handle, &state.Priority); err != nil {
 			s.logger.Debug("sql", "stmt", "ListDispatchers", "duration_ms", msec(time.Since(start)), "error", err)
 			return nil, err
 		}
@@ -78,13 +80,13 @@ func (s *sqliteStore) SaveDispatcher(ctx context.Context, state dispatcher.State
 	result, err := s.stmtSaveDispatcher.ExecContext(ctx,
 		string(state.Type), state.Nsid, state.Ifindex, state.Revision,
 		state.KernelID, state.LinkID, state.LinkPinPath, state.ProgPinPath,
-		state.NumExtensions, now, now)
+		state.NumExtensions, state.Handle, state.Priority, now, now)
 	if err != nil {
-		s.logger.Debug("sql", "stmt", "SaveDispatcher", "args", []any{state.Type, state.Nsid, state.Ifindex, state.Revision, state.KernelID, state.LinkID, state.LinkPinPath, state.ProgPinPath, state.NumExtensions, "(timestamp)", "(timestamp)"}, "duration_ms", msec(time.Since(start)), "error", err)
+		s.logger.Debug("sql", "stmt", "SaveDispatcher", "args", []any{state.Type, state.Nsid, state.Ifindex, state.Revision, state.KernelID, state.LinkID, state.LinkPinPath, state.ProgPinPath, state.NumExtensions, state.Handle, state.Priority, "(timestamp)", "(timestamp)"}, "duration_ms", msec(time.Since(start)), "error", err)
 		return fmt.Errorf("save dispatcher: %w", err)
 	}
 	rows, _ := result.RowsAffected()
-	s.logger.Debug("sql", "stmt", "SaveDispatcher", "args", []any{state.Type, state.Nsid, state.Ifindex, state.Revision, state.KernelID, state.LinkID, state.LinkPinPath, state.ProgPinPath, state.NumExtensions, "(timestamp)", "(timestamp)"}, "duration_ms", msec(time.Since(start)), "rows_affected", rows)
+	s.logger.Debug("sql", "stmt", "SaveDispatcher", "args", []any{state.Type, state.Nsid, state.Ifindex, state.Revision, state.KernelID, state.LinkID, state.LinkPinPath, state.ProgPinPath, state.NumExtensions, state.Handle, state.Priority, "(timestamp)", "(timestamp)"}, "duration_ms", msec(time.Since(start)), "rows_affected", rows)
 
 	return nil
 }

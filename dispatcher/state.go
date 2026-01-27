@@ -21,11 +21,21 @@ type State struct {
 	KernelID uint32 `json:"kernel_id"`
 
 	// LinkID is the kernel link ID (XDP link for XDP dispatchers).
+	// Zero for TC dispatchers which use legacy netlink instead of BPF links.
 	LinkID uint32 `json:"link_id"`
 
 	// LinkPinPath is the stable path for the dispatcher link.
 	// This path remains constant across revisions.
+	// Empty for TC dispatchers which use legacy netlink.
 	LinkPinPath string `json:"link_pin_path"`
+
+	// Handle is the kernel-assigned tc filter handle.
+	// Only set for TC dispatchers (legacy netlink). Zero for XDP.
+	Handle uint32 `json:"handle,omitempty"`
+
+	// Priority is the tc filter priority.
+	// Only set for TC dispatchers (legacy netlink). Zero for XDP.
+	Priority uint16 `json:"priority,omitempty"`
 
 	// ProgPinPath is the path for the dispatcher program.
 	// This changes with each revision.

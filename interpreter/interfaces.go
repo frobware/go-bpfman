@@ -205,11 +205,14 @@ type XDPDispatcherResult struct {
 }
 
 // TCDispatcherResult holds the result of loading a TC dispatcher.
+// Legacy TC uses netlink (clsact qdisc + tc filter) rather than BPF
+// links, so there is no link ID or link pin. Instead the kernel
+// assigns a handle that identifies the filter for later removal.
 type TCDispatcherResult struct {
 	DispatcherID  uint32 // Kernel program ID of the dispatcher
-	LinkID        uint32 // Kernel link ID
 	DispatcherPin string // Pin path for dispatcher program
-	LinkPin       string // Pin path for link
+	Handle        uint32 // Kernel-assigned tc filter handle
+	Priority      uint16 // tc filter priority (typically 50)
 }
 
 // DispatcherAttacher attaches dispatcher programs for multi-program chaining.
@@ -241,18 +244,20 @@ type DispatcherAttacher interface {
 	// extension program shares the same maps as the original loaded program.
 	AttachXDPExtension(dispatcherPinPath, objectPath, programName string, position int, linkPinPath, mapPinDir string) (bpfman.ManagedLink, error)
 
-	// AttachTCDispatcherWithPaths loads and attaches a TC dispatcher to an interface.
-	// The dispatcher allows multiple TC programs to be chained together.
+	// AttachTCDispatcherWithPaths loads and attaches a TC dispatcher to an
+	// interface using legacy netlink TC (clsact qdisc + BPF tc filter).
+	// This matches the upstream Rust bpfman approach and is visible to
+	// the tc(8) command-line tool.
 	//
 	// Parameters:
 	//   - ifindex: Network interface index
+	//   - ifname: Network interface name (needed for netlink)
 	//   - progPinPath: Path to pin the dispatcher program
-	//   - linkPinPath: Stable path to pin the TCX link
 	//   - direction: "ingress" or "egress"
 	//   - numProgs: Number of extension slots to enable
 	//   - proceedOn: Bitmask of TC return codes that trigger continuation to next program
 	//   - netns: Optional network namespace path. If non-empty, attachment is performed in that namespace.
-	AttachTCDispatcherWithPaths(ifindex int, progPinPath, linkPinPath, direction string, numProgs int, proceedOn uint32, netns string) (*TCDispatcherResult, error)
+	AttachTCDispatcherWithPaths(ifindex int, ifname, progPinPath, direction string, numProgs int, proceedOn uint32, netns string) (*TCDispatcherResult, error)
 
 	// AttachTCExtension loads a program from ELF as Extension type and attaches
 	// it to a TC dispatcher slot. The program is loaded with BPF_PROG_TYPE_EXT
@@ -291,6 +296,14 @@ type PinRemover interface {
 	RemovePin(path string) error
 }
 
+// TCFilterDetacher removes legacy TC BPF filters via netlink.
+type TCFilterDetacher interface {
+	// DetachTCFilter removes a tc filter identified by ifindex, parent,
+	// priority, and handle. This is the counterpart to the netlink-based
+	// attachment performed by AttachTCDispatcherWithPaths.
+	DetachTCFilter(ifindex int, ifname string, parent uint32, priority uint16, handle uint32) error
+}
+
 // MapRepinner re-pins maps to new locations.
 type MapRepinner interface {
 	// RepinMap loads a pinned map and re-pins it to a new path.
@@ -309,6 +322,7 @@ type KernelOperations interface {
 	LinkDetacher
 	PinRemover
 	MapRepinner
+	TCFilterDetacher
 }
 
 // ImageRef describes an OCI image to pull.
