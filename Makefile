@@ -1,12 +1,11 @@
 IMAGE_TAG ?= dev
 BPFMAN_IMAGE ?= bpfman
-BPFMAN_BUILDER_IMAGE ?= bpfman-builder
 KIND_CLUSTER ?= bpfman-deployment
 NAMESPACE ?= bpfman
 STATS_READER_IMAGE ?= stats-reader
 BIN_DIR ?= bin
 
-all: bpfman-build
+all: bpfman-fmt bpfman-vet bpfman-build
 
 help:
 	@echo "Build:"
@@ -26,7 +25,7 @@ help:
 	@echo ""
 	@echo "bpfman (with integrated CSI):"
 	@echo "  bpfman-build                Build bpfman binary"
-	@echo "  bpfman-build-portable       Build container-compatible binary (patchelf)"
+	@echo "  bpfman-compile              Compile bpfman (no fmt/vet/dispatchers)"
 	@echo "  bpfman-clean                Remove generated files and binary"
 	@echo "  bpfman-delete               Remove bpfman from cluster"
 	@echo "  bpfman-deploy               Deploy bpfman to KIND cluster"
@@ -38,7 +37,6 @@ help:
 	@echo "  docker-build-bpfman-fast    Fast build using pre-built host binary"
 	@echo "  docker-build-bpfman-upstream Build bpfman using upstream image as base"
 	@echo "  docker-build-bpfman-upstream-fast Fast upstream build using host binary"
-	@echo "  docker-build-bpfman-cgo     Build bpfman with CGO (if needed)"
 	@echo ""
 	@echo "Example stats-reader app:"
 	@echo "  docker-build-stats-reader   Build stats-reader container image"
@@ -65,6 +63,12 @@ help:
 	@echo ""
 	@echo "Combined:"
 	@echo "  kind-undeploy-all           Remove all components from KIND cluster"
+	@echo ""
+	@echo "SQLite driver:"
+	@echo "  The default SQLite driver is modernc.org/sqlite (pure Go)."
+	@echo "  To use mattn/go-sqlite3 (CGO) instead, pass -tags cgo_sqlite:"
+	@echo "    go build -tags cgo_sqlite ./..."
+	@echo "    go test -tags cgo_sqlite ./..."
 
 docker-build-all: docker-build-bpfman docker-build-bpfman-upstream docker-build-stats-reader docker-build-csi-sanity
 
@@ -125,31 +129,26 @@ doc-text:
 # Run 'make bpfman-proto' explicitly after modifying proto/bpfman.proto.
 # CGO is required for the nsenter package which uses a C constructor to call
 # setns() before Go runtime starts (needed for uprobe container attachment).
-bpfman-build: ensure-dispatchers | $(BIN_DIR)
-	@# Dependencies ensure dispatcher objects exist before running Go commands
+# For daily development use bpfman-all which also runs fmt and vet.
+bpfman-build: ensure-dispatchers bpfman-compile
+
+bpfman-fmt:
 	go fmt ./...
+
+bpfman-vet:
 	go vet ./...
-	CGO_ENABLED=1 go build -mod=vendor -o $(BIN_DIR)/bpfman ./cmd/bpfman
+
+# Compile bpfman without the dispatcher dependency. Used directly by
+# container builds where dispatcher objects are already present.
+bpfman-compile: | $(BIN_DIR)
+	CGO_ENABLED=1 go build -mod=vendor -tags 'osusergo,netgo' -ldflags '-extldflags "-static"' -o $(BIN_DIR)/bpfman ./cmd/bpfman
 
 # Ensure bin directory exists
 $(BIN_DIR):
 	@mkdir -p $(BIN_DIR)
 
-# Build binary patched for use in containers (fixes nix interpreter/rpath)
-# Requires patchelf to be installed
-bpfman-build-portable: bpfman-build
-	@if ! command -v patchelf >/dev/null 2>&1; then \
-		echo "Error: patchelf is required but not installed"; \
-		exit 1; \
-	fi
-	cp $(BIN_DIR)/bpfman $(BIN_DIR)/bpfman-portable
-	patchelf --set-interpreter /lib64/ld-linux-x86-64.so.2 \
-		--set-rpath /lib64:/lib/x86_64-linux-gnu \
-		$(BIN_DIR)/bpfman-portable
-	@echo "Built $(BIN_DIR)/bpfman-portable (container-compatible)"
-
 bpfman-clean:
-	$(RM) $(BIN_DIR)/bpfman $(BIN_DIR)/bpfman-portable
+	$(RM) $(BIN_DIR)/bpfman
 
 # Proto generation for bpfman gRPC API
 BPFMAN_PROTO_DIR := proto
@@ -165,31 +164,20 @@ $(BPFMAN_PB_DIR)/bpfman.pb.go $(BPFMAN_PB_DIR)/bpfman_grpc.pb.go: $(BPFMAN_PROTO
 		$<
 
 docker-build-bpfman: testdata/stats.o
-	docker buildx build --builder=default --load -t $(BPFMAN_IMAGE):$(IMAGE_TAG) -f Dockerfile.bpfman .
+	docker build -t $(BPFMAN_IMAGE):$(IMAGE_TAG) -f Dockerfile.bpfman .
 
 # Fast build: copy pre-built binary from host (skips in-container compilation)
 # Requires: make bpfman-build-portable first
-docker-build-bpfman-fast: bpfman-build-portable testdata/stats.o
-	docker buildx build --builder=default --load -t $(BPFMAN_IMAGE):$(IMAGE_TAG) -f Dockerfile.bpfman-fast .
+docker-build-bpfman-fast: bpfman-build testdata/stats.o
+	docker build -t $(BPFMAN_IMAGE):$(IMAGE_TAG) -f Dockerfile.bpfman-fast .
 
 # Build bpfman using upstream image as base (for operator integration testing)
-docker-build-bpfman-upstream:
-	docker buildx build --builder=default --load -t $(BPFMAN_IMAGE):$(IMAGE_TAG) -f Dockerfile.bpfman-upstream .
+docker-build-bpfman-upstream: bpfman-build
+	docker build -t $(BPFMAN_IMAGE):$(IMAGE_TAG) -f Dockerfile.bpfman-upstream .
 
 # Fast build using upstream image as base
-docker-build-bpfman-upstream-fast: bpfman-build-portable
-	docker buildx build --builder=default --load -t $(BPFMAN_IMAGE):$(IMAGE_TAG) -f Dockerfile.bpfman-upstream-fast .
-
-# CGO builder image (for future use if CGO is needed again)
-# Usage: make docker-build-bpfman-builder && make docker-build-bpfman-cgo
-docker-build-bpfman-builder:
-	docker buildx build --builder=default --load -t $(BPFMAN_BUILDER_IMAGE):$(IMAGE_TAG) -f Dockerfile.bpfman-builder .
-
-docker-build-bpfman-cgo: docker-build-bpfman-builder testdata/stats.o
-	docker buildx build --builder=default --load --build-arg BUILDER_IMAGE=$(BPFMAN_BUILDER_IMAGE):$(IMAGE_TAG) -t $(BPFMAN_IMAGE):$(IMAGE_TAG) -f Dockerfile.bpfman .
-
-docker-clean-bpfman-builder:
-	-docker rmi $(BPFMAN_BUILDER_IMAGE):$(IMAGE_TAG)
+docker-build-bpfman-upstream-fast: bpfman-build
+	docker build -t $(BPFMAN_IMAGE):$(IMAGE_TAG) -f Dockerfile.bpfman-upstream-fast .
 
 bpfman-kind-load: docker-build-bpfman
 	kind load docker-image $(BPFMAN_IMAGE):$(IMAGE_TAG) --name $(KIND_CLUSTER)
@@ -230,7 +218,7 @@ testdata/stats.o: $(BPFMAN_HACKS_DIR)/stats/bpf/stats.o
 
 # stats-reader example app
 docker-build-stats-reader:
-	docker buildx build --builder=default --load -t $(STATS_READER_IMAGE):$(IMAGE_TAG) -f examples/stats-reader/Dockerfile .
+	docker build -t $(STATS_READER_IMAGE):$(IMAGE_TAG) -f examples/stats-reader/Dockerfile .
 
 stats-reader-kind-load: docker-build-stats-reader
 	kind load docker-image $(STATS_READER_IMAGE):$(IMAGE_TAG) --name $(KIND_CLUSTER)
@@ -249,7 +237,7 @@ stats-reader-logs:
 CSI_SANITY_IMAGE ?= csi-sanity
 
 docker-build-csi-sanity:
-	docker buildx build --builder=default --load -t $(CSI_SANITY_IMAGE):$(IMAGE_TAG) -f Dockerfile.csi-sanity .
+	docker build -t $(CSI_SANITY_IMAGE):$(IMAGE_TAG) -f Dockerfile.csi-sanity .
 
 # KIND cluster management
 kind-create:
@@ -334,12 +322,9 @@ kind-undeploy-all: stats-reader-delete bpfman-delete
 	doc-text \
 	docker-build-all \
 	docker-build-bpfman \
-	docker-build-bpfman-builder \
-	docker-build-bpfman-cgo \
 	docker-build-bpfman-upstream \
 	docker-build-csi-sanity \
 	docker-build-stats-reader \
-	docker-clean-bpfman-builder \
 	e2e-test \
 	help \
 	kind-create \
