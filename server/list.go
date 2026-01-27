@@ -77,6 +77,8 @@ func (s *Server) List(ctx context.Context, req *pb.ListRequest) (*pb.ListRespons
 		})
 	}
 
+	s.logger.Info("List", "programs", len(results))
+
 	return &pb.ListResponse{Results: results}, nil
 }
 
@@ -89,15 +91,11 @@ func (s *Server) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	s.logger.Info("Get request", "program_id", req.Id)
-
 	metadata, err := s.store.Get(ctx, req.Id)
 	if errors.Is(err, store.ErrNotFound) {
-		s.logger.Info("Get response: not found", "program_id", req.Id)
 		return nil, status.Errorf(codes.NotFound, "program with ID %d not found", req.Id)
 	}
 	if err != nil {
-		s.logger.Error("Get response: store error", "program_id", req.Id, "error", err)
 		return nil, status.Errorf(codes.Internal, "failed to get program: %v", err)
 	}
 
@@ -117,7 +115,7 @@ func (s *Server) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, 
 		linkIDs = append(linkIDs, link.KernelLinkID)
 	}
 
-	s.logger.Info("Get response: success", "program_id", req.Id, "program_name", metadata.ProgramName, "link_count", len(linkIDs))
+	s.logger.Info("Get", "program_id", req.Id, "program_name", metadata.ProgramName, "links", len(linkIDs))
 
 	info := &pb.ProgramInfo{
 		Name:       metadata.ProgramName,
@@ -177,6 +175,8 @@ func (s *Server) ListLinks(ctx context.Context, req *pb.ListLinksRequest) (*pb.L
 		})
 	}
 
+	s.logger.Info("ListLinks", "links", len(links))
+
 	return resp, nil
 }
 
@@ -196,6 +196,8 @@ func (s *Server) GetLink(ctx context.Context, req *pb.GetLinkRequest) (*pb.GetLi
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to get link: %v", err)
 	}
+
+	s.logger.Info("GetLink", "link_id", req.KernelLinkId, "type", summary.LinkType, "program_id", summary.KernelProgramID)
 
 	return &pb.GetLinkResponse{
 		Link: &pb.LinkInfo{

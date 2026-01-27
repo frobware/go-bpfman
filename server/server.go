@@ -334,10 +334,9 @@ func (s *Server) serve(ctx context.Context, socketPath, tcpAddr string) error {
 // loggingInterceptor returns a gRPC unary interceptor that logs incoming requests.
 func (s *Server) loggingInterceptor() grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
-		s.logger.Info("grpc request", "method", info.FullMethod)
 		resp, err := handler(ctx, req)
 		if err != nil {
-			s.logger.Info("grpc response", "method", info.FullMethod, "error", err)
+			s.logger.Error("grpc error", "method", info.FullMethod, "error", err)
 		}
 		return resp, err
 	}

@@ -27,26 +27,46 @@ func (s *Server) Attach(ctx context.Context, req *pb.AttachRequest) (*pb.AttachR
 		return nil, status.Error(codes.InvalidArgument, "attach info is required")
 	}
 
+	var attachType string
+	var resp *pb.AttachResponse
+	var err error
+
 	switch info := req.Attach.Info.(type) {
 	case *pb.AttachInfo_TracepointAttachInfo:
-		return s.attachTracepoint(ctx, req.Id, info.TracepointAttachInfo)
+		attachType = "tracepoint"
+		resp, err = s.attachTracepoint(ctx, req.Id, info.TracepointAttachInfo)
 	case *pb.AttachInfo_XdpAttachInfo:
-		return s.attachXDP(ctx, req.Id, info.XdpAttachInfo)
+		attachType = "xdp"
+		resp, err = s.attachXDP(ctx, req.Id, info.XdpAttachInfo)
 	case *pb.AttachInfo_TcAttachInfo:
-		return s.attachTC(ctx, req.Id, info.TcAttachInfo)
+		attachType = "tc"
+		resp, err = s.attachTC(ctx, req.Id, info.TcAttachInfo)
 	case *pb.AttachInfo_TcxAttachInfo:
-		return s.attachTCX(ctx, req.Id, info.TcxAttachInfo)
+		attachType = "tcx"
+		resp, err = s.attachTCX(ctx, req.Id, info.TcxAttachInfo)
 	case *pb.AttachInfo_KprobeAttachInfo:
-		return s.attachKprobe(ctx, req.Id, info.KprobeAttachInfo)
+		attachType = "kprobe"
+		resp, err = s.attachKprobe(ctx, req.Id, info.KprobeAttachInfo)
 	case *pb.AttachInfo_UprobeAttachInfo:
-		return s.attachUprobe(ctx, req.Id, info.UprobeAttachInfo)
+		attachType = "uprobe"
+		resp, err = s.attachUprobe(ctx, req.Id, info.UprobeAttachInfo)
 	case *pb.AttachInfo_FentryAttachInfo:
-		return s.attachFentry(ctx, req.Id, info.FentryAttachInfo)
+		attachType = "fentry"
+		resp, err = s.attachFentry(ctx, req.Id, info.FentryAttachInfo)
 	case *pb.AttachInfo_FexitAttachInfo:
-		return s.attachFexit(ctx, req.Id, info.FexitAttachInfo)
+		attachType = "fexit"
+		resp, err = s.attachFexit(ctx, req.Id, info.FexitAttachInfo)
 	default:
 		return nil, status.Errorf(codes.Unimplemented, "attach type %T not yet implemented", req.Attach.Info)
 	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	s.logger.Info("Attach", "type", attachType, "program_id", req.Id, "link_id", resp.LinkId)
+
+	return resp, nil
 }
 
 // attachTracepoint handles tracepoint attachment via the manager.
@@ -328,6 +348,8 @@ func (s *Server) Detach(ctx context.Context, req *pb.DetachRequest) (*pb.DetachR
 		}
 		return nil, status.Errorf(codes.Internal, "detach link: %v", err)
 	}
+
+	s.logger.Info("Detach", "link_id", req.LinkId)
 
 	return &pb.DetachResponse{}, nil
 }

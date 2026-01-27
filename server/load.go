@@ -225,6 +225,13 @@ func (s *Server) Load(ctx context.Context, req *pb.LoadRequest) (*pb.LoadRespons
 		})
 	}
 
+	// Log summary of all loaded programs
+	names := make([]string, len(loadedKernelIDs))
+	for i, info := range req.Info {
+		names[i] = info.Name
+	}
+	s.logger.Info("Load", "programs", names, "kernel_ids", loadedKernelIDs)
+
 	return resp, nil
 }
 
@@ -244,6 +251,8 @@ func (s *Server) Unload(ctx context.Context, req *pb.UnloadRequest) (*pb.UnloadR
 		}
 		return nil, status.Errorf(codes.Internal, "failed to unload program: %v", err)
 	}
+
+	s.logger.Info("Unload", "program_id", req.Id)
 
 	return &pb.UnloadResponse{}, nil
 }
