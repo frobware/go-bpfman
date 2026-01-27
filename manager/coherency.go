@@ -599,14 +599,23 @@ func CoherencyRules() []Rule {
 			},
 		},
 		// D5: TC dispatcher filter exists in kernel.
+		// A missing filter is only an ERROR when the dispatcher has
+		// active extension links — it should be routing traffic but
+		// cannot. With zero extensions the dispatcher is functionally
+		// dead and the missing filter is merely a WARNING (stale
+		// state eligible for GC, not a correctness failure).
 		{
 			Name: "D5",
 			Eval: func(s *ObservedState) []Violation {
 				var out []Violation
 				for _, d := range s.Dispatchers() {
 					if d.TCFilterOK != nil && !*d.TCFilterOK {
+						sev := SeverityWarning
+						if d.LinkCount > 0 {
+							sev = SeverityError
+						}
 						out = append(out, Violation{
-							Severity:    SeverityError,
+							Severity:    sev,
 							Category:    "db-vs-kernel",
 							Description: fmt.Sprintf("Dispatcher %s nsid=%d ifindex=%d: TC filter not found (priority %d)", d.DB.Type, d.DB.Nsid, d.DB.Ifindex, d.DB.Priority),
 						})

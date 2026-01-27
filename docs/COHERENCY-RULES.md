@@ -43,7 +43,7 @@ kernel program is still loaded.
 | D2 | Each DB link | Kernel link with matching ID exists | ERROR | Synthetic link IDs (>= 0x80000000) are skipped |
 | D3 | Each DB dispatcher | Kernel program with matching KernelID exists | ERROR | None |
 | D4 | Each XDP dispatcher with LinkID != 0 | Kernel link with matching LinkID exists | ERROR | None |
-| D5 | Each TC dispatcher with Priority > 0 | TC filter exists at (ifindex, parent, priority) | ERROR | None |
+| D5 | Each TC dispatcher with Priority > 0 | TC filter exists at (ifindex, parent, priority) | ERROR if extensions > 0, WARNING if 0 | None |
 
 ### DB vs Filesystem
 
