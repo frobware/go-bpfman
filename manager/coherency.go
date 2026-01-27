@@ -520,16 +520,16 @@ func Evaluate(state *ObservedState, rules []Rule) []Violation {
 }
 
 // --------------------------------------------------------------------
-// CoherencyRules: read-only doctor checks (D1-D14).
+// Doctor rules: read-only coherency checks.
 // Rules consume tuples. No raw map lookups. No joins.
 // --------------------------------------------------------------------
 
 // CoherencyRules returns all doctor rules.
 func CoherencyRules() []Rule {
 	return []Rule{
-		// D1: DB program exists in kernel.
+		// Each DB program must have a corresponding kernel program.
 		{
-			Name: "D1",
+			Name: "program-in-kernel",
 			Eval: func(s *ObservedState) []Violation {
 				var out []Violation
 				for _, p := range s.Programs() {
@@ -544,9 +544,9 @@ func CoherencyRules() []Rule {
 				return out
 			},
 		},
-		// D2: DB link exists in kernel.
+		// Each DB link must have a corresponding kernel link.
 		{
-			Name: "D2",
+			Name: "link-in-kernel",
 			Eval: func(s *ObservedState) []Violation {
 				var out []Violation
 				for _, l := range s.Links() {
@@ -564,9 +564,9 @@ func CoherencyRules() []Rule {
 				return out
 			},
 		},
-		// D3: DB dispatcher program exists in kernel.
+		// Each DB dispatcher must have a corresponding kernel program.
 		{
-			Name: "D3",
+			Name: "dispatcher-prog-in-kernel",
 			Eval: func(s *ObservedState) []Violation {
 				var out []Violation
 				for _, d := range s.Dispatchers() {
@@ -581,9 +581,9 @@ func CoherencyRules() []Rule {
 				return out
 			},
 		},
-		// D4: XDP dispatcher link exists in kernel.
+		// Each XDP dispatcher with a link ID must have a corresponding kernel link.
 		{
-			Name: "D4",
+			Name: "xdp-link-in-kernel",
 			Eval: func(s *ObservedState) []Violation {
 				var out []Violation
 				for _, d := range s.Dispatchers() {
@@ -598,14 +598,14 @@ func CoherencyRules() []Rule {
 				return out
 			},
 		},
-		// D5: TC dispatcher filter exists in kernel.
+		// Each TC dispatcher must have a netlink filter installed.
 		// A missing filter is only an ERROR when the dispatcher has
 		// active extension links — it should be routing traffic but
 		// cannot. With zero extensions the dispatcher is functionally
 		// dead and the missing filter is merely a WARNING (stale
 		// state eligible for GC, not a correctness failure).
 		{
-			Name: "D5",
+			Name: "tc-filter-exists",
 			Eval: func(s *ObservedState) []Violation {
 				var out []Violation
 				for _, d := range s.Dispatchers() {
@@ -624,9 +624,9 @@ func CoherencyRules() []Rule {
 				return out
 			},
 		},
-		// D6: DB program pin exists on filesystem.
+		// Each DB program with a pin path must have the pin on the filesystem.
 		{
-			Name: "D6",
+			Name: "program-pin-exists",
 			Eval: func(s *ObservedState) []Violation {
 				var out []Violation
 				for _, p := range s.Programs() {
@@ -641,9 +641,9 @@ func CoherencyRules() []Rule {
 				return out
 			},
 		},
-		// D7: DB link pin exists on filesystem.
+		// Each DB link with a pin path must have the pin on the filesystem.
 		{
-			Name: "D7",
+			Name: "link-pin-exists",
 			Eval: func(s *ObservedState) []Violation {
 				var out []Violation
 				for _, l := range s.Links() {
@@ -661,9 +661,9 @@ func CoherencyRules() []Rule {
 				return out
 			},
 		},
-		// D8: DB dispatcher prog pin exists on filesystem.
+		// Each DB dispatcher must have its prog pin on the filesystem.
 		{
-			Name: "D8",
+			Name: "dispatcher-prog-pin-exists",
 			Eval: func(s *ObservedState) []Violation {
 				var out []Violation
 				for _, d := range s.Dispatchers() {
@@ -678,9 +678,9 @@ func CoherencyRules() []Rule {
 				return out
 			},
 		},
-		// D9: XDP dispatcher link pin exists on filesystem.
+		// Each XDP dispatcher must have its link pin on the filesystem.
 		{
-			Name: "D9",
+			Name: "xdp-link-pin-exists",
 			Eval: func(s *ObservedState) []Violation {
 				var out []Violation
 				for _, d := range s.Dispatchers() {
@@ -695,9 +695,9 @@ func CoherencyRules() []Rule {
 				return out
 			},
 		},
-		// D10-D13: Filesystem orphans.
+		// Filesystem entries with no corresponding DB record are orphans.
 		{
-			Name: "D10-D13",
+			Name: "orphan-fs-entries",
 			Eval: func(s *ObservedState) []Violation {
 				var out []Violation
 				for _, o := range s.OrphanFsEntries() {
@@ -710,9 +710,9 @@ func CoherencyRules() []Rule {
 				return out
 			},
 		},
-		// D14: Dispatcher link count matches filesystem.
+		// DB dispatcher link count must match the filesystem link count.
 		{
-			Name: "D14",
+			Name: "dispatcher-link-count",
 			Eval: func(s *ObservedState) []Violation {
 				var out []Violation
 				for _, d := range s.Dispatchers() {
@@ -738,16 +738,17 @@ func CoherencyRules() []Rule {
 }
 
 // --------------------------------------------------------------------
-// GCRules: rules that plan mutations (G5-G12).
+// GC rules: detect stale state and plan mutations.
 // Each violation carries an Operation the executor can apply.
 // --------------------------------------------------------------------
 
 // GCRules returns rules that detect and plan repairs for stale state.
 func GCRules() []Rule {
 	return []Rule{
-		// G5-G7: Stale dispatchers with zero extension links.
+		// Dispatchers with zero extension links and missing attachment
+		// mechanism (prog pin or TC filter) are functionally dead.
 		{
-			Name: "G5-G7",
+			Name: "stale-dispatcher",
 			Eval: func(s *ObservedState) []Violation {
 				var out []Violation
 				for _, d := range s.Dispatchers() {
@@ -785,9 +786,10 @@ func GCRules() []Rule {
 				return out
 			},
 		},
-		// G8-G10: Orphan prog pins, link dirs, map dirs.
+		// Orphan program pins, link directories, and map directories
+		// with no DB record and no live kernel object.
 		{
-			Name: "G8-G10",
+			Name: "orphan-program-artefacts",
 			Eval: func(s *ObservedState) []Violation {
 				var out []Violation
 				for _, o := range s.OrphanFsEntries() {
@@ -817,9 +819,10 @@ func GCRules() []Rule {
 				return out
 			},
 		},
-		// G11-G12: Orphan dispatcher directories and link pins.
+		// Orphan dispatcher directories and link pins with no
+		// corresponding DB dispatcher.
 		{
-			Name: "G11-G12",
+			Name: "orphan-dispatcher-artefacts",
 			Eval: func(s *ObservedState) []Violation {
 				var out []Violation
 				for _, o := range s.OrphanFsEntries() {
