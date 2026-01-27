@@ -37,8 +37,10 @@ func (k *kernelAdapter) Load(ctx context.Context, spec bpfman.LoadSpec) (bpfman.
 
 	// Set global data if provided
 	for name, data := range spec.GlobalData() {
-		if err := collSpec.RewriteConstants(map[string]interface{}{name: data}); err != nil {
-			// Ignore errors for constants that don't exist
+		if v, ok := collSpec.Variables[name]; ok {
+			if err := v.Set(data); err != nil {
+				return bpfman.ManagedProgram{}, fmt.Errorf("set variable %q: %w", name, err)
+			}
 		}
 	}
 
