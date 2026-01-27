@@ -72,7 +72,7 @@ func (m *Manager) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts b
 	dispState, err := m.store.GetDispatcher(ctx, string(dispType), nsid, uint32(ifindex))
 	if errors.Is(err, store.ErrNotFound) {
 		// KERNEL I/O + EXECUTE: Create new dispatcher
-		dispState, err = m.createTCDispatcher(ctx, nsid, uint32(ifindex), direction, dispType, netnsPath)
+		dispState, err = m.createTCDispatcher(ctx, nsid, uint32(ifindex), ifname, direction, dispType, netnsPath)
 		if err != nil {
 			return bpfman.LinkSummary{}, fmt.Errorf("create TC dispatcher for %s %s: %w", ifname, direction, err)
 		}
@@ -338,12 +338,15 @@ func computeTCXAttachOrder(existingLinks []bpfman.TCXLinkInfo, newPriority int32
 }
 
 // createTCDispatcher creates a new TC dispatcher for the given interface and direction.
+// The dispatcher is attached via legacy netlink TC (clsact qdisc + BPF filter),
+// matching the upstream Rust bpfman approach.
 //
 // Pattern: COMPUTE -> KERNEL I/O -> COMPUTE -> EXECUTE
-func (m *Manager) createTCDispatcher(ctx context.Context, nsid uint64, ifindex uint32, direction string, dispType dispatcher.DispatcherType, netnsPath string) (dispatcher.State, error) {
-	// COMPUTE: Calculate paths according to Rust bpfman convention
+func (m *Manager) createTCDispatcher(ctx context.Context, nsid uint64, ifindex uint32, ifname, direction string, dispType dispatcher.DispatcherType, netnsPath string) (dispatcher.State, error) {
+	// COMPUTE: Calculate paths according to Rust bpfman convention.
+	// TC dispatchers do not use a link pin — legacy netlink TC has no
+	// BPF link to pin. The filter is identified by handle + priority.
 	revision := uint32(1)
-	linkPinPath := dispatcher.DispatcherLinkPath(m.dirs.FS, dispType, nsid, ifindex)
 	revisionDir := dispatcher.DispatcherRevisionDir(m.dirs.FS, dispType, nsid, ifindex, revision)
 	progPinPath := dispatcher.DispatcherProgPath(revisionDir)
 
@@ -351,16 +354,16 @@ func (m *Manager) createTCDispatcher(ctx context.Context, nsid uint64, ifindex u
 		"direction", direction,
 		"nsid", nsid,
 		"ifindex", ifindex,
+		"ifname", ifname,
 		"netns", netnsPath,
 		"revision", revision,
-		"prog_pin_path", progPinPath,
-		"link_pin_path", linkPinPath)
+		"prog_pin_path", progPinPath)
 
-	// KERNEL I/O: Create TC dispatcher using TCX link
+	// KERNEL I/O: Create TC dispatcher using legacy netlink TC
 	result, err := m.kernel.AttachTCDispatcherWithPaths(
 		int(ifindex),
+		ifname,
 		progPinPath,
-		linkPinPath,
 		direction,
 		dispatcher.MaxPrograms,
 		uint32(DefaultTCProceedOn),
@@ -371,7 +374,7 @@ func (m *Manager) createTCDispatcher(ctx context.Context, nsid uint64, ifindex u
 	}
 
 	// COMPUTE: Build save action from kernel result
-	state := computeTCDispatcherState(dispType, nsid, ifindex, revision, result, progPinPath, linkPinPath)
+	state := computeTCDispatcherState(dispType, nsid, ifindex, revision, result, progPinPath)
 	saveAction := action.SaveDispatcher{State: state}
 
 	// EXECUTE: Save through executor
@@ -383,10 +386,11 @@ func (m *Manager) createTCDispatcher(ctx context.Context, nsid uint64, ifindex u
 		"direction", direction,
 		"nsid", nsid,
 		"ifindex", ifindex,
+		"ifname", ifname,
 		"dispatcher_id", result.DispatcherID,
-		"link_id", result.LinkID,
-		"prog_pin_path", progPinPath,
-		"link_pin_path", linkPinPath)
+		"handle", fmt.Sprintf("%x", result.Handle),
+		"priority", result.Priority,
+		"prog_pin_path", progPinPath)
 
 	return state, nil
 }
@@ -398,7 +402,7 @@ func computeTCDispatcherState(
 	nsid uint64,
 	ifindex, revision uint32,
 	result *interpreter.TCDispatcherResult,
-	progPinPath, linkPinPath string,
+	progPinPath string,
 ) dispatcher.State {
 	return dispatcher.State{
 		Type:          dispType,
@@ -406,9 +410,9 @@ func computeTCDispatcherState(
 		Ifindex:       ifindex,
 		Revision:      revision,
 		KernelID:      result.DispatcherID,
-		LinkID:        result.LinkID,
-		LinkPinPath:   linkPinPath,
 		ProgPinPath:   progPinPath,
+		Handle:        result.Handle,
+		Priority:      result.Priority,
 		NumExtensions: 0,
 	}
 }

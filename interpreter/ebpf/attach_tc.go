@@ -1,6 +1,7 @@
 package ebpf
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,8 @@ import (
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
+	"github.com/vishvananda/netlink"
+	"golang.org/x/sys/unix"
 
 	"github.com/frobware/go-bpfman"
 	"github.com/frobware/go-bpfman/dispatcher"
@@ -16,18 +19,25 @@ import (
 	"github.com/frobware/go-bpfman/netns"
 )
 
-// AttachTCDispatcherWithPaths loads and attaches a TC dispatcher to an interface
-// using the TCX link API. This follows the same pattern as XDP dispatcher attachment.
+// tcDispatcherPriority is the default TC priority for the dispatcher
+// filter, matching the upstream Rust bpfman value.
+const tcDispatcherPriority = 50
+
+// AttachTCDispatcherWithPaths loads and attaches a TC dispatcher to an
+// interface using legacy netlink TC (clsact qdisc + BPF tc filter).
+// This matches the upstream Rust bpfman approach: the dispatcher
+// program is attached as a cls_bpf filter on the clsact qdisc,
+// visible to tc(8) tooling, and works on kernels older than 6.6.
 //
 // Parameters:
 //   - ifindex: Network interface index
+//   - ifname: Network interface name (needed for netlink)
 //   - progPinPath: Path to pin the dispatcher program
-//   - linkPinPath: Stable path to pin the TCX link
 //   - direction: "ingress" or "egress"
 //   - numProgs: Number of extension slots to enable
 //   - proceedOn: Bitmask of TC return codes that trigger continuation
 //   - netnsPath: if non-empty, attachment is performed in that network namespace
-func (k *kernelAdapter) AttachTCDispatcherWithPaths(ifindex int, progPinPath, linkPinPath, direction string, numProgs int, proceedOn uint32, netnsPath string) (*interpreter.TCDispatcherResult, error) {
+func (k *kernelAdapter) AttachTCDispatcherWithPaths(ifindex int, ifname, progPinPath, direction string, numProgs int, proceedOn uint32, netnsPath string) (*interpreter.TCDispatcherResult, error) {
 	// Configure the TC dispatcher
 	// TC_DISPATCHER_RETVAL (30) is returned by empty slots - we must include
 	// this bit so the dispatcher continues past empty slots to the final TC_ACT_OK.
@@ -50,19 +60,19 @@ func (k *kernelAdapter) AttachTCDispatcherWithPaths(ifindex int, progPinPath, li
 	}
 	defer coll.Close()
 
-	// Get the dispatcher program - TC dispatcher uses "tc_dispatcher" as the program name
+	// Get the dispatcher program
 	dispatcherProg := coll.Programs["tc_dispatcher"]
 	if dispatcherProg == nil {
 		return nil, fmt.Errorf("tc_dispatcher program not found in collection")
 	}
 
-	// Determine attach type based on direction
-	var attachType ebpf.AttachType
+	// Determine the parent handle based on direction
+	var parent uint32
 	switch direction {
 	case "ingress":
-		attachType = ebpf.AttachTCXIngress
+		parent = netlink.HANDLE_MIN_INGRESS
 	case "egress":
-		attachType = ebpf.AttachTCXEgress
+		parent = netlink.HANDLE_MIN_EGRESS
 	default:
 		return nil, fmt.Errorf("invalid TC direction %q: must be ingress or egress", direction)
 	}
@@ -74,77 +84,74 @@ func (k *kernelAdapter) AttachTCDispatcherWithPaths(ifindex int, progPinPath, li
 
 	var result *interpreter.TCDispatcherResult
 	err = netns.Run(netnsPath, func() error {
-		// Attach to interface using TCX link
-		lnk, err := link.AttachTCX(link.TCXOptions{
-			Program:   dispatcherProg,
-			Interface: ifindex,
-			Attach:    attachType,
-		})
-		if err != nil {
-			return fmt.Errorf("attach TC dispatcher to ifindex %d direction %s: %w", ifindex, direction, err)
+		// Step 1: Ensure clsact qdisc exists (matching Rust bpfman behaviour).
+		// Aya checks has_qdisc("clsact"), errors on "ingress", else adds clsact.
+		// We mirror this: attempt to add clsact, ignore EEXIST.
+		qdisc := &netlink.Clsact{
+			QdiscAttrs: netlink.QdiscAttrs{
+				LinkIndex: ifindex,
+				Handle:    netlink.MakeHandle(0xffff, 0),
+				Parent:    netlink.HANDLE_INGRESS,
+			},
+		}
+		if err := netlink.QdiscAdd(qdisc); err != nil {
+			// EEXIST is fine — clsact already present.
+			if !errors.Is(err, unix.EEXIST) {
+				return fmt.Errorf("add clsact qdisc to ifindex %d: %w", ifindex, err)
+			}
 		}
 
-		result = &interpreter.TCDispatcherResult{}
+		// Step 2: Add a BPF tc filter with the dispatcher program.
+		filter := &netlink.BpfFilter{
+			FilterAttrs: netlink.FilterAttrs{
+				LinkIndex: ifindex,
+				Parent:    parent,
+				Priority:  tcDispatcherPriority,
+				Protocol:  unix.ETH_P_ALL,
+			},
+			Fd:           dispatcherProg.FD(),
+			Name:         "tc_dispatcher",
+			DirectAction: true,
+		}
+		if err := netlink.FilterAdd(filter); err != nil {
+			return fmt.Errorf("add TC BPF filter to ifindex %d direction %s: %w", ifindex, direction, err)
+		}
+
+		// Step 3: Read back the kernel-assigned handle.
+		// vishvananda/netlink FilterAdd does not use NLM_F_ECHO, so
+		// we must list filters to find our newly-added one.
+		handle, err := readBackTCFilterHandle(ifindex, parent, tcDispatcherPriority)
+		if err != nil {
+			return fmt.Errorf("read back TC filter handle: %w", err)
+		}
+
+		result = &interpreter.TCDispatcherResult{
+			Handle:   handle,
+			Priority: tcDispatcherPriority,
+		}
 
 		// Get dispatcher program info
 		progInfo, err := dispatcherProg.Info()
 		if err != nil {
-			lnk.Close()
 			return fmt.Errorf("get TC dispatcher program info: %w", err)
 		}
 		progID, ok := progInfo.ID()
 		if !ok {
-			lnk.Close()
 			return fmt.Errorf("failed to get TC dispatcher program ID from kernel")
 		}
 		result.DispatcherID = uint32(progID)
-
-		// Get link info
-		linkInfo, err := lnk.Info()
-		if err != nil {
-			lnk.Close()
-			return fmt.Errorf("get TC dispatcher link info: %w", err)
-		}
-		result.LinkID = uint32(linkInfo.ID)
 
 		// Pin dispatcher program to the revision-specific path
 		if progPinPath != "" {
 			progDir := filepath.Dir(progPinPath)
 			if err := os.MkdirAll(progDir, 0755); err != nil {
-				lnk.Close()
 				return fmt.Errorf("create TC dispatcher program directory: %w", err)
 			}
 
 			if err := dispatcherProg.Pin(progPinPath); err != nil {
-				lnk.Close()
 				return fmt.Errorf("pin TC dispatcher program to %s: %w", progPinPath, err)
 			}
 			result.DispatcherPin = progPinPath
-		}
-
-		// Pin link to the stable path
-		if linkPinPath != "" {
-			linkDir := filepath.Dir(linkPinPath)
-			if err := os.MkdirAll(linkDir, 0755); err != nil {
-				if progPinPath != "" {
-					if rmErr := os.Remove(progPinPath); rmErr != nil && !os.IsNotExist(rmErr) {
-						k.logger.Warn("failed to remove program pin during cleanup", "path", progPinPath, "error", rmErr)
-					}
-				}
-				lnk.Close()
-				return fmt.Errorf("create TC link pin directory: %w", err)
-			}
-
-			if err := lnk.Pin(linkPinPath); err != nil {
-				if progPinPath != "" {
-					if rmErr := os.Remove(progPinPath); rmErr != nil && !os.IsNotExist(rmErr) {
-						k.logger.Warn("failed to remove program pin during cleanup", "path", progPinPath, "error", rmErr)
-					}
-				}
-				lnk.Close()
-				return fmt.Errorf("pin TC dispatcher link to %s: %w", linkPinPath, err)
-			}
-			result.LinkPin = linkPinPath
 		}
 
 		return nil
@@ -154,6 +161,53 @@ func (k *kernelAdapter) AttachTCDispatcherWithPaths(ifindex int, progPinPath, li
 	}
 
 	return result, nil
+}
+
+// readBackTCFilterHandle lists tc filters on the given parent/priority
+// and returns the handle of the first BPF filter found. This is
+// needed because vishvananda/netlink FilterAdd does not echo back the
+// kernel-assigned handle the way aya does with NLM_F_ECHO.
+func readBackTCFilterHandle(ifindex int, parent uint32, priority uint16) (uint32, error) {
+	lo := &netlink.Dummy{}
+	lo.Index = ifindex
+	filters, err := netlink.FilterList(lo, parent)
+	if err != nil {
+		return 0, fmt.Errorf("list filters on ifindex %d parent %x: %w", ifindex, parent, err)
+	}
+	for _, f := range filters {
+		bpf, ok := f.(*netlink.BpfFilter)
+		if !ok {
+			continue
+		}
+		if bpf.Priority == priority {
+			return bpf.Handle, nil
+		}
+	}
+	return 0, fmt.Errorf("no BPF filter found at priority %d on ifindex %d parent %x", priority, ifindex, parent)
+}
+
+// DetachTCFilter removes a legacy TC BPF filter via netlink.
+func (k *kernelAdapter) DetachTCFilter(ifindex int, ifname string, parent uint32, priority uint16, handle uint32) error {
+	filter := &netlink.BpfFilter{
+		FilterAttrs: netlink.FilterAttrs{
+			LinkIndex: ifindex,
+			Parent:    parent,
+			Handle:    handle,
+			Priority:  priority,
+			Protocol:  unix.ETH_P_ALL,
+		},
+	}
+	if err := netlink.FilterDel(filter); err != nil {
+		return fmt.Errorf("delete TC filter (ifindex=%d parent=%x prio=%d handle=%x): %w",
+			ifindex, parent, priority, handle, err)
+	}
+	k.logger.Debug("detached TC filter",
+		"ifindex", ifindex,
+		"ifname", ifname,
+		"parent", fmt.Sprintf("%x", parent),
+		"priority", priority,
+		"handle", fmt.Sprintf("%x", handle))
+	return nil
 }
 
 // AttachTCExtension loads a program from ELF as Extension type and attaches

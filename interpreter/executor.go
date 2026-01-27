@@ -88,6 +88,9 @@ func (e *executor) Execute(ctx context.Context, a action.Action) error {
 	case action.RemovePin:
 		return e.kernel.RemovePin(a.Path)
 
+	case action.DetachTCFilter:
+		return e.kernel.DetachTCFilter(a.Ifindex, a.Ifname, a.Parent, a.Priority, a.Handle)
+
 	default:
 		return fmt.Errorf("unknown action type: %T", a)
 	}

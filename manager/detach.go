@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"github.com/vishvananda/netlink"
+
 	"github.com/frobware/go-bpfman"
 	"github.com/frobware/go-bpfman/action"
 	"github.com/frobware/go-bpfman/dispatcher"
@@ -123,10 +125,33 @@ func computeDispatcherCleanupActions(state dispatcher.State) []action.Action {
 		}
 	}
 
-	// No extensions left - remove dispatcher completely
+	// No extensions left - remove dispatcher completely.
 	revisionDir := filepath.Dir(state.ProgPinPath)
-	return []action.Action{
-		action.RemovePin{Path: state.LinkPinPath},
+	var actions []action.Action
+
+	// TC dispatchers use legacy netlink (Handle != 0) and must be
+	// detached via RTM_DELTFILTER rather than removing a link pin.
+	// XDP dispatchers use BPF links and are detached by removing
+	// the link pin.
+	if state.Handle != 0 {
+		var parent uint32
+		switch state.Type {
+		case dispatcher.DispatcherTypeTCIngress:
+			parent = netlink.HANDLE_MIN_INGRESS
+		case dispatcher.DispatcherTypeTCEgress:
+			parent = netlink.HANDLE_MIN_EGRESS
+		}
+		actions = append(actions, action.DetachTCFilter{
+			Ifindex:  int(state.Ifindex),
+			Parent:   parent,
+			Priority: state.Priority,
+			Handle:   state.Handle,
+		})
+	} else if state.LinkPinPath != "" {
+		actions = append(actions, action.RemovePin{Path: state.LinkPinPath})
+	}
+
+	actions = append(actions,
 		action.RemovePin{Path: state.ProgPinPath},
 		action.RemovePin{Path: revisionDir},
 		action.DeleteDispatcher{
@@ -134,5 +159,7 @@ func computeDispatcherCleanupActions(state dispatcher.State) []action.Action {
 			Nsid:    state.Nsid,
 			Ifindex: state.Ifindex,
 		},
-	}
+	)
+
+	return actions
 }

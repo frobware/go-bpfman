@@ -592,9 +592,9 @@ func (f *fakeKernel) AttachXDPExtension(dispatcherPinPath, objectPath, programNa
 	}, nil
 }
 
-func (f *fakeKernel) AttachTCDispatcherWithPaths(ifindex int, progPinPath, linkPinPath, direction string, numProgs int, proceedOn uint32, netns string) (*interpreter.TCDispatcherResult, error) {
+func (f *fakeKernel) AttachTCDispatcherWithPaths(ifindex int, ifname, progPinPath, direction string, numProgs int, proceedOn uint32, netns string) (*interpreter.TCDispatcherResult, error) {
 	dispatcherID := f.nextID.Add(1)
-	linkID := f.nextID.Add(1)
+	handle := f.nextID.Add(1)
 	// Add dispatcher program to programs map so GC sees it as valid
 	f.programs[dispatcherID] = fakeProgram{
 		id:          dispatcherID,
@@ -604,10 +604,14 @@ func (f *fakeKernel) AttachTCDispatcherWithPaths(ifindex int, progPinPath, linkP
 	}
 	return &interpreter.TCDispatcherResult{
 		DispatcherID:  dispatcherID,
-		LinkID:        linkID,
 		DispatcherPin: progPinPath,
-		LinkPin:       linkPinPath,
+		Handle:        handle,
+		Priority:      50,
 	}, nil
+}
+
+func (f *fakeKernel) DetachTCFilter(ifindex int, ifname string, parent uint32, priority uint16, handle uint32) error {
+	return nil
 }
 
 func (f *fakeKernel) AttachTCExtension(dispatcherPinPath, objectPath, programName string, position int, linkPinPath, mapPinDir string) (bpfman.ManagedLink, error) {
