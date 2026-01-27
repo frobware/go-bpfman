@@ -14,6 +14,73 @@ import (
 )
 
 // --------------------------------------------------------------------
+// Core types used by doctor and GC consumers.
+// --------------------------------------------------------------------
+
+// Severity indicates the severity of a coherency finding.
+type Severity int
+
+const (
+	SeverityOK Severity = iota
+	SeverityWarning
+	SeverityError
+)
+
+// String returns a human-readable label for the severity.
+func (s Severity) String() string {
+	switch s {
+	case SeverityOK:
+		return "OK"
+	case SeverityWarning:
+		return "WARNING"
+	case SeverityError:
+		return "ERROR"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+// Finding describes a single coherency check result.
+type Finding struct {
+	Severity    Severity
+	Category    string
+	Description string
+}
+
+// DoctorReport contains the results of a coherency check.
+type DoctorReport struct {
+	Findings []Finding
+}
+
+// HasErrors returns true if any finding has error severity.
+func (r DoctorReport) HasErrors() bool {
+	for _, f := range r.Findings {
+		if f.Severity == SeverityError {
+			return true
+		}
+	}
+	return false
+}
+
+// HasWarnings returns true if any finding has warning severity.
+func (r DoctorReport) HasWarnings() bool {
+	for _, f := range r.Findings {
+		if f.Severity == SeverityWarning {
+			return true
+		}
+	}
+	return false
+}
+
+// tcParent returns the TC parent handle for the given dispatcher type.
+func tcParent(dt dispatcher.DispatcherType) uint32 {
+	if dt == dispatcher.DispatcherTypeTCIngress {
+		return 0xFFFFFFF1 // TC_H_CLSACT | TC_H_MIN_INGRESS
+	}
+	return 0xFFFFFFF3 // TC_H_CLSACT | TC_H_MIN_EGRESS
+}
+
+// --------------------------------------------------------------------
 // Tuple types: correlated views across DB, kernel, and filesystem.
 // Each field is nil when the object is absent in that source.
 // --------------------------------------------------------------------
@@ -774,11 +841,11 @@ func GCRules() []Rule {
 }
 
 // --------------------------------------------------------------------
-// Manager methods: Doctor2 and GC2 using the rule engine.
+// Manager methods: Doctor and GC2 using the rule engine.
 // --------------------------------------------------------------------
 
-// Doctor2 gathers state and evaluates all coherency rules.
-func (m *Manager) Doctor2(ctx context.Context) (DoctorReport, error) {
+// Doctor gathers state and evaluates all coherency rules.
+func (m *Manager) Doctor(ctx context.Context) (DoctorReport, error) {
 	state, err := GatherState(ctx, m.store, m.kernel, m.dirs)
 	if err != nil {
 		return DoctorReport{}, fmt.Errorf("gather state: %w", err)
@@ -793,9 +860,11 @@ func (m *Manager) Doctor2(ctx context.Context) (DoctorReport, error) {
 	return report, nil
 }
 
-// GC2 gathers state, evaluates GC rules, and executes planned
-// operations. Returns the number of operations applied.
-func (m *Manager) GC2(ctx context.Context) (int, error) {
+// CoherencyGC gathers state, evaluates GC rules, and executes
+// planned operations. Returns the number of operations applied.
+// This covers rules G5-G12 (post-store GC). Store-level GC
+// (G1-G4) is handled by store.GC() called from Manager.GC().
+func (m *Manager) CoherencyGC(ctx context.Context) (int, error) {
 	state, err := GatherState(ctx, m.store, m.kernel, m.dirs)
 	if err != nil {
 		return 0, fmt.Errorf("gather state: %w", err)
