@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"debug/elf"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -176,7 +177,7 @@ func extractFromTar(archivePath, destDir string, logger *slog.Logger) (string, e
 func extractFromTarReader(tr *tar.Reader, destDir string, logger *slog.Logger) (string, error) {
 	for {
 		hdr, err := tr.Next()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
