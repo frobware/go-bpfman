@@ -25,6 +25,7 @@ help:
 	@echo ""
 	@echo "bpfman (with integrated CSI):"
 	@echo "  bpfman-build                Build bpfman binary"
+	@echo "  bpfman-build-portable       Build container-compatible binary (patchelf)"
 	@echo "  bpfman-compile              Compile bpfman (no fmt/vet/dispatchers)"
 	@echo "  bpfman-clean                Remove generated files and binary"
 	@echo "  bpfman-delete               Remove bpfman from cluster"
@@ -147,8 +148,21 @@ bpfman-compile: | $(BIN_DIR)
 $(BIN_DIR):
 	@mkdir -p $(BIN_DIR)
 
+# Build binary patched for use in containers (fixes nix interpreter/rpath).
+# Requires patchelf to be installed.
+bpfman-build-portable: bpfman-build
+	@if ! command -v patchelf >/dev/null 2>&1; then \
+		echo "Error: patchelf is required but not installed"; \
+		exit 1; \
+	fi
+	cp $(BIN_DIR)/bpfman $(BIN_DIR)/bpfman-portable
+	patchelf --set-interpreter /lib64/ld-linux-x86-64.so.2 \
+		--set-rpath /lib64:/lib/x86_64-linux-gnu \
+		$(BIN_DIR)/bpfman-portable
+	@echo "Built $(BIN_DIR)/bpfman-portable (container-compatible)"
+
 bpfman-clean:
-	$(RM) $(BIN_DIR)/bpfman
+	$(RM) $(BIN_DIR)/bpfman $(BIN_DIR)/bpfman-portable
 
 # Proto generation for bpfman gRPC API
 BPFMAN_PROTO_DIR := proto
@@ -168,7 +182,7 @@ docker-build-bpfman: testdata/stats.o
 
 # Fast build: copy pre-built binary from host (skips in-container compilation)
 # Requires: make bpfman-build-portable first
-docker-build-bpfman-fast: bpfman-build testdata/stats.o
+docker-build-bpfman-fast: bpfman-build-portable testdata/stats.o
 	docker build -t $(BPFMAN_IMAGE):$(IMAGE_TAG) -f Dockerfile.bpfman-fast .
 
 # Build bpfman using upstream image as base (for operator integration testing)
@@ -176,7 +190,7 @@ docker-build-bpfman-upstream: bpfman-build
 	docker build -t $(BPFMAN_IMAGE):$(IMAGE_TAG) -f Dockerfile.bpfman-upstream .
 
 # Fast build using upstream image as base
-docker-build-bpfman-upstream-fast: bpfman-build
+docker-build-bpfman-upstream-fast: bpfman-build-portable
 	docker build -t $(BPFMAN_IMAGE):$(IMAGE_TAG) -f Dockerfile.bpfman-upstream-fast .
 
 bpfman-kind-load: docker-build-bpfman

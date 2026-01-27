@@ -1,5 +1,6 @@
 # syntax=docker/dockerfile:1.4
-# Fast build: copies pre-built static binary for operator integration testing.
+# Fast build: copies pre-built binary for operator integration testing.
+# Uses patchelf to fix the NixOS interpreter and rpath.
 #
 # Usage:
 #   make docker-build-bpfman-upstream-fast
@@ -10,7 +11,7 @@
 ARG BASE_IMAGE=registry.access.redhat.com/ubi9/ubi-minimal:latest
 FROM ${BASE_IMAGE}
 
-COPY bin/bpfman /bpfman
+COPY bin/bpfman-portable /bpfman
 
 ENV BPFMAN_MODE=bpfman-rpc
 ENV BPFMAN_PPROF_ADDRESS=localhost:6060
