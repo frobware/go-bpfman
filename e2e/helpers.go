@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -299,6 +300,26 @@ func runCommand(cmd string) error {
 		return fmt.Errorf("command failed: %s", cmd)
 	}
 	return nil
+}
+
+// tcFilterCount returns the number of BPF tc filters on the given
+// interface and direction by shelling out to tc(8). This matches the
+// upstream Rust bpfman approach to verification.
+func tcFilterCount(t *testing.T, iface, direction string) int {
+	t.Helper()
+
+	out, err := exec.Command("tc", "filter", "show", "dev", iface, direction).CombinedOutput()
+	if err != nil {
+		t.Logf("tc filter show dev %s %s: %v (output: %s)", iface, direction, err, out)
+		return 0
+	}
+	count := 0
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.Contains(line, "pref") {
+			count++
+		}
+	}
+	return count
 }
 
 // cleanupStaleTestDirs removes leftover test directories from previous runs.
