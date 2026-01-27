@@ -395,6 +395,21 @@ func (c *remoteClient) GC(ctx context.Context) (manager.GCResult, error) {
 	return manager.GCResult{}, fmt.Errorf("GC: %w", ErrNotSupported)
 }
 
+// Doctor is a local-only operation.
+func (c *remoteClient) Doctor(ctx context.Context) (manager.DoctorReport, error) {
+	return manager.DoctorReport{}, fmt.Errorf("Doctor: %w", ErrNotSupported)
+}
+
+// GC2 is a local-only operation.
+func (c *remoteClient) GC2(ctx context.Context) (int, error) {
+	return 0, fmt.Errorf("GC2: %w", ErrNotSupported)
+}
+
+// Doctor2 is a local-only operation.
+func (c *remoteClient) Doctor2(ctx context.Context) (manager.DoctorReport, error) {
+	return manager.DoctorReport{}, fmt.Errorf("Doctor2: %w", ErrNotSupported)
+}
+
 // SetImagePuller configures the image puller for OCI operations.
 func (c *remoteClient) SetImagePuller(p interpreter.ImagePuller) {
 	c.puller = p

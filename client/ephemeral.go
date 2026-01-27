@@ -246,6 +246,21 @@ func (e *ephemeralClient) GC(ctx context.Context) (manager.GCResult, error) {
 	return e.env.Manager.GC(ctx)
 }
 
+// Doctor performs a read-only coherency check via direct manager access.
+func (e *ephemeralClient) Doctor(ctx context.Context) (manager.DoctorReport, error) {
+	return e.env.Manager.Doctor(ctx)
+}
+
+// GC2 removes stale resources using the rule engine.
+func (e *ephemeralClient) GC2(ctx context.Context) (int, error) {
+	return e.env.Manager.GC2(ctx)
+}
+
+// Doctor2 performs a read-only coherency check using the rule engine.
+func (e *ephemeralClient) Doctor2(ctx context.Context) (manager.DoctorReport, error) {
+	return e.env.Manager.Doctor2(ctx)
+}
+
 // SetImagePuller configures the image puller for OCI operations.
 func (e *ephemeralClient) SetImagePuller(p interpreter.ImagePuller) {
 	e.puller = p

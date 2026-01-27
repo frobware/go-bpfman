@@ -25,15 +25,18 @@ type CLI struct {
 	Log        string `name:"log" help:"Log spec (e.g., 'info,manager=debug')." env:"BPFMAN_LOG"`
 	Remote     string `name:"remote" short:"r" help:"Remote endpoint (unix:///path or host:port). Connects via gRPC instead of local manager."`
 
-	Serve  ServeCmd  `cmd:"" help:"Start the gRPC daemon."`
-	Load   LoadCmd   `cmd:"" help:"Load a BPF program from an object file."`
-	Unload UnloadCmd `cmd:"" help:"Unload a managed BPF program."`
-	Attach AttachCmd `cmd:"" help:"Attach a loaded program to a hook."`
-	Detach DetachCmd `cmd:"" help:"Detach a link."`
-	List   ListCmd   `cmd:"" help:"List managed programs or links."`
-	Get    GetCmd    `cmd:"" help:"Get a loaded eBPF program or program attachment link."`
-	GC     GCCmd     `cmd:"" help:"Garbage collect stale resources."`
-	Image  ImageCmd  `cmd:"" help:"Image operations (verify signatures)."`
+	Serve   ServeCmd   `cmd:"" help:"Start the gRPC daemon."`
+	Load    LoadCmd    `cmd:"" help:"Load a BPF program from an object file."`
+	Unload  UnloadCmd  `cmd:"" help:"Unload a managed BPF program."`
+	Attach  AttachCmd  `cmd:"" help:"Attach a loaded program to a hook."`
+	Detach  DetachCmd  `cmd:"" help:"Detach a link."`
+	List    ListCmd    `cmd:"" help:"List managed programs or links."`
+	Get     GetCmd     `cmd:"" help:"Get a loaded eBPF program or program attachment link."`
+	GC      GCCmd      `cmd:"" help:"Garbage collect stale resources."`
+	Doctor  DoctorCmd  `cmd:"" help:"Check coherency of database, kernel, and filesystem state."`
+	GC2     GC2Cmd     `cmd:"" help:"Garbage collect stale resources (rule engine)."`
+	Doctor2 Doctor2Cmd `cmd:"" help:"Check coherency using rule engine."`
+	Image   ImageCmd   `cmd:"" help:"Image operations (verify signatures)."`
 }
 
 // RuntimeDirs returns the runtime directories configuration.
