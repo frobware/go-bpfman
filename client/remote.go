@@ -435,13 +435,14 @@ func (c *remoteClient) LoadImage(ctx context.Context, ref interpreter.ImageRef, 
 			ProgramType: protoType,
 		}
 		// Add ProgSpecificInfo for fentry/fexit which require attach function at load time
-		if spec.ProgramType == bpfman.ProgramTypeFentry {
+		switch spec.ProgramType {
+		case bpfman.ProgramTypeFentry:
 			info.Info = &pb.ProgSpecificInfo{
 				Info: &pb.ProgSpecificInfo_FentryLoadInfo{
 					FentryLoadInfo: &pb.FentryLoadInfo{FnName: spec.AttachFunc},
 				},
 			}
-		} else if spec.ProgramType == bpfman.ProgramTypeFexit {
+		case bpfman.ProgramTypeFexit:
 			info.Info = &pb.ProgSpecificInfo{
 				Info: &pb.ProgSpecificInfo_FexitLoadInfo{
 					FexitLoadInfo: &pb.FexitLoadInfo{FnName: spec.AttachFunc},

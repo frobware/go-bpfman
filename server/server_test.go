@@ -510,13 +510,14 @@ func TestLoadProgram_AllProgramTypes_RoundTrip(t *testing.T) {
 
 			// Build LoadInfo - fentry/fexit require ProgSpecificInfo with FnName
 			loadInfo := &pb.LoadInfo{Name: progName, ProgramType: tt.protoType}
-			if tt.protoType == pb.BpfmanProgramType_FENTRY {
+			switch tt.protoType {
+			case pb.BpfmanProgramType_FENTRY:
 				loadInfo.Info = &pb.ProgSpecificInfo{
 					Info: &pb.ProgSpecificInfo_FentryLoadInfo{
 						FentryLoadInfo: &pb.FentryLoadInfo{FnName: "test_func"},
 					},
 				}
-			} else if tt.protoType == pb.BpfmanProgramType_FEXIT {
+			case pb.BpfmanProgramType_FEXIT:
 				loadInfo.Info = &pb.ProgSpecificInfo{
 					Info: &pb.ProgSpecificInfo_FexitLoadInfo{
 						FexitLoadInfo: &pb.FexitLoadInfo{FnName: "test_func"},
