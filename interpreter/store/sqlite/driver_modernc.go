@@ -1,4 +1,4 @@
-//go:build modernc
+//go:build !cgo_sqlite
 
 package sqlite
 
