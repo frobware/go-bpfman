@@ -139,6 +139,12 @@ func (m *Manager) AttachXDP(ctx context.Context, spec bpfman.XDPAttachSpec, opts
 		}
 	}
 
+	// ROLLBACK: If the store write fails, detach the link we just created.
+	var undo undoStack
+	undo.push(func() error {
+		return m.kernel.DetachLink(link.Managed.PinPath)
+	})
+
 	// COMPUTE: Build save actions from kernel result
 	saveActions := computeAttachXDPActions(
 		programKernelID,
@@ -153,6 +159,10 @@ func (m *Manager) AttachXDP(ctx context.Context, spec bpfman.XDPAttachSpec, opts
 
 	// EXECUTE: Save dispatcher update and link metadata
 	if err := m.executor.ExecuteAll(ctx, saveActions); err != nil {
+		m.logger.Error("persist failed, rolling back", "program_id", programKernelID, "error", err)
+		if rbErr := undo.rollback(m.logger); rbErr != nil {
+			return bpfman.LinkSummary{}, errors.Join(fmt.Errorf("save link metadata: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
+		}
 		return bpfman.LinkSummary{}, fmt.Errorf("save link metadata: %w", err)
 	}
 
@@ -246,12 +256,26 @@ func (m *Manager) createXDPDispatcher(ctx context.Context, nsid uint64, ifindex 
 		return dispatcher.State{}, err
 	}
 
+	// ROLLBACK: If the store write fails, undo kernel state.
+	// Order: remove prog pin first, then detach the dispatcher link.
+	var undo undoStack
+	undo.push(func() error {
+		return m.kernel.RemovePin(progPinPath)
+	})
+	undo.push(func() error {
+		return m.kernel.DetachLink(linkPinPath)
+	})
+
 	// COMPUTE: Build save action from kernel result
 	state := computeXDPDispatcherState(dispatcher.DispatcherTypeXDP, nsid, ifindex, revision, result)
 	saveAction := action.SaveDispatcher{State: state}
 
 	// EXECUTE: Save through executor
 	if err := m.executor.Execute(ctx, saveAction); err != nil {
+		m.logger.Error("persist failed, rolling back XDP dispatcher", "ifindex", ifindex, "error", err)
+		if rbErr := undo.rollback(m.logger); rbErr != nil {
+			return dispatcher.State{}, errors.Join(fmt.Errorf("save dispatcher: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
+		}
 		return dispatcher.State{}, fmt.Errorf("save dispatcher: %w", err)
 	}
 

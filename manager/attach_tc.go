@@ -159,6 +159,12 @@ func (m *Manager) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts b
 		}
 	}
 
+	// ROLLBACK: If the store write fails, detach the link we just created.
+	var undo undoStack
+	undo.push(func() error {
+		return m.kernel.DetachLink(link.Managed.PinPath)
+	})
+
 	// COMPUTE: Build save actions from kernel result
 	saveActions := computeAttachTCActions(
 		programKernelID,
@@ -176,6 +182,10 @@ func (m *Manager) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts b
 
 	// EXECUTE: Save dispatcher update and link metadata
 	if err := m.executor.ExecuteAll(ctx, saveActions); err != nil {
+		m.logger.Error("persist failed, rolling back", "program_id", programKernelID, "error", err)
+		if rbErr := undo.rollback(m.logger); rbErr != nil {
+			return bpfman.LinkSummary{}, errors.Join(fmt.Errorf("save link metadata: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
+		}
 		return bpfman.LinkSummary{}, fmt.Errorf("save link metadata: %w", err)
 	}
 
@@ -336,6 +346,12 @@ func (m *Manager) AttachTCX(ctx context.Context, spec bpfman.TCXAttachSpec, opts
 		Nsid:      nsid,
 	}
 
+	// ROLLBACK: If the store write fails, detach the link we just created.
+	var undo undoStack
+	undo.push(func() error {
+		return m.kernel.DetachLink(link.Managed.PinPath)
+	})
+
 	saveAction := action.SaveTCXLink{
 		Summary: summary,
 		Details: details,
@@ -343,6 +359,10 @@ func (m *Manager) AttachTCX(ctx context.Context, spec bpfman.TCXAttachSpec, opts
 
 	// EXECUTE: Save link metadata
 	if err := m.executor.Execute(ctx, saveAction); err != nil {
+		m.logger.Error("persist failed, rolling back", "program_id", programKernelID, "error", err)
+		if rbErr := undo.rollback(m.logger); rbErr != nil {
+			return bpfman.LinkSummary{}, errors.Join(fmt.Errorf("save TCX link metadata: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
+		}
 		return bpfman.LinkSummary{}, fmt.Errorf("save TCX link metadata: %w", err)
 	}
 
@@ -424,12 +444,26 @@ func (m *Manager) createTCDispatcher(ctx context.Context, nsid uint64, ifindex u
 		return dispatcher.State{}, err
 	}
 
+	// ROLLBACK: If the store write fails, undo kernel state.
+	// Order: remove prog pin first, then detach the TC filter.
+	var undo undoStack
+	undo.push(func() error {
+		return m.kernel.RemovePin(progPinPath)
+	})
+	undo.push(func() error {
+		return m.kernel.DetachTCFilter(int(ifindex), ifname, tcParentHandle(dispType), result.Priority, result.Handle)
+	})
+
 	// COMPUTE: Build save action from kernel result
 	state := computeTCDispatcherState(dispType, nsid, ifindex, revision, result)
 	saveAction := action.SaveDispatcher{State: state}
 
 	// EXECUTE: Save through executor
 	if err := m.executor.Execute(ctx, saveAction); err != nil {
+		m.logger.Error("persist failed, rolling back TC dispatcher", "ifname", ifname, "error", err)
+		if rbErr := undo.rollback(m.logger); rbErr != nil {
+			return dispatcher.State{}, errors.Join(fmt.Errorf("save TC dispatcher: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
+		}
 		return dispatcher.State{}, fmt.Errorf("save TC dispatcher: %w", err)
 	}
 

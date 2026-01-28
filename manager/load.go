@@ -45,6 +45,12 @@ func (m *Manager) Load(ctx context.Context, spec bpfman.LoadSpec, opts LoadOpts)
 		"prog_pin", loaded.Managed.PinPath,
 		"maps_dir", loaded.Managed.PinDir)
 
+	// ROLLBACK: If the store write fails, unpin program and maps.
+	var undo undoStack
+	undo.push(func() error {
+		return m.kernel.UnloadProgram(ctx, loaded.Managed.PinPath, loaded.Managed.PinDir)
+	})
+
 	// Phase 2: Persist metadata to DB (single transaction)
 	// Use the inferred type from the kernel layer (from ELF section name)
 	// rather than the user-specified type.
@@ -72,9 +78,7 @@ func (m *Manager) Load(ctx context.Context, spec bpfman.LoadSpec, opts LoadOpts)
 	})
 	if err != nil {
 		m.logger.Error("persist failed, rolling back", "kernel_id", loaded.Kernel.ID(), "error", err)
-		// Cleanup kernel state using the upstream layout
-		if rbErr := m.kernel.UnloadProgram(ctx, loaded.Managed.PinPath, loaded.Managed.PinDir); rbErr != nil {
-			m.logger.Error("rollback failed", "kernel_id", loaded.Kernel.ID(), "error", rbErr)
+		if rbErr := undo.rollback(m.logger); rbErr != nil {
 			return bpfman.ManagedProgram{}, errors.Join(
 				fmt.Errorf("persist metadata: %w", err),
 				fmt.Errorf("rollback failed: %w", rbErr),
