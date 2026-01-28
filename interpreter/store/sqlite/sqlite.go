@@ -256,9 +256,63 @@ func NewInMemory(logger *slog.Logger) (interpreter.Store, error) {
 	return s, nil
 }
 
-// Close closes the database connection.
+// Close closes all prepared statements and the database connection.
 func (s *sqliteStore) Close() error {
+	s.closeStatements()
 	return s.db.Close()
+}
+
+// closeStatements closes all prepared statements. Each close error
+// is silently ignored because the database is about to be closed.
+func (s *sqliteStore) closeStatements() {
+	stmts := []*sql.Stmt{
+		s.stmtGetProgram,
+		s.stmtSaveProgram,
+		s.stmtDeleteProgramMetadataIndex,
+		s.stmtInsertProgramMetadataIndex,
+		s.stmtDeleteProgram,
+		s.stmtListPrograms,
+		s.stmtFindProgramByMetadata,
+		s.stmtFindAllProgramsByMetadata,
+		s.stmtCountDependentPrograms,
+		s.stmtInsertTag,
+		s.stmtDeleteTags,
+		s.stmtGetUserMetadata,
+		s.stmtDeleteLink,
+		s.stmtGetLinkRegistry,
+		s.stmtListLinks,
+		s.stmtListLinksByProgram,
+		s.stmtInsertLinkRegistry,
+		s.stmtListTCXLinksByInterface,
+		s.stmtGetTracepointDetails,
+		s.stmtGetKprobeDetails,
+		s.stmtGetUprobeDetails,
+		s.stmtGetFentryDetails,
+		s.stmtGetFexitDetails,
+		s.stmtGetXDPDetails,
+		s.stmtGetTCDetails,
+		s.stmtGetTCXDetails,
+		s.stmtSaveTracepointDetails,
+		s.stmtSaveKprobeDetails,
+		s.stmtSaveUprobeDetails,
+		s.stmtSaveFentryDetails,
+		s.stmtSaveFexitDetails,
+		s.stmtSaveXDPDetails,
+		s.stmtSaveTCDetails,
+		s.stmtSaveTCXDetails,
+		s.stmtGetDispatcher,
+		s.stmtListDispatchers,
+		s.stmtSaveDispatcher,
+		s.stmtDeleteDispatcher,
+		s.stmtIncrementRevision,
+		s.stmtGetDispatcherByType,
+		s.stmtCountDispatcherLinks,
+	}
+	for _, stmt := range stmts {
+		if stmt != nil {
+			stmt.Close()
+		}
+	}
 }
 
 func (s *sqliteStore) migrate() error {
