@@ -19,10 +19,23 @@ func (s *sqliteStore) prepareProgramStatements() error {
 	}
 
 	const sqlSaveProgram = `
-		INSERT OR REPLACE INTO managed_programs
+		INSERT INTO managed_programs
 		(kernel_id, program_name, program_type, object_path, pin_path, attach_func,
 		 global_data, map_owner_id, map_pin_path, image_source, owner, description, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(kernel_id) DO UPDATE SET
+		  program_name = excluded.program_name,
+		  program_type = excluded.program_type,
+		  object_path = excluded.object_path,
+		  pin_path = excluded.pin_path,
+		  attach_func = excluded.attach_func,
+		  global_data = excluded.global_data,
+		  map_owner_id = excluded.map_owner_id,
+		  map_pin_path = excluded.map_pin_path,
+		  image_source = excluded.image_source,
+		  owner = excluded.owner,
+		  description = excluded.description,
+		  created_at = excluded.created_at`
 	if s.stmtSaveProgram, err = s.db.Prepare(sqlSaveProgram); err != nil {
 		return fmt.Errorf("prepare SaveProgram: %w", err)
 	}
