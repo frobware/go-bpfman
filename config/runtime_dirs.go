@@ -143,19 +143,9 @@ func uitoa(n uint32) string {
 // CSI directories are not created here; use EnsureCSIDirectories when
 // CSI functionality is enabled.
 func (d RuntimeDirs) EnsureDirectories() error {
-	// Create core directories (skip if already exists).
+	// Create core directories. MkdirAll is idempotent.
 	// CSI directories are created separately by EnsureCSIDirectories.
-	dirs := []string{
-		d.Base,
-		d.DB,
-		d.Sock,
-	}
-	for _, dir := range dirs {
-		if _, err := os.Stat(dir); err == nil {
-			continue
-		} else if !os.IsNotExist(err) {
-			return fmt.Errorf("failed to stat directory %s: %w", dir, err)
-		}
+	for _, dir := range []string{d.Base, d.DB, d.Sock} {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}
@@ -176,16 +166,7 @@ func (d RuntimeDirs) EnsureDirectories() error {
 //   - {base}/csi/
 //   - {base}/csi/fs/
 func (d RuntimeDirs) EnsureCSIDirectories() error {
-	dirs := []string{
-		d.CSI,
-		d.CSI_FS,
-	}
-	for _, dir := range dirs {
-		if _, err := os.Stat(dir); err == nil {
-			continue
-		} else if !os.IsNotExist(err) {
-			return fmt.Errorf("failed to stat directory %s: %w", dir, err)
-		}
+	for _, dir := range []string{d.CSI, d.CSI_FS} {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}
