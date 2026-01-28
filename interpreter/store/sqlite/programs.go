@@ -138,9 +138,8 @@ func (s *sqliteStore) scanProgram(row *sql.Row) (bpfman.Program, error) {
 
 // getUserMetadata retrieves user metadata for a program from the metadata index.
 func (s *sqliteStore) getUserMetadata(ctx context.Context, kernelID uint32) (map[string]string, error) {
-	// We need a separate query for this since we don't have a prepared statement
 	start := time.Now()
-	rows, err := s.conn.QueryContext(ctx, "SELECT key, value FROM program_metadata_index WHERE kernel_id = ?", kernelID)
+	rows, err := s.stmtGetUserMetadata.QueryContext(ctx, kernelID)
 	if err != nil {
 		s.logger.Debug("sql", "stmt", "GetUserMetadata", "args", []any{kernelID}, "duration_ms", msec(time.Since(start)), "error", err)
 		return nil, err

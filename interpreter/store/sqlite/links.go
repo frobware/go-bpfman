@@ -99,13 +99,7 @@ func (s *sqliteStore) ListLinksByProgram(ctx context.Context, programKernelID ui
 // Used for computing attach order based on priority.
 func (s *sqliteStore) ListTCXLinksByInterface(ctx context.Context, nsid uint64, ifindex uint32, direction string) ([]bpfman.TCXLinkInfo, error) {
 	start := time.Now()
-	const query = `
-		SELECT lr.kernel_link_id, lr.kernel_program_id, td.priority
-		FROM link_registry lr
-		JOIN tcx_link_details td ON lr.kernel_link_id = td.kernel_link_id
-		WHERE td.nsid = ? AND td.ifindex = ? AND td.direction = ?
-		ORDER BY td.priority ASC`
-	rows, err := s.conn.QueryContext(ctx, query, nsid, ifindex, direction)
+	rows, err := s.stmtListTCXLinksByInterface.QueryContext(ctx, nsid, ifindex, direction)
 	if err != nil {
 		s.logger.Debug("sql", "stmt", "ListTCXLinksByInterface", "args", []any{nsid, ifindex, direction}, "duration_ms", msec(time.Since(start)), "error", err)
 		return nil, err

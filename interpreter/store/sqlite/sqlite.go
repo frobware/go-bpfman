@@ -155,8 +155,9 @@ type sqliteStore struct {
 	stmtCountDependentPrograms     *sql.Stmt
 
 	// Prepared statements for program tags
-	stmtInsertTag  *sql.Stmt
-	stmtDeleteTags *sql.Stmt
+	stmtInsertTag       *sql.Stmt
+	stmtDeleteTags      *sql.Stmt
+	stmtGetUserMetadata *sql.Stmt
 
 	// Prepared statements for link registry operations
 	stmtDeleteLink         *sql.Stmt
@@ -164,6 +165,9 @@ type sqliteStore struct {
 	stmtListLinks          *sql.Stmt
 	stmtListLinksByProgram *sql.Stmt
 	stmtInsertLinkRegistry *sql.Stmt
+
+	// Prepared statements for TCX link queries
+	stmtListTCXLinksByInterface *sql.Stmt
 
 	// Prepared statements for link detail queries
 	stmtGetTracepointDetails *sql.Stmt
@@ -319,14 +323,16 @@ func (s *sqliteStore) RunInTransaction(ctx context.Context, fn func(interpreter.
 		stmtFindAllProgramsByMetadata:  tx.StmtContext(ctx, s.stmtFindAllProgramsByMetadata),
 		stmtCountDependentPrograms:     tx.StmtContext(ctx, s.stmtCountDependentPrograms),
 		// Tag statements
-		stmtInsertTag:  tx.StmtContext(ctx, s.stmtInsertTag),
-		stmtDeleteTags: tx.StmtContext(ctx, s.stmtDeleteTags),
+		stmtInsertTag:       tx.StmtContext(ctx, s.stmtInsertTag),
+		stmtDeleteTags:      tx.StmtContext(ctx, s.stmtDeleteTags),
+		stmtGetUserMetadata: tx.StmtContext(ctx, s.stmtGetUserMetadata),
 		// Link registry statements
 		stmtDeleteLink:         tx.StmtContext(ctx, s.stmtDeleteLink),
 		stmtGetLinkRegistry:    tx.StmtContext(ctx, s.stmtGetLinkRegistry),
 		stmtListLinks:          tx.StmtContext(ctx, s.stmtListLinks),
 		stmtListLinksByProgram: tx.StmtContext(ctx, s.stmtListLinksByProgram),
-		stmtInsertLinkRegistry: tx.StmtContext(ctx, s.stmtInsertLinkRegistry),
+		stmtInsertLinkRegistry:      tx.StmtContext(ctx, s.stmtInsertLinkRegistry),
+		stmtListTCXLinksByInterface: tx.StmtContext(ctx, s.stmtListTCXLinksByInterface),
 		// Link detail get statements
 		stmtGetTracepointDetails: tx.StmtContext(ctx, s.stmtGetTracepointDetails),
 		stmtGetKprobeDetails:     tx.StmtContext(ctx, s.stmtGetKprobeDetails),

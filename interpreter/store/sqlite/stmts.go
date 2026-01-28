@@ -109,6 +109,11 @@ func (s *sqliteStore) prepareProgramStatements() error {
 		return fmt.Errorf("prepare DeleteTags: %w", err)
 	}
 
+	const sqlGetUserMetadata = "SELECT key, value FROM program_metadata_index WHERE kernel_id = ?"
+	if s.stmtGetUserMetadata, err = s.db.Prepare(sqlGetUserMetadata); err != nil {
+		return fmt.Errorf("prepare GetUserMetadata: %w", err)
+	}
+
 	return nil
 }
 
@@ -147,6 +152,16 @@ func (s *sqliteStore) prepareLinkRegistryStatements() error {
 		VALUES (?, ?, ?, ?, ?)`
 	if s.stmtInsertLinkRegistry, err = s.db.Prepare(sqlInsertLinkRegistry); err != nil {
 		return fmt.Errorf("prepare InsertLinkRegistry: %w", err)
+	}
+
+	const sqlListTCXLinksByInterface = `
+		SELECT lr.kernel_link_id, lr.kernel_program_id, td.priority
+		FROM link_registry lr
+		JOIN tcx_link_details td ON lr.kernel_link_id = td.kernel_link_id
+		WHERE td.nsid = ? AND td.ifindex = ? AND td.direction = ?
+		ORDER BY td.priority ASC`
+	if s.stmtListTCXLinksByInterface, err = s.db.Prepare(sqlListTCXLinksByInterface); err != nil {
+		return fmt.Errorf("prepare ListTCXLinksByInterface: %w", err)
 	}
 
 	return nil
