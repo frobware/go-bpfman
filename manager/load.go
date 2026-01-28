@@ -115,6 +115,11 @@ func (m *Manager) Unload(ctx context.Context, kernelID uint32) error {
 		return fmt.Errorf("list links for program %d: %w", kernelID, err)
 	}
 
+	// FETCH: Collect dispatcher keys for any TC/XDP links before
+	// the unload actions delete them from the store. We need these
+	// to check whether the dispatchers are now empty afterwards.
+	dispatcherKeys := m.collectDispatcherKeys(ctx, links)
+
 	// COMPUTE: Build paths from convention (kernel ID + bpffs root)
 	progPinPath := m.dirs.ProgPinPath(kernelID)
 	mapsDir := filepath.Join(m.dirs.FS, "maps", fmt.Sprintf("%d", kernelID))
@@ -129,6 +134,9 @@ func (m *Manager) Unload(ctx context.Context, kernelID uint32) error {
 	if err := m.executor.ExecuteAll(ctx, actions); err != nil {
 		return fmt.Errorf("execute unload actions: %w", err)
 	}
+
+	// Clean up any dispatchers left empty by the link removal.
+	m.cleanupEmptyDispatchers(ctx, dispatcherKeys)
 
 	m.logger.Info("unloaded program", "kernel_id", kernelID)
 	return nil

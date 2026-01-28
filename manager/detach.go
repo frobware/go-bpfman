@@ -61,26 +61,8 @@ func (m *Manager) Detach(ctx context.Context, kernelLinkID uint32) error {
 	// Phase 2: If this was a dispatcher-based link, check whether the
 	// dispatcher has any remaining extensions. Clean up if empty.
 	if dispState != nil {
-		remaining, err := m.store.CountDispatcherLinks(ctx, dispState.KernelID)
-		if err != nil {
-			m.logger.Warn("failed to count dispatcher links", "error", err)
-		} else if remaining == 0 {
-			// For TC dispatchers, query the kernel for the filter
-			// handle since it is no longer stored.
-			var tcHandle uint32
-			if dispState.Type == dispatcher.DispatcherTypeTCIngress || dispState.Type == dispatcher.DispatcherTypeTCEgress {
-				parent := tcParentHandle(dispState.Type)
-				handle, err := m.kernel.FindTCFilterHandle(int(dispState.Ifindex), parent, dispState.Priority)
-				if err != nil {
-					m.logger.Warn("failed to find TC filter handle", "error", err)
-				} else {
-					tcHandle = handle
-				}
-			}
-			cleanupActions := computeDispatcherCleanupActions(m.dirs.FS, *dispState, tcHandle)
-			if err := m.executor.ExecuteAll(ctx, cleanupActions); err != nil {
-				return fmt.Errorf("execute dispatcher cleanup actions: %w", err)
-			}
+		if err := m.cleanupEmptyDispatcher(ctx, *dispState); err != nil {
+			return err
 		}
 	}
 
@@ -133,6 +115,89 @@ func tcParentHandle(dispType dispatcher.DispatcherType) uint32 {
 		return netlink.HANDLE_MIN_EGRESS
 	default:
 		return 0
+	}
+}
+
+// cleanupEmptyDispatcher checks whether a dispatcher has any remaining
+// extension links and, if not, removes it from both the kernel and the
+// store. This is called after link removal to eagerly reclaim
+// dispatchers that are no longer needed.
+func (m *Manager) cleanupEmptyDispatcher(ctx context.Context, state dispatcher.State) error {
+	remaining, err := m.store.CountDispatcherLinks(ctx, state.KernelID)
+	if err != nil {
+		m.logger.Warn("failed to count dispatcher links", "error", err)
+		return nil
+	}
+	if remaining > 0 {
+		return nil
+	}
+
+	// For TC dispatchers, query the kernel for the filter handle
+	// since it is no longer stored.
+	var tcHandle uint32
+	if state.Type == dispatcher.DispatcherTypeTCIngress || state.Type == dispatcher.DispatcherTypeTCEgress {
+		parent := tcParentHandle(state.Type)
+		handle, err := m.kernel.FindTCFilterHandle(int(state.Ifindex), parent, state.Priority)
+		if err != nil {
+			m.logger.Warn("failed to find TC filter handle", "error", err)
+		} else {
+			tcHandle = handle
+		}
+	}
+
+	cleanupActions := computeDispatcherCleanupActions(m.dirs.FS, state, tcHandle)
+	if err := m.executor.ExecuteAll(ctx, cleanupActions); err != nil {
+		return fmt.Errorf("execute dispatcher cleanup actions: %w", err)
+	}
+	return nil
+}
+
+// collectDispatcherKeys examines links for dispatcher associations and
+// returns a deduplicated set of dispatcher keys. This must be called
+// before the links are deleted from the store.
+func (m *Manager) collectDispatcherKeys(ctx context.Context, links []bpfman.LinkSummary) map[dispatcher.Key]struct{} {
+	keys := make(map[dispatcher.Key]struct{})
+	for _, link := range links {
+		if link.LinkType != bpfman.LinkTypeTC && link.LinkType != bpfman.LinkTypeXDP {
+			continue
+		}
+		_, details, err := m.store.GetLink(ctx, link.KernelLinkID)
+		if err != nil {
+			m.logger.Warn("failed to get link details for dispatcher cleanup",
+				"kernel_link_id", link.KernelLinkID, "error", err)
+			continue
+		}
+		dispType, nsid, ifindex, err := extractDispatcherKey(details)
+		if err != nil {
+			m.logger.Warn("failed to extract dispatcher key",
+				"kernel_link_id", link.KernelLinkID, "error", err)
+			continue
+		}
+		if dispType != "" {
+			keys[dispatcher.Key{Type: dispType, Nsid: nsid, Ifindex: ifindex}] = struct{}{}
+		}
+	}
+	return keys
+}
+
+// cleanupEmptyDispatchers checks each dispatcher in the set and
+// removes any that no longer have extension links. Errors are logged
+// but do not prevent cleanup of remaining dispatchers.
+func (m *Manager) cleanupEmptyDispatchers(ctx context.Context, dispatchers map[dispatcher.Key]struct{}) {
+	for key := range dispatchers {
+		state, err := m.store.GetDispatcher(ctx, string(key.Type), key.Nsid, key.Ifindex)
+		if err != nil {
+			// Already gone (e.g., cleaned up by a concurrent
+			// Detach call or GC). Nothing to do.
+			continue
+		}
+		if err := m.cleanupEmptyDispatcher(ctx, state); err != nil {
+			m.logger.Warn("dispatcher cleanup failed",
+				"type", key.Type,
+				"nsid", key.Nsid,
+				"ifindex", key.Ifindex,
+				"error", err)
+		}
 	}
 }
 

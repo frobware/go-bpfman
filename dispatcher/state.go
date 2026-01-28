@@ -1,5 +1,13 @@
 package dispatcher
 
+// Key uniquely identifies a dispatcher by its type, network namespace,
+// and interface index.
+type Key struct {
+	Type    DispatcherType
+	Nsid    uint64
+	Ifindex uint32
+}
+
 // State represents the persistent state of a dispatcher.
 // A dispatcher manages multi-program chaining for XDP or TC attachments.
 type State struct {
