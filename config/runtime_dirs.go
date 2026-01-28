@@ -107,10 +107,10 @@ func (d RuntimeDirs) MapPinDir(programID uint32) string {
 	return filepath.Join(d.FS_MAPS, uitoa(programID))
 }
 
-// LinkPinPath returns the pin path for a link.
-// Format: {base}/fs/links/{link_id}
-func (d RuntimeDirs) LinkPinPath(linkID uint32) string {
-	return filepath.Join(d.FS_LINKS, uitoa(linkID))
+// LinkPinDir returns the directory for a program's link pins.
+// Format: {base}/fs/links/{program_id}/
+func (d RuntimeDirs) LinkPinDir(programID uint32) string {
+	return filepath.Join(d.FS_LINKS, uitoa(programID))
 }
 
 // uitoa converts uint32 to string.

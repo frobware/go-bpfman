@@ -31,7 +31,7 @@ func (m *Manager) AttachTracepoint(ctx context.Context, spec bpfman.TracepointAt
 	// COMPUTE: Auto-generate link pin path if not provided
 	if linkPinPath == "" {
 		linkName := fmt.Sprintf("%s_%s", group, name)
-		linksDir := filepath.Join(m.dirs.FS, "links", fmt.Sprintf("%d", programKernelID))
+		linksDir := m.dirs.LinkPinDir(programKernelID)
 		linkPinPath = filepath.Join(linksDir, linkName)
 	}
 
@@ -104,7 +104,7 @@ func (m *Manager) AttachKprobe(ctx context.Context, spec bpfman.KprobeAttachSpec
 		if retprobe {
 			linkName = "ret_" + linkName
 		}
-		linksDir := filepath.Join(m.dirs.FS, "links", fmt.Sprintf("%d", programKernelID))
+		linksDir := m.dirs.LinkPinDir(programKernelID)
 		linkPinPath = filepath.Join(linksDir, linkName)
 	}
 
@@ -189,7 +189,7 @@ func (m *Manager) AttachUprobe(ctx context.Context, spec bpfman.UprobeAttachSpec
 		if retprobe {
 			linkName = "ret_" + linkName
 		}
-		linksDir := filepath.Join(m.dirs.FS, "links", fmt.Sprintf("%d", programKernelID))
+		linksDir := m.dirs.LinkPinDir(programKernelID)
 		linkPinPath = filepath.Join(linksDir, linkName)
 	}
 
@@ -281,7 +281,7 @@ func (m *Manager) AttachFentry(ctx context.Context, spec bpfman.FentryAttachSpec
 	// COMPUTE: Auto-generate link pin path if not provided
 	if linkPinPath == "" {
 		linkName := "fentry_" + fnName
-		linksDir := filepath.Join(m.dirs.FS, "links", fmt.Sprintf("%d", programKernelID))
+		linksDir := m.dirs.LinkPinDir(programKernelID)
 		linkPinPath = filepath.Join(linksDir, linkName)
 	}
 
@@ -350,7 +350,7 @@ func (m *Manager) AttachFexit(ctx context.Context, spec bpfman.FexitAttachSpec, 
 	// COMPUTE: Auto-generate link pin path if not provided
 	if linkPinPath == "" {
 		linkName := "fexit_" + fnName
-		linksDir := filepath.Join(m.dirs.FS, "links", fmt.Sprintf("%d", programKernelID))
+		linksDir := m.dirs.LinkPinDir(programKernelID)
 		linkPinPath = filepath.Join(linksDir, linkName)
 	}
 

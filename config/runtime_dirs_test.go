@@ -91,7 +91,7 @@ func TestRuntimeDirs_Paths(t *testing.T) {
 		{"ProgPinPath(42)", d.ProgPinPath(42), "/run/bpfman/fs/prog_42"},
 		{"ProgPinPath(0)", d.ProgPinPath(0), "/run/bpfman/fs/prog_0"},
 		{"MapPinDir(123)", d.MapPinDir(123), "/run/bpfman/fs/maps/123"},
-		{"LinkPinPath(456)", d.LinkPinPath(456), "/run/bpfman/fs/links/456"},
+		{"LinkPinDir(456)", d.LinkPinDir(456), "/run/bpfman/fs/links/456"},
 	}
 
 	for _, tt := range tests {
