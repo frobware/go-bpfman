@@ -198,14 +198,14 @@ func (s *sqliteStore) prepareLinkDetailStatements() error {
 	}
 
 	const sqlGetXDPDetails = `
-		SELECT interface, ifindex, priority, position, proceed_on, netns, nsid, dispatcher_id, revision
+		SELECT interface, ifindex, priority, position, proceed_on, netns, nsid, dispatcher_kernel_id, revision
 		FROM xdp_link_details WHERE kernel_link_id = ?`
 	if s.stmtGetXDPDetails, err = s.db.Prepare(sqlGetXDPDetails); err != nil {
 		return fmt.Errorf("prepare GetXDPDetails: %w", err)
 	}
 
 	const sqlGetTCDetails = `
-		SELECT interface, ifindex, direction, priority, position, proceed_on, netns, nsid, dispatcher_id, revision
+		SELECT interface, ifindex, direction, priority, position, proceed_on, netns, nsid, dispatcher_kernel_id, revision
 		FROM tc_link_details WHERE kernel_link_id = ?`
 	if s.stmtGetTCDetails, err = s.db.Prepare(sqlGetTCDetails); err != nil {
 		return fmt.Errorf("prepare GetTCDetails: %w", err)
@@ -255,14 +255,14 @@ func (s *sqliteStore) prepareLinkDetailStatements() error {
 	}
 
 	const sqlSaveXDPDetails = `
-		INSERT INTO xdp_link_details (kernel_link_id, interface, ifindex, priority, position, proceed_on, netns, nsid, dispatcher_id, revision)
+		INSERT INTO xdp_link_details (kernel_link_id, interface, ifindex, priority, position, proceed_on, netns, nsid, dispatcher_kernel_id, revision)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	if s.stmtSaveXDPDetails, err = s.db.Prepare(sqlSaveXDPDetails); err != nil {
 		return fmt.Errorf("prepare SaveXDPDetails: %w", err)
 	}
 
 	const sqlSaveTCDetails = `
-		INSERT INTO tc_link_details (kernel_link_id, interface, ifindex, direction, priority, position, proceed_on, netns, nsid, dispatcher_id, revision)
+		INSERT INTO tc_link_details (kernel_link_id, interface, ifindex, direction, priority, position, proceed_on, netns, nsid, dispatcher_kernel_id, revision)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	if s.stmtSaveTCDetails, err = s.db.Prepare(sqlSaveTCDetails); err != nil {
 		return fmt.Errorf("prepare SaveTCDetails: %w", err)
@@ -330,8 +330,8 @@ func (s *sqliteStore) prepareDispatcherStatements() error {
 
 	const sqlCountDispatcherLinks = `
 		SELECT
-			(SELECT COUNT(*) FROM tc_link_details WHERE dispatcher_id = ?) +
-			(SELECT COUNT(*) FROM xdp_link_details WHERE dispatcher_id = ?)`
+			(SELECT COUNT(*) FROM tc_link_details WHERE dispatcher_kernel_id = ?) +
+			(SELECT COUNT(*) FROM xdp_link_details WHERE dispatcher_kernel_id = ?)`
 	if s.stmtCountDispatcherLinks, err = s.db.Prepare(sqlCountDispatcherLinks); err != nil {
 		return fmt.Errorf("prepare CountDispatcherLinks: %w", err)
 	}

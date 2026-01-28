@@ -159,7 +159,7 @@ CREATE TABLE IF NOT EXISTS xdp_link_details (
     proceed_on TEXT NOT NULL CHECK (json_valid(proceed_on)),
     netns TEXT,
     nsid INTEGER NOT NULL,
-    dispatcher_id INTEGER NOT NULL,
+    dispatcher_kernel_id INTEGER NOT NULL,
     revision INTEGER NOT NULL,
 
     FOREIGN KEY (kernel_link_id)
@@ -182,7 +182,7 @@ CREATE TABLE IF NOT EXISTS tc_link_details (
     proceed_on TEXT NOT NULL CHECK (json_valid(proceed_on)),
     netns TEXT,
     nsid INTEGER NOT NULL,
-    dispatcher_id INTEGER NOT NULL,
+    dispatcher_kernel_id INTEGER NOT NULL,
     revision INTEGER NOT NULL,
 
     FOREIGN KEY (kernel_link_id)
