@@ -105,7 +105,7 @@ func (m *Manager) Unload(ctx context.Context, kernelID uint32) error {
 	}
 
 	// COMPUTE: Build paths from convention (kernel ID + bpffs root)
-	progPinPath := filepath.Join(m.dirs.FS, fmt.Sprintf("prog_%d", kernelID))
+	progPinPath := m.dirs.ProgPinPath(kernelID)
 	mapsDir := filepath.Join(m.dirs.FS, "maps", fmt.Sprintf("%d", kernelID))
 	linksDir := m.dirs.LinkPinDir(kernelID)
 

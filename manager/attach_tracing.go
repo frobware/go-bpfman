@@ -26,7 +26,7 @@ func (m *Manager) AttachTracepoint(ctx context.Context, spec bpfman.TracepointAt
 	}
 
 	// COMPUTE: Construct paths from convention (kernel ID + bpffs root)
-	progPinPath := filepath.Join(m.dirs.FS, fmt.Sprintf("prog_%d", programKernelID))
+	progPinPath := m.dirs.ProgPinPath(programKernelID)
 
 	// COMPUTE: Auto-generate link pin path if not provided
 	if linkPinPath == "" {
@@ -96,7 +96,7 @@ func (m *Manager) AttachKprobe(ctx context.Context, spec bpfman.KprobeAttachSpec
 	retprobe := prog.ProgramType == bpfman.ProgramTypeKretprobe
 
 	// COMPUTE: Construct paths from convention (kernel ID + bpffs root)
-	progPinPath := filepath.Join(m.dirs.FS, fmt.Sprintf("prog_%d", programKernelID))
+	progPinPath := m.dirs.ProgPinPath(programKernelID)
 
 	// COMPUTE: Auto-generate link pin path if not provided
 	if linkPinPath == "" {
@@ -181,7 +181,7 @@ func (m *Manager) AttachUprobe(ctx context.Context, spec bpfman.UprobeAttachSpec
 	retprobe := prog.ProgramType == bpfman.ProgramTypeUretprobe
 
 	// COMPUTE: Construct paths from convention (kernel ID + bpffs root)
-	progPinPath := filepath.Join(m.dirs.FS, fmt.Sprintf("prog_%d", programKernelID))
+	progPinPath := m.dirs.ProgPinPath(programKernelID)
 
 	// COMPUTE: Auto-generate link pin path if not provided
 	if linkPinPath == "" {
@@ -276,7 +276,7 @@ func (m *Manager) AttachFentry(ctx context.Context, spec bpfman.FentryAttachSpec
 	}
 
 	// COMPUTE: Construct paths from convention (kernel ID + bpffs root)
-	progPinPath := filepath.Join(m.dirs.FS, fmt.Sprintf("prog_%d", programKernelID))
+	progPinPath := m.dirs.ProgPinPath(programKernelID)
 
 	// COMPUTE: Auto-generate link pin path if not provided
 	if linkPinPath == "" {
@@ -345,7 +345,7 @@ func (m *Manager) AttachFexit(ctx context.Context, spec bpfman.FexitAttachSpec, 
 	}
 
 	// COMPUTE: Construct paths from convention (kernel ID + bpffs root)
-	progPinPath := filepath.Join(m.dirs.FS, fmt.Sprintf("prog_%d", programKernelID))
+	progPinPath := m.dirs.ProgPinPath(programKernelID)
 
 	// COMPUTE: Auto-generate link pin path if not provided
 	if linkPinPath == "" {
