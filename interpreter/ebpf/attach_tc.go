@@ -1,6 +1,7 @@
 package ebpf
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -37,7 +38,7 @@ const tcDispatcherPriority = 50
 //   - numProgs: Number of extension slots to enable
 //   - proceedOn: Bitmask of TC return codes that trigger continuation
 //   - netnsPath: if non-empty, attachment is performed in that network namespace
-func (k *kernelAdapter) AttachTCDispatcherWithPaths(ifindex int, ifname, progPinPath, direction string, numProgs int, proceedOn uint32, netnsPath string) (*interpreter.TCDispatcherResult, error) {
+func (k *kernelAdapter) AttachTCDispatcherWithPaths(ctx context.Context, ifindex int, ifname, progPinPath, direction string, numProgs int, proceedOn uint32, netnsPath string) (*interpreter.TCDispatcherResult, error) {
 	// Configure the TC dispatcher
 	// TC_DISPATCHER_RETVAL (30) is returned by empty slots - we must include
 	// this bit so the dispatcher continues past empty slots to the final TC_ACT_OK.
@@ -165,7 +166,7 @@ func (k *kernelAdapter) AttachTCDispatcherWithPaths(ifindex int, ifname, progPin
 
 // FindTCFilterHandle looks up the kernel-assigned handle for a TC BPF
 // filter by listing filters on the given parent and matching priority.
-func (k *kernelAdapter) FindTCFilterHandle(ifindex int, parent uint32, priority uint16) (uint32, error) {
+func (k *kernelAdapter) FindTCFilterHandle(ctx context.Context, ifindex int, parent uint32, priority uint16) (uint32, error) {
 	return readBackTCFilterHandle(ifindex, parent, priority)
 }
 
@@ -193,7 +194,7 @@ func readBackTCFilterHandle(ifindex int, parent uint32, priority uint16) (uint32
 }
 
 // DetachTCFilter removes a legacy TC BPF filter via netlink.
-func (k *kernelAdapter) DetachTCFilter(ifindex int, ifname string, parent uint32, priority uint16, handle uint32) error {
+func (k *kernelAdapter) DetachTCFilter(ctx context.Context, ifindex int, ifname string, parent uint32, priority uint16, handle uint32) error {
 	filter := &netlink.BpfFilter{
 		FilterAttrs: netlink.FilterAttrs{
 			LinkIndex: ifindex,
@@ -222,7 +223,7 @@ func (k *kernelAdapter) DetachTCFilter(ifindex int, ifname string, parent uint32
 // The mapPinDir parameter specifies the directory containing the program's
 // pinned maps. These maps are loaded and passed as MapReplacements so the
 // extension program shares the same maps as the original loaded program.
-func (k *kernelAdapter) AttachTCExtension(dispatcherPinPath, objectPath, programName string, position int, linkPinPath, mapPinDir string) (bpfman.ManagedLink, error) {
+func (k *kernelAdapter) AttachTCExtension(ctx context.Context, dispatcherPinPath, objectPath, programName string, position int, linkPinPath, mapPinDir string) (bpfman.ManagedLink, error) {
 	// Load the pinned dispatcher to use as attach target
 	dispatcherProg, err := ebpf.LoadPinnedProgram(dispatcherPinPath, nil)
 	if err != nil {
@@ -341,7 +342,7 @@ func (k *kernelAdapter) AttachTCExtension(dispatcherPinPath, objectPath, program
 // AttachTCX attaches a loaded program directly to an interface using TCX link.
 // Unlike TC which uses dispatchers, TCX uses native kernel multi-program support.
 // The order parameter specifies where to insert the program in the TCX chain.
-func (k *kernelAdapter) AttachTCX(ifindex int, direction, programPinPath, linkPinPath, netnsPath string, order bpfman.TCXAttachOrder) (bpfman.ManagedLink, error) {
+func (k *kernelAdapter) AttachTCX(ctx context.Context, ifindex int, direction, programPinPath, linkPinPath, netnsPath string, order bpfman.TCXAttachOrder) (bpfman.ManagedLink, error) {
 	// Load the pinned program
 	prog, err := ebpf.LoadPinnedProgram(programPinPath, nil)
 	if err != nil {

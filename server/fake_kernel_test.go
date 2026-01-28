@@ -389,15 +389,15 @@ func (f *fakeKernel) Links(_ context.Context) iter.Seq2[kernel.Link, error] {
 	}
 }
 
-func (f *fakeKernel) ListPinDir(pinDir string, includeMaps bool) (*kernel.PinDirContents, error) {
+func (f *fakeKernel) ListPinDir(_ context.Context, pinDir string, includeMaps bool) (*kernel.PinDirContents, error) {
 	return &kernel.PinDirContents{}, nil
 }
 
-func (f *fakeKernel) GetPinned(pinPath string) (*kernel.PinnedProgram, error) {
+func (f *fakeKernel) GetPinned(_ context.Context, pinPath string) (*kernel.PinnedProgram, error) {
 	return nil, nil
 }
 
-func (f *fakeKernel) AttachTracepoint(progPinPath, group, name, linkPinPath string) (bpfman.ManagedLink, error) {
+func (f *fakeKernel) AttachTracepoint(_ context.Context, progPinPath, group, name, linkPinPath string) (bpfman.ManagedLink, error) {
 	// Check error injection
 	f.mu.Lock()
 	failErr := f.failOnAttach["tracepoint"]
@@ -428,7 +428,7 @@ func (f *fakeKernel) AttachTracepoint(progPinPath, group, name, linkPinPath stri
 	}, nil
 }
 
-func (f *fakeKernel) AttachXDP(progPinPath string, ifindex int, linkPinPath string) (bpfman.ManagedLink, error) {
+func (f *fakeKernel) AttachXDP(_ context.Context, progPinPath string, ifindex int, linkPinPath string) (bpfman.ManagedLink, error) {
 	id := f.nextID.Add(1)
 	// Store for DetachLink lookup
 	f.links[id] = &bpfman.AttachedLink{
@@ -449,7 +449,7 @@ func (f *fakeKernel) AttachXDP(progPinPath string, ifindex int, linkPinPath stri
 	}, nil
 }
 
-func (f *fakeKernel) AttachKprobe(progPinPath, fnName string, offset uint64, retprobe bool, linkPinPath string) (bpfman.ManagedLink, error) {
+func (f *fakeKernel) AttachKprobe(_ context.Context, progPinPath, fnName string, offset uint64, retprobe bool, linkPinPath string) (bpfman.ManagedLink, error) {
 	id := f.nextID.Add(1)
 	linkType := bpfman.LinkTypeKprobe
 	kernelLinkType := "kprobe"
@@ -476,7 +476,7 @@ func (f *fakeKernel) AttachKprobe(progPinPath, fnName string, offset uint64, ret
 	}, nil
 }
 
-func (f *fakeKernel) AttachUprobe(progPinPath, target, fnName string, offset uint64, retprobe bool, linkPinPath string, containerPid int32) (bpfman.ManagedLink, error) {
+func (f *fakeKernel) AttachUprobe(_ context.Context, progPinPath, target, fnName string, offset uint64, retprobe bool, linkPinPath string, containerPid int32) (bpfman.ManagedLink, error) {
 	id := f.nextID.Add(1)
 	linkType := bpfman.LinkTypeUprobe
 	kernelLinkType := "uprobe"
@@ -503,7 +503,7 @@ func (f *fakeKernel) AttachUprobe(progPinPath, target, fnName string, offset uin
 	}, nil
 }
 
-func (f *fakeKernel) AttachFentry(progPinPath, fnName, linkPinPath string) (bpfman.ManagedLink, error) {
+func (f *fakeKernel) AttachFentry(_ context.Context, progPinPath, fnName, linkPinPath string) (bpfman.ManagedLink, error) {
 	id := f.nextID.Add(1)
 	// Store for DetachLink lookup
 	f.links[id] = &bpfman.AttachedLink{
@@ -524,7 +524,7 @@ func (f *fakeKernel) AttachFentry(progPinPath, fnName, linkPinPath string) (bpfm
 	}, nil
 }
 
-func (f *fakeKernel) AttachFexit(progPinPath, fnName, linkPinPath string) (bpfman.ManagedLink, error) {
+func (f *fakeKernel) AttachFexit(_ context.Context, progPinPath, fnName, linkPinPath string) (bpfman.ManagedLink, error) {
 	id := f.nextID.Add(1)
 	// Store for DetachLink lookup
 	f.links[id] = &bpfman.AttachedLink{
@@ -545,7 +545,7 @@ func (f *fakeKernel) AttachFexit(progPinPath, fnName, linkPinPath string) (bpfma
 	}, nil
 }
 
-func (f *fakeKernel) DetachLink(linkPinPath string) error {
+func (f *fakeKernel) DetachLink(_ context.Context, linkPinPath string) error {
 	for id, link := range f.links {
 		if link.PinPath == linkPinPath {
 			// Check error injection
@@ -566,7 +566,7 @@ func (f *fakeKernel) DetachLink(linkPinPath string) error {
 	return nil
 }
 
-func (f *fakeKernel) AttachXDPDispatcher(ifindex int, pinDir string, numProgs int, proceedOn uint32) (*interpreter.XDPDispatcherResult, error) {
+func (f *fakeKernel) AttachXDPDispatcher(_ context.Context, ifindex int, pinDir string, numProgs int, proceedOn uint32) (*interpreter.XDPDispatcherResult, error) {
 	dispatcherID := f.nextID.Add(1)
 	linkID := f.nextID.Add(1)
 	return &interpreter.XDPDispatcherResult{
@@ -577,7 +577,7 @@ func (f *fakeKernel) AttachXDPDispatcher(ifindex int, pinDir string, numProgs in
 	}, nil
 }
 
-func (f *fakeKernel) AttachXDPDispatcherWithPaths(ifindex int, progPinPath, linkPinPath string, numProgs int, proceedOn uint32, netns string) (*interpreter.XDPDispatcherResult, error) {
+func (f *fakeKernel) AttachXDPDispatcherWithPaths(_ context.Context, ifindex int, progPinPath, linkPinPath string, numProgs int, proceedOn uint32, netns string) (*interpreter.XDPDispatcherResult, error) {
 	dispatcherID := f.nextID.Add(1)
 	linkID := f.nextID.Add(1)
 	// Add dispatcher program to programs map so GC sees it as valid
@@ -595,7 +595,7 @@ func (f *fakeKernel) AttachXDPDispatcherWithPaths(ifindex int, progPinPath, link
 	}, nil
 }
 
-func (f *fakeKernel) AttachXDPExtension(dispatcherPinPath, objectPath, programName string, position int, linkPinPath, mapPinDir string) (bpfman.ManagedLink, error) {
+func (f *fakeKernel) AttachXDPExtension(_ context.Context, dispatcherPinPath, objectPath, programName string, position int, linkPinPath, mapPinDir string) (bpfman.ManagedLink, error) {
 	id := f.nextID.Add(1)
 	// Store for DetachLink lookup
 	f.links[id] = &bpfman.AttachedLink{
@@ -618,7 +618,7 @@ func (f *fakeKernel) AttachXDPExtension(dispatcherPinPath, objectPath, programNa
 	}, nil
 }
 
-func (f *fakeKernel) AttachTCDispatcherWithPaths(ifindex int, ifname, progPinPath, direction string, numProgs int, proceedOn uint32, netns string) (*interpreter.TCDispatcherResult, error) {
+func (f *fakeKernel) AttachTCDispatcherWithPaths(_ context.Context, ifindex int, ifname, progPinPath, direction string, numProgs int, proceedOn uint32, netns string) (*interpreter.TCDispatcherResult, error) {
 	dispatcherID := f.nextID.Add(1)
 	handle := f.nextID.Add(1)
 	// Add dispatcher program to programs map so GC sees it as valid
@@ -651,7 +651,7 @@ func (f *fakeKernel) AttachTCDispatcherWithPaths(ifindex int, ifname, progPinPat
 	}, nil
 }
 
-func (f *fakeKernel) DetachTCFilter(ifindex int, ifname string, parent uint32, priority uint16, handle uint32) error {
+func (f *fakeKernel) DetachTCFilter(_ context.Context, ifindex int, ifname string, parent uint32, priority uint16, handle uint32) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	key := tcFilterKey{ifindex: ifindex, parent: parent, priority: priority}
@@ -660,7 +660,7 @@ func (f *fakeKernel) DetachTCFilter(ifindex int, ifname string, parent uint32, p
 	return nil
 }
 
-func (f *fakeKernel) FindTCFilterHandle(ifindex int, parent uint32, priority uint16) (uint32, error) {
+func (f *fakeKernel) FindTCFilterHandle(_ context.Context, ifindex int, parent uint32, priority uint16) (uint32, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	key := tcFilterKey{ifindex: ifindex, parent: parent, priority: priority}
@@ -671,7 +671,7 @@ func (f *fakeKernel) FindTCFilterHandle(ifindex int, parent uint32, priority uin
 	return handle, nil
 }
 
-func (f *fakeKernel) AttachTCExtension(dispatcherPinPath, objectPath, programName string, position int, linkPinPath, mapPinDir string) (bpfman.ManagedLink, error) {
+func (f *fakeKernel) AttachTCExtension(_ context.Context, dispatcherPinPath, objectPath, programName string, position int, linkPinPath, mapPinDir string) (bpfman.ManagedLink, error) {
 	id := f.nextID.Add(1)
 	// Store for DetachLink lookup
 	f.links[id] = &bpfman.AttachedLink{
@@ -694,7 +694,7 @@ func (f *fakeKernel) AttachTCExtension(dispatcherPinPath, objectPath, programNam
 	}, nil
 }
 
-func (f *fakeKernel) AttachTCX(ifindex int, direction, programPinPath, linkPinPath, netns string, order bpfman.TCXAttachOrder) (bpfman.ManagedLink, error) {
+func (f *fakeKernel) AttachTCX(_ context.Context, ifindex int, direction, programPinPath, linkPinPath, netns string, order bpfman.TCXAttachOrder) (bpfman.ManagedLink, error) {
 	id := f.nextID.Add(1)
 	f.links[id] = &bpfman.AttachedLink{
 		ID:      id,
@@ -715,7 +715,7 @@ func (f *fakeKernel) AttachTCX(ifindex int, direction, programPinPath, linkPinPa
 	}, nil
 }
 
-func (f *fakeKernel) RemovePin(path string) error {
+func (f *fakeKernel) RemovePin(_ context.Context, path string) error {
 	f.mu.Lock()
 	f.removePins = append(f.removePins, path)
 	f.mu.Unlock()
@@ -755,6 +755,6 @@ func (f *fakeKernel) TCFilterCount() int {
 	return len(f.tcFilters)
 }
 
-func (f *fakeKernel) RepinMap(srcPath, dstPath string) error {
+func (f *fakeKernel) RepinMap(_ context.Context, srcPath, dstPath string) error {
 	return nil // Fake implementation - no-op
 }

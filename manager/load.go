@@ -78,7 +78,7 @@ func (m *Manager) Load(ctx context.Context, spec bpfman.LoadSpec, opts LoadOpts)
 	})
 	if err != nil {
 		m.logger.ErrorContext(ctx, "persist failed, rolling back", "kernel_id", loaded.Kernel.ID(), "error", err)
-		if rbErr := undo.rollback(m.logger); rbErr != nil {
+		if rbErr := undo.rollback(ctx, m.logger); rbErr != nil {
 			return bpfman.ManagedProgram{}, errors.Join(
 				fmt.Errorf("persist metadata: %w", err),
 				fmt.Errorf("rollback failed: %w", rbErr),

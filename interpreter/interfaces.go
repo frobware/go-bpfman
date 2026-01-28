@@ -173,32 +173,32 @@ type ProgramUnloader interface {
 // PinInspector provides raw inspection of bpffs pins.
 type PinInspector interface {
 	// ListPinDir scans a bpffs directory and returns its contents.
-	ListPinDir(pinDir string, includeMaps bool) (*kernel.PinDirContents, error)
+	ListPinDir(ctx context.Context, pinDir string, includeMaps bool) (*kernel.PinDirContents, error)
 	// GetPinned loads and returns info about a pinned program.
-	GetPinned(pinPath string) (*kernel.PinnedProgram, error)
+	GetPinned(ctx context.Context, pinPath string) (*kernel.PinnedProgram, error)
 }
 
 // ProgramAttacher attaches programs to hooks.
 type ProgramAttacher interface {
 	// AttachTracepoint attaches a pinned program to a tracepoint.
-	AttachTracepoint(progPinPath, group, name, linkPinPath string) (bpfman.ManagedLink, error)
+	AttachTracepoint(ctx context.Context, progPinPath, group, name, linkPinPath string) (bpfman.ManagedLink, error)
 	// AttachXDP attaches a pinned XDP program to a network interface.
-	AttachXDP(progPinPath string, ifindex int, linkPinPath string) (bpfman.ManagedLink, error)
+	AttachXDP(ctx context.Context, progPinPath string, ifindex int, linkPinPath string) (bpfman.ManagedLink, error)
 	// AttachKprobe attaches a pinned program to a kernel function.
 	// If retprobe is true, attaches as a kretprobe instead of kprobe.
-	AttachKprobe(progPinPath, fnName string, offset uint64, retprobe bool, linkPinPath string) (bpfman.ManagedLink, error)
+	AttachKprobe(ctx context.Context, progPinPath, fnName string, offset uint64, retprobe bool, linkPinPath string) (bpfman.ManagedLink, error)
 	// AttachUprobe attaches a pinned program to a user-space function.
 	// target is the path to the binary or library (e.g., /usr/lib/libc.so.6).
 	// If retprobe is true, attaches as a uretprobe instead of uprobe.
 	// If containerPid > 0, the target path is resolved in that container's
 	// mount namespace, allowing attachment to binaries in other containers.
-	AttachUprobe(progPinPath, target, fnName string, offset uint64, retprobe bool, linkPinPath string, containerPid int32) (bpfman.ManagedLink, error)
+	AttachUprobe(ctx context.Context, progPinPath, target, fnName string, offset uint64, retprobe bool, linkPinPath string, containerPid int32) (bpfman.ManagedLink, error)
 	// AttachFentry attaches a pinned program to a kernel function entry point.
 	// The fnName was specified at load time and stored with the program.
-	AttachFentry(progPinPath, fnName, linkPinPath string) (bpfman.ManagedLink, error)
+	AttachFentry(ctx context.Context, progPinPath, fnName, linkPinPath string) (bpfman.ManagedLink, error)
 	// AttachFexit attaches a pinned program to a kernel function exit point.
 	// The fnName was specified at load time and stored with the program.
-	AttachFexit(progPinPath, fnName, linkPinPath string) (bpfman.ManagedLink, error)
+	AttachFexit(ctx context.Context, progPinPath, fnName, linkPinPath string) (bpfman.ManagedLink, error)
 }
 
 // XDPDispatcherResult holds the result of loading an XDP dispatcher.
@@ -225,7 +225,7 @@ type DispatcherAttacher interface {
 	// AttachXDPDispatcher loads and attaches an XDP dispatcher to an interface.
 	// The dispatcher allows multiple XDP programs to be chained together.
 	// numProgs specifies how many slots to enable, proceedOn is the bitmask for chain behaviour.
-	AttachXDPDispatcher(ifindex int, pinDir string, numProgs int, proceedOn uint32) (*XDPDispatcherResult, error)
+	AttachXDPDispatcher(ctx context.Context, ifindex int, pinDir string, numProgs int, proceedOn uint32) (*XDPDispatcherResult, error)
 
 	// AttachXDPDispatcherWithPaths loads and attaches an XDP dispatcher to an interface
 	// with explicit paths for the dispatcher program and link.
@@ -238,7 +238,7 @@ type DispatcherAttacher interface {
 	//   - numProgs: Number of extension slots to enable
 	//   - proceedOn: Bitmask of XDP return codes that trigger continuation to next program
 	//   - netns: Optional network namespace path. If non-empty, attachment is performed in that namespace.
-	AttachXDPDispatcherWithPaths(ifindex int, progPinPath, linkPinPath string, numProgs int, proceedOn uint32, netns string) (*XDPDispatcherResult, error)
+	AttachXDPDispatcherWithPaths(ctx context.Context, ifindex int, progPinPath, linkPinPath string, numProgs int, proceedOn uint32, netns string) (*XDPDispatcherResult, error)
 
 	// AttachXDPExtension loads a program from ELF as Extension type and attaches
 	// it to a dispatcher slot. The program is loaded with BPF_PROG_TYPE_EXT
@@ -247,7 +247,7 @@ type DispatcherAttacher interface {
 	// The mapPinDir parameter specifies the directory containing the program's
 	// pinned maps. These maps are loaded and passed as MapReplacements so the
 	// extension program shares the same maps as the original loaded program.
-	AttachXDPExtension(dispatcherPinPath, objectPath, programName string, position int, linkPinPath, mapPinDir string) (bpfman.ManagedLink, error)
+	AttachXDPExtension(ctx context.Context, dispatcherPinPath, objectPath, programName string, position int, linkPinPath, mapPinDir string) (bpfman.ManagedLink, error)
 
 	// AttachTCDispatcherWithPaths loads and attaches a TC dispatcher to an
 	// interface using legacy netlink TC (clsact qdisc + BPF tc filter).
@@ -262,7 +262,7 @@ type DispatcherAttacher interface {
 	//   - numProgs: Number of extension slots to enable
 	//   - proceedOn: Bitmask of TC return codes that trigger continuation to next program
 	//   - netns: Optional network namespace path. If non-empty, attachment is performed in that namespace.
-	AttachTCDispatcherWithPaths(ifindex int, ifname, progPinPath, direction string, numProgs int, proceedOn uint32, netns string) (*TCDispatcherResult, error)
+	AttachTCDispatcherWithPaths(ctx context.Context, ifindex int, ifname, progPinPath, direction string, numProgs int, proceedOn uint32, netns string) (*TCDispatcherResult, error)
 
 	// AttachTCExtension loads a program from ELF as Extension type and attaches
 	// it to a TC dispatcher slot. The program is loaded with BPF_PROG_TYPE_EXT
@@ -271,7 +271,7 @@ type DispatcherAttacher interface {
 	// The mapPinDir parameter specifies the directory containing the program's
 	// pinned maps. These maps are loaded and passed as MapReplacements so the
 	// extension program shares the same maps as the original loaded program.
-	AttachTCExtension(dispatcherPinPath, objectPath, programName string, position int, linkPinPath, mapPinDir string) (bpfman.ManagedLink, error)
+	AttachTCExtension(ctx context.Context, dispatcherPinPath, objectPath, programName string, position int, linkPinPath, mapPinDir string) (bpfman.ManagedLink, error)
 
 	// AttachTCX attaches a loaded program directly to an interface using TCX link.
 	// Unlike TC which uses dispatchers, TCX uses native kernel multi-program support.
@@ -284,21 +284,21 @@ type DispatcherAttacher interface {
 	//   - linkPinPath: Path to pin the TCX link
 	//   - netns: Optional network namespace path. If non-empty, attachment is performed in that namespace.
 	//   - order: Specifies where to insert the program in the TCX chain based on priority.
-	AttachTCX(ifindex int, direction, programPinPath, linkPinPath, netns string, order bpfman.TCXAttachOrder) (bpfman.ManagedLink, error)
+	AttachTCX(ctx context.Context, ifindex int, direction, programPinPath, linkPinPath, netns string, order bpfman.TCXAttachOrder) (bpfman.ManagedLink, error)
 }
 
 // LinkDetacher detaches links from hooks.
 type LinkDetacher interface {
 	// DetachLink removes a pinned link by deleting its pin from bpffs.
 	// This releases the kernel link if it was the last reference.
-	DetachLink(linkPinPath string) error
+	DetachLink(ctx context.Context, linkPinPath string) error
 }
 
 // PinRemover removes pins from bpffs.
 type PinRemover interface {
 	// RemovePin removes a pin or empty directory from bpffs.
 	// Returns nil if the path does not exist.
-	RemovePin(path string) error
+	RemovePin(ctx context.Context, path string) error
 }
 
 // TCFilterDetacher removes legacy TC BPF filters via netlink.
@@ -306,19 +306,19 @@ type TCFilterDetacher interface {
 	// DetachTCFilter removes a tc filter identified by ifindex, parent,
 	// priority, and handle. This is the counterpart to the netlink-based
 	// attachment performed by AttachTCDispatcherWithPaths.
-	DetachTCFilter(ifindex int, ifname string, parent uint32, priority uint16, handle uint32) error
+	DetachTCFilter(ctx context.Context, ifindex int, ifname string, parent uint32, priority uint16, handle uint32) error
 
 	// FindTCFilterHandle looks up the kernel-assigned handle for a TC
 	// BPF filter by listing filters on the given parent and matching
 	// the specified priority.
-	FindTCFilterHandle(ifindex int, parent uint32, priority uint16) (uint32, error)
+	FindTCFilterHandle(ctx context.Context, ifindex int, parent uint32, priority uint16) (uint32, error)
 }
 
 // MapRepinner re-pins maps to new locations.
 type MapRepinner interface {
 	// RepinMap loads a pinned map and re-pins it to a new path.
 	// Used by CSI to expose maps to per-pod bpffs.
-	RepinMap(srcPath, dstPath string) error
+	RepinMap(ctx context.Context, srcPath, dstPath string) error
 }
 
 // KernelOperations combines all kernel operations.

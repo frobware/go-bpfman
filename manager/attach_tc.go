@@ -108,6 +108,7 @@ func (m *Manager) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts b
 	// KERNEL I/O: Attach user program as extension (returns ManagedLink)
 	progPinPath := dispatcher.DispatcherProgPath(revisionDir)
 	link, err := m.kernel.AttachTCExtension(
+		ctx,
 		progPinPath,
 		prog.ObjectPath,
 		prog.ProgramName,
@@ -147,6 +148,7 @@ func (m *Manager) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts b
 		}
 		progPinPath = dispatcher.DispatcherProgPath(revisionDir)
 		link, err = m.kernel.AttachTCExtension(
+			ctx,
 			progPinPath,
 			prog.ObjectPath,
 			prog.ProgramName,
@@ -162,7 +164,7 @@ func (m *Manager) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts b
 	// ROLLBACK: If the store write fails, detach the link we just created.
 	var undo undoStack
 	undo.push(func() error {
-		return m.kernel.DetachLink(link.Managed.PinPath)
+		return m.kernel.DetachLink(ctx, link.Managed.PinPath)
 	})
 
 	// COMPUTE: Build save actions from kernel result
@@ -183,7 +185,7 @@ func (m *Manager) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts b
 	// EXECUTE: Save dispatcher update and link metadata
 	if err := m.executor.ExecuteAll(ctx, saveActions); err != nil {
 		m.logger.ErrorContext(ctx, "persist failed, rolling back", "program_id", programKernelID, "error", err)
-		if rbErr := undo.rollback(m.logger); rbErr != nil {
+		if rbErr := undo.rollback(ctx, m.logger); rbErr != nil {
 			return bpfman.LinkSummary{}, errors.Join(fmt.Errorf("save link metadata: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
 		}
 		return bpfman.LinkSummary{}, fmt.Errorf("save link metadata: %w", err)
@@ -324,7 +326,7 @@ func (m *Manager) AttachTCX(ctx context.Context, spec bpfman.TCXAttachSpec, opts
 		"order", order)
 
 	// KERNEL I/O: Attach program using TCX link with computed order
-	link, err := m.kernel.AttachTCX(ifindex, direction, progPinPath, linkPinPath, netnsPath, order)
+	link, err := m.kernel.AttachTCX(ctx, ifindex, direction, progPinPath, linkPinPath, netnsPath, order)
 	if err != nil {
 		return bpfman.LinkSummary{}, fmt.Errorf("attach TCX to %s %s: %w", ifname, direction, err)
 	}
@@ -349,7 +351,7 @@ func (m *Manager) AttachTCX(ctx context.Context, spec bpfman.TCXAttachSpec, opts
 	// ROLLBACK: If the store write fails, detach the link we just created.
 	var undo undoStack
 	undo.push(func() error {
-		return m.kernel.DetachLink(link.Managed.PinPath)
+		return m.kernel.DetachLink(ctx, link.Managed.PinPath)
 	})
 
 	saveAction := action.SaveTCXLink{
@@ -360,7 +362,7 @@ func (m *Manager) AttachTCX(ctx context.Context, spec bpfman.TCXAttachSpec, opts
 	// EXECUTE: Save link metadata
 	if err := m.executor.Execute(ctx, saveAction); err != nil {
 		m.logger.ErrorContext(ctx, "persist failed, rolling back", "program_id", programKernelID, "error", err)
-		if rbErr := undo.rollback(m.logger); rbErr != nil {
+		if rbErr := undo.rollback(ctx, m.logger); rbErr != nil {
 			return bpfman.LinkSummary{}, errors.Join(fmt.Errorf("save TCX link metadata: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
 		}
 		return bpfman.LinkSummary{}, fmt.Errorf("save TCX link metadata: %w", err)
@@ -432,6 +434,7 @@ func (m *Manager) createTCDispatcher(ctx context.Context, nsid uint64, ifindex u
 
 	// KERNEL I/O: Create TC dispatcher using legacy netlink TC
 	result, err := m.kernel.AttachTCDispatcherWithPaths(
+		ctx,
 		int(ifindex),
 		ifname,
 		progPinPath,
@@ -448,10 +451,10 @@ func (m *Manager) createTCDispatcher(ctx context.Context, nsid uint64, ifindex u
 	// Order: remove prog pin first, then detach the TC filter.
 	var undo undoStack
 	undo.push(func() error {
-		return m.kernel.RemovePin(progPinPath)
+		return m.kernel.RemovePin(ctx, progPinPath)
 	})
 	undo.push(func() error {
-		return m.kernel.DetachTCFilter(int(ifindex), ifname, tcParentHandle(dispType), result.Priority, result.Handle)
+		return m.kernel.DetachTCFilter(ctx, int(ifindex), ifname, tcParentHandle(dispType), result.Priority, result.Handle)
 	})
 
 	// COMPUTE: Build save action from kernel result
@@ -461,7 +464,7 @@ func (m *Manager) createTCDispatcher(ctx context.Context, nsid uint64, ifindex u
 	// EXECUTE: Save through executor
 	if err := m.executor.Execute(ctx, saveAction); err != nil {
 		m.logger.ErrorContext(ctx, "persist failed, rolling back TC dispatcher", "ifname", ifname, "error", err)
-		if rbErr := undo.rollback(m.logger); rbErr != nil {
+		if rbErr := undo.rollback(ctx, m.logger); rbErr != nil {
 			return dispatcher.State{}, errors.Join(fmt.Errorf("save TC dispatcher: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
 		}
 		return dispatcher.State{}, fmt.Errorf("save TC dispatcher: %w", err)

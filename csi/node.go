@@ -211,7 +211,7 @@ func (d *Driver) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolu
 			"dst", dstPath,
 		)
 
-		if err := d.kernel.RepinMap(srcPath, dstPath); err != nil {
+		if err := d.kernel.RepinMap(ctx, srcPath, dstPath); err != nil {
 			// Cleanup on failure
 			unix.Unmount(podBpffs, 0)
 			if rmErr := os.RemoveAll(podBpffs); rmErr != nil {

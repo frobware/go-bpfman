@@ -248,7 +248,7 @@ func GatherState(ctx context.Context, store interpreter.Store, kernel interprete
 		return store.CountDispatcherLinks(ctx, kernelID)
 	}
 	s.findTCFilter = func(ifindex int, parent uint32, priority uint16) (uint32, error) {
-		return kernel.FindTCFilterHandle(ifindex, parent, priority)
+		return kernel.FindTCFilterHandle(ctx, ifindex, parent, priority)
 	}
 	s.deleteDispatcher = func(dispType string, nsid uint64, ifindex uint32) error {
 		return store.DeleteDispatcher(ctx, dispType, nsid, ifindex)

@@ -1,6 +1,7 @@
 package manager
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 )
@@ -18,11 +19,11 @@ func (u *undoStack) push(fn func() error) {
 
 // rollback executes all closures in reverse order, logging and
 // collecting any errors. Returns nil if every closure succeeds.
-func (u undoStack) rollback(logger *slog.Logger) error {
+func (u undoStack) rollback(ctx context.Context, logger *slog.Logger) error {
 	var errs []error
 	for i := len(u) - 1; i >= 0; i-- {
 		if err := u[i](); err != nil {
-			logger.Error("rollback step failed", "step", i, "error", err)
+			logger.ErrorContext(ctx, "rollback step failed", "step", i, "error", err)
 			errs = append(errs, err)
 		}
 	}

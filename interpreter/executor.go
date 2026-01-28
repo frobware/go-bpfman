@@ -83,13 +83,13 @@ func (e *executor) Execute(ctx context.Context, a action.Action) error {
 		return e.store.DeleteDispatcher(ctx, a.Type, a.Nsid, a.Ifindex)
 
 	case action.DetachLink:
-		return e.kernel.DetachLink(a.PinPath)
+		return e.kernel.DetachLink(ctx, a.PinPath)
 
 	case action.RemovePin:
-		return e.kernel.RemovePin(a.Path)
+		return e.kernel.RemovePin(ctx, a.Path)
 
 	case action.DetachTCFilter:
-		return e.kernel.DetachTCFilter(a.Ifindex, a.Ifname, a.Parent, a.Priority, a.Handle)
+		return e.kernel.DetachTCFilter(ctx, a.Ifindex, a.Ifname, a.Parent, a.Priority, a.Handle)
 
 	default:
 		return fmt.Errorf("unknown action type: %T", a)

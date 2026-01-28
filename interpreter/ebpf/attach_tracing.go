@@ -1,6 +1,7 @@
 package ebpf
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -11,7 +12,7 @@ import (
 )
 
 // AttachTracepoint attaches a pinned program to a tracepoint.
-func (k *kernelAdapter) AttachTracepoint(progPinPath, group, name, linkPinPath string) (bpfman.ManagedLink, error) {
+func (k *kernelAdapter) AttachTracepoint(ctx context.Context, progPinPath, group, name, linkPinPath string) (bpfman.ManagedLink, error) {
 	prog, err := ebpf.LoadPinnedProgram(progPinPath, nil)
 	if err != nil {
 		return bpfman.ManagedLink{}, fmt.Errorf("load pinned program %s: %w", progPinPath, err)
@@ -60,7 +61,7 @@ func (k *kernelAdapter) AttachTracepoint(progPinPath, group, name, linkPinPath s
 
 // AttachKprobe attaches a pinned program to a kernel function.
 // If retprobe is true, attaches as a kretprobe instead of kprobe.
-func (k *kernelAdapter) AttachKprobe(progPinPath, fnName string, offset uint64, retprobe bool, linkPinPath string) (bpfman.ManagedLink, error) {
+func (k *kernelAdapter) AttachKprobe(ctx context.Context, progPinPath, fnName string, offset uint64, retprobe bool, linkPinPath string) (bpfman.ManagedLink, error) {
 	prog, err := ebpf.LoadPinnedProgram(progPinPath, nil)
 	if err != nil {
 		return bpfman.ManagedLink{}, fmt.Errorf("load pinned program %s: %w", progPinPath, err)
@@ -126,18 +127,18 @@ func (k *kernelAdapter) AttachKprobe(progPinPath, fnName string, offset uint64, 
 
 // AttachFentry attaches a pinned fentry program to a kernel function.
 // The target function was specified at load time and is stored in the program.
-func (k *kernelAdapter) AttachFentry(progPinPath, fnName, linkPinPath string) (bpfman.ManagedLink, error) {
-	return k.attachTracing(progPinPath, fnName, linkPinPath, bpfman.LinkTypeFentry)
+func (k *kernelAdapter) AttachFentry(ctx context.Context, progPinPath, fnName, linkPinPath string) (bpfman.ManagedLink, error) {
+	return k.attachTracing(ctx, progPinPath, fnName, linkPinPath, bpfman.LinkTypeFentry)
 }
 
 // AttachFexit attaches a pinned fexit program to a kernel function.
 // The target function was specified at load time and is stored in the program.
-func (k *kernelAdapter) AttachFexit(progPinPath, fnName, linkPinPath string) (bpfman.ManagedLink, error) {
-	return k.attachTracing(progPinPath, fnName, linkPinPath, bpfman.LinkTypeFexit)
+func (k *kernelAdapter) AttachFexit(ctx context.Context, progPinPath, fnName, linkPinPath string) (bpfman.ManagedLink, error) {
+	return k.attachTracing(ctx, progPinPath, fnName, linkPinPath, bpfman.LinkTypeFexit)
 }
 
 // attachTracing is the shared implementation for fentry and fexit attachment.
-func (k *kernelAdapter) attachTracing(progPinPath, fnName, linkPinPath string, linkType bpfman.LinkType) (bpfman.ManagedLink, error) {
+func (k *kernelAdapter) attachTracing(ctx context.Context, progPinPath, fnName, linkPinPath string, linkType bpfman.LinkType) (bpfman.ManagedLink, error) {
 	prog, err := ebpf.LoadPinnedProgram(progPinPath, nil)
 	if err != nil {
 		return bpfman.ManagedLink{}, fmt.Errorf("load pinned program %s: %w", progPinPath, err)

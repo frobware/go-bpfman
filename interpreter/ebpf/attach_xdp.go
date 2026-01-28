@@ -1,6 +1,7 @@
 package ebpf
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,7 +18,7 @@ import (
 )
 
 // AttachXDP attaches a pinned XDP program to a network interface.
-func (k *kernelAdapter) AttachXDP(progPinPath string, ifindex int, linkPinPath string) (bpfman.ManagedLink, error) {
+func (k *kernelAdapter) AttachXDP(ctx context.Context, progPinPath string, ifindex int, linkPinPath string) (bpfman.ManagedLink, error) {
 	prog, err := ebpf.LoadPinnedProgram(progPinPath, nil)
 	if err != nil {
 		return bpfman.ManagedLink{}, fmt.Errorf("load pinned program %s: %w", progPinPath, err)
@@ -69,7 +70,7 @@ func (k *kernelAdapter) AttachXDP(progPinPath string, ifindex int, linkPinPath s
 
 // AttachXDPDispatcher loads and attaches an XDP dispatcher to an interface.
 // The dispatcher allows multiple XDP programs to be chained together.
-func (k *kernelAdapter) AttachXDPDispatcher(ifindex int, pinDir string, numProgs int, proceedOn uint32) (*interpreter.XDPDispatcherResult, error) {
+func (k *kernelAdapter) AttachXDPDispatcher(ctx context.Context, ifindex int, pinDir string, numProgs int, proceedOn uint32) (*interpreter.XDPDispatcherResult, error) {
 	// Configure the dispatcher
 	// XDP_DISPATCHER_RETVAL (31) is returned by empty slots - we must include
 	// this bit so the dispatcher continues past empty slots to the final XDP_PASS.
@@ -166,7 +167,7 @@ func (k *kernelAdapter) AttachXDPDispatcher(ifindex int, pinDir string, numProgs
 //   - progPinPath: revision-specific path for the dispatcher program
 //   - linkPinPath: stable path for the XDP link (outside revision directory)
 //   - netnsPath: if non-empty, attachment is performed in that network namespace
-func (k *kernelAdapter) AttachXDPDispatcherWithPaths(ifindex int, progPinPath, linkPinPath string, numProgs int, proceedOn uint32, netnsPath string) (*interpreter.XDPDispatcherResult, error) {
+func (k *kernelAdapter) AttachXDPDispatcherWithPaths(ctx context.Context, ifindex int, progPinPath, linkPinPath string, numProgs int, proceedOn uint32, netnsPath string) (*interpreter.XDPDispatcherResult, error) {
 	// Configure the dispatcher
 	// XDP_DISPATCHER_RETVAL (31) is returned by empty slots - we must include
 	// this bit so the dispatcher continues past empty slots to the final XDP_PASS.
@@ -294,7 +295,7 @@ func (k *kernelAdapter) AttachXDPDispatcherWithPaths(ifindex int, progPinPath, l
 // The mapPinDir parameter specifies the directory containing the program's
 // pinned maps. These maps are loaded and passed as MapReplacements so the
 // extension program shares the same maps as the original loaded program.
-func (k *kernelAdapter) AttachXDPExtension(dispatcherPinPath, objectPath, programName string, position int, linkPinPath, mapPinDir string) (bpfman.ManagedLink, error) {
+func (k *kernelAdapter) AttachXDPExtension(ctx context.Context, dispatcherPinPath, objectPath, programName string, position int, linkPinPath, mapPinDir string) (bpfman.ManagedLink, error) {
 	// Load the pinned dispatcher to use as attach target
 	dispatcherProg, err := ebpf.LoadPinnedProgram(dispatcherPinPath, nil)
 	if err != nil {

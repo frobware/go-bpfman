@@ -37,7 +37,7 @@ func (m *Manager) AttachTracepoint(ctx context.Context, spec bpfman.TracepointAt
 	}
 
 	// KERNEL I/O: Attach to the kernel (returns ManagedLink with full info)
-	link, err := m.kernel.AttachTracepoint(progPinPath, group, name, linkPinPath)
+	link, err := m.kernel.AttachTracepoint(ctx, progPinPath, group, name, linkPinPath)
 	if err != nil {
 		return bpfman.LinkSummary{}, fmt.Errorf("attach tracepoint %s/%s: %w", group, name, err)
 	}
@@ -45,7 +45,7 @@ func (m *Manager) AttachTracepoint(ctx context.Context, spec bpfman.TracepointAt
 	// ROLLBACK: If the store write fails, detach the link we just created.
 	var undo undoStack
 	undo.push(func() error {
-		return m.kernel.DetachLink(link.Managed.PinPath)
+		return m.kernel.DetachLink(ctx, link.Managed.PinPath)
 	})
 
 	// COMPUTE: Build save action from kernel result
@@ -54,7 +54,7 @@ func (m *Manager) AttachTracepoint(ctx context.Context, spec bpfman.TracepointAt
 	// EXECUTE: Save link metadata
 	if err := m.executor.Execute(ctx, saveAction); err != nil {
 		m.logger.ErrorContext(ctx, "persist failed, rolling back", "program_id", programKernelID, "error", err)
-		if rbErr := undo.rollback(m.logger); rbErr != nil {
+		if rbErr := undo.rollback(ctx, m.logger); rbErr != nil {
 			return bpfman.LinkSummary{}, errors.Join(fmt.Errorf("save link metadata: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
 		}
 		return bpfman.LinkSummary{}, fmt.Errorf("save link metadata: %w", err)
@@ -120,7 +120,7 @@ func (m *Manager) AttachKprobe(ctx context.Context, spec bpfman.KprobeAttachSpec
 	}
 
 	// KERNEL I/O: Attach to the kernel (returns ManagedLink with full info)
-	link, err := m.kernel.AttachKprobe(progPinPath, fnName, offset, retprobe, linkPinPath)
+	link, err := m.kernel.AttachKprobe(ctx, progPinPath, fnName, offset, retprobe, linkPinPath)
 	if err != nil {
 		return bpfman.LinkSummary{}, fmt.Errorf("attach kprobe %s: %w", fnName, err)
 	}
@@ -128,7 +128,7 @@ func (m *Manager) AttachKprobe(ctx context.Context, spec bpfman.KprobeAttachSpec
 	// ROLLBACK: If the store write fails, detach the link we just created.
 	var undo undoStack
 	undo.push(func() error {
-		return m.kernel.DetachLink(link.Managed.PinPath)
+		return m.kernel.DetachLink(ctx, link.Managed.PinPath)
 	})
 
 	// COMPUTE: Build save action from kernel result
@@ -137,7 +137,7 @@ func (m *Manager) AttachKprobe(ctx context.Context, spec bpfman.KprobeAttachSpec
 	// EXECUTE: Save link metadata
 	if err := m.executor.Execute(ctx, saveAction); err != nil {
 		m.logger.ErrorContext(ctx, "persist failed, rolling back", "program_id", programKernelID, "error", err)
-		if rbErr := undo.rollback(m.logger); rbErr != nil {
+		if rbErr := undo.rollback(ctx, m.logger); rbErr != nil {
 			return bpfman.LinkSummary{}, errors.Join(fmt.Errorf("save link metadata: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
 		}
 		return bpfman.LinkSummary{}, fmt.Errorf("save link metadata: %w", err)
@@ -215,7 +215,7 @@ func (m *Manager) AttachUprobe(ctx context.Context, spec bpfman.UprobeAttachSpec
 	}
 
 	// KERNEL I/O: Attach to the kernel (returns ManagedLink with full info)
-	link, err := m.kernel.AttachUprobe(progPinPath, target, fnName, offset, retprobe, linkPinPath, containerPid)
+	link, err := m.kernel.AttachUprobe(ctx, progPinPath, target, fnName, offset, retprobe, linkPinPath, containerPid)
 	if err != nil {
 		return bpfman.LinkSummary{}, fmt.Errorf("attach uprobe %s to %s: %w", fnName, target, err)
 	}
@@ -231,7 +231,7 @@ func (m *Manager) AttachUprobe(ctx context.Context, spec bpfman.UprobeAttachSpec
 	// ROLLBACK: If the store write fails, detach the link we just created.
 	var undo undoStack
 	undo.push(func() error {
-		return m.kernel.DetachLink(link.Managed.PinPath)
+		return m.kernel.DetachLink(ctx, link.Managed.PinPath)
 	})
 
 	// COMPUTE: Build save action from kernel result
@@ -240,7 +240,7 @@ func (m *Manager) AttachUprobe(ctx context.Context, spec bpfman.UprobeAttachSpec
 	// EXECUTE: Save link metadata
 	if err := m.executor.Execute(ctx, saveAction); err != nil {
 		m.logger.ErrorContext(ctx, "persist failed, rolling back", "program_id", programKernelID, "error", err)
-		if rbErr := undo.rollback(m.logger); rbErr != nil {
+		if rbErr := undo.rollback(ctx, m.logger); rbErr != nil {
 			return bpfman.LinkSummary{}, errors.Join(fmt.Errorf("save link metadata: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
 		}
 		return bpfman.LinkSummary{}, fmt.Errorf("save link metadata: %w", err)
@@ -317,7 +317,7 @@ func (m *Manager) AttachFentry(ctx context.Context, spec bpfman.FentryAttachSpec
 	}
 
 	// KERNEL I/O: Attach to the kernel
-	link, err := m.kernel.AttachFentry(progPinPath, fnName, linkPinPath)
+	link, err := m.kernel.AttachFentry(ctx, progPinPath, fnName, linkPinPath)
 	if err != nil {
 		return bpfman.LinkSummary{}, fmt.Errorf("attach fentry %s: %w", fnName, err)
 	}
@@ -325,7 +325,7 @@ func (m *Manager) AttachFentry(ctx context.Context, spec bpfman.FentryAttachSpec
 	// ROLLBACK: If the store write fails, detach the link we just created.
 	var undo undoStack
 	undo.push(func() error {
-		return m.kernel.DetachLink(link.Managed.PinPath)
+		return m.kernel.DetachLink(ctx, link.Managed.PinPath)
 	})
 
 	// COMPUTE: Build save action from kernel result
@@ -334,7 +334,7 @@ func (m *Manager) AttachFentry(ctx context.Context, spec bpfman.FentryAttachSpec
 	// EXECUTE: Save link metadata
 	if err := m.executor.Execute(ctx, saveAction); err != nil {
 		m.logger.ErrorContext(ctx, "persist failed, rolling back", "program_id", programKernelID, "error", err)
-		if rbErr := undo.rollback(m.logger); rbErr != nil {
+		if rbErr := undo.rollback(ctx, m.logger); rbErr != nil {
 			return bpfman.LinkSummary{}, errors.Join(fmt.Errorf("save link metadata: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
 		}
 		return bpfman.LinkSummary{}, fmt.Errorf("save link metadata: %w", err)
@@ -396,7 +396,7 @@ func (m *Manager) AttachFexit(ctx context.Context, spec bpfman.FexitAttachSpec, 
 	}
 
 	// KERNEL I/O: Attach to the kernel
-	link, err := m.kernel.AttachFexit(progPinPath, fnName, linkPinPath)
+	link, err := m.kernel.AttachFexit(ctx, progPinPath, fnName, linkPinPath)
 	if err != nil {
 		return bpfman.LinkSummary{}, fmt.Errorf("attach fexit %s: %w", fnName, err)
 	}
@@ -404,7 +404,7 @@ func (m *Manager) AttachFexit(ctx context.Context, spec bpfman.FexitAttachSpec, 
 	// ROLLBACK: If the store write fails, detach the link we just created.
 	var undo undoStack
 	undo.push(func() error {
-		return m.kernel.DetachLink(link.Managed.PinPath)
+		return m.kernel.DetachLink(ctx, link.Managed.PinPath)
 	})
 
 	// COMPUTE: Build save action from kernel result
@@ -413,7 +413,7 @@ func (m *Manager) AttachFexit(ctx context.Context, spec bpfman.FexitAttachSpec, 
 	// EXECUTE: Save link metadata
 	if err := m.executor.Execute(ctx, saveAction); err != nil {
 		m.logger.ErrorContext(ctx, "persist failed, rolling back", "program_id", programKernelID, "error", err)
-		if rbErr := undo.rollback(m.logger); rbErr != nil {
+		if rbErr := undo.rollback(ctx, m.logger); rbErr != nil {
 			return bpfman.LinkSummary{}, errors.Join(fmt.Errorf("save link metadata: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
 		}
 		return bpfman.LinkSummary{}, fmt.Errorf("save link metadata: %w", err)

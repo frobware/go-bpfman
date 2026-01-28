@@ -137,7 +137,7 @@ func (m *Manager) cleanupEmptyDispatcher(ctx context.Context, state dispatcher.S
 	var tcHandle uint32
 	if state.Type == dispatcher.DispatcherTypeTCIngress || state.Type == dispatcher.DispatcherTypeTCEgress {
 		parent := tcParentHandle(state.Type)
-		handle, err := m.kernel.FindTCFilterHandle(int(state.Ifindex), parent, state.Priority)
+		handle, err := m.kernel.FindTCFilterHandle(ctx, int(state.Ifindex), parent, state.Priority)
 		if err != nil {
 			m.logger.WarnContext(ctx, "failed to find TC filter handle", "error", err)
 		} else {

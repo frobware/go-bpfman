@@ -1,6 +1,7 @@
 package ebpf
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,7 +16,7 @@ import (
 // ============================================================================
 
 // ListPinDir scans a bpffs directory and returns its contents.
-func (k *kernelAdapter) ListPinDir(pinDir string, includeMaps bool) (*kernel.PinDirContents, error) {
+func (k *kernelAdapter) ListPinDir(ctx context.Context, pinDir string, includeMaps bool) (*kernel.PinDirContents, error) {
 	entries, err := os.ReadDir(pinDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read pin directory: %w", err)
@@ -80,7 +81,7 @@ func (k *kernelAdapter) ListPinDir(pinDir string, includeMaps bool) (*kernel.Pin
 }
 
 // GetPinned loads and returns info about a pinned program.
-func (k *kernelAdapter) GetPinned(pinPath string) (*kernel.PinnedProgram, error) {
+func (k *kernelAdapter) GetPinned(ctx context.Context, pinPath string) (*kernel.PinnedProgram, error) {
 	prog, err := ebpf.LoadPinnedProgram(pinPath, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load pinned program: %w", err)
@@ -114,7 +115,7 @@ func (k *kernelAdapter) GetPinned(pinPath string) (*kernel.PinnedProgram, error)
 
 // RepinMap loads a pinned map and re-pins it to a new path.
 // This is used by CSI to expose maps to per-pod bpffs.
-func (k *kernelAdapter) RepinMap(srcPath, dstPath string) error {
+func (k *kernelAdapter) RepinMap(ctx context.Context, srcPath, dstPath string) error {
 	m, err := ebpf.LoadPinnedMap(srcPath, nil)
 	if err != nil {
 		return fmt.Errorf("load pinned map %s: %w", srcPath, err)
@@ -165,7 +166,7 @@ func (k *kernelAdapter) Unpin(pinDir string) (int, error) {
 
 // DetachLink removes a pinned link by deleting its pin from bpffs.
 // This releases the kernel link if it was the last reference.
-func (k *kernelAdapter) DetachLink(linkPinPath string) error {
+func (k *kernelAdapter) DetachLink(ctx context.Context, linkPinPath string) error {
 	if err := os.Remove(linkPinPath); err != nil {
 		if os.IsNotExist(err) {
 			return nil // Already gone
@@ -211,7 +212,7 @@ func pinWithRetry(obj pinnable, path string) error {
 
 // RemovePin removes a pin or empty directory from bpffs.
 // Returns nil if the path does not exist.
-func (k *kernelAdapter) RemovePin(path string) error {
+func (k *kernelAdapter) RemovePin(ctx context.Context, path string) error {
 	if err := os.Remove(path); err != nil {
 		if os.IsNotExist(err) {
 			return nil // Already gone

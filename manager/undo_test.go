@@ -1,6 +1,7 @@
 package manager
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"testing"
@@ -16,7 +17,7 @@ func TestUndoStack_ReverseOrder(t *testing.T) {
 			return nil
 		})
 	}
-	if err := undo.rollback(slog.Default()); err != nil {
+	if err := undo.rollback(context.Background(), slog.Default()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(order) != 3 || order[0] != 2 || order[1] != 1 || order[2] != 0 {
@@ -31,7 +32,7 @@ func TestUndoStack_CollectsErrors(t *testing.T) {
 	undo.push(func() error { return errA })
 	undo.push(func() error { return errB })
 
-	err := undo.rollback(slog.Default())
+	err := undo.rollback(context.Background(), slog.Default())
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -42,7 +43,7 @@ func TestUndoStack_CollectsErrors(t *testing.T) {
 
 func TestUndoStack_EmptyIsNoop(t *testing.T) {
 	var undo undoStack
-	if err := undo.rollback(slog.Default()); err != nil {
+	if err := undo.rollback(context.Background(), slog.Default()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

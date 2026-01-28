@@ -28,7 +28,7 @@ type ProgramFinder interface {
 // KernelOperations provides BPF map operations.
 type KernelOperations interface {
 	// RepinMap loads a pinned map and re-pins it to a new path.
-	RepinMap(srcPath, dstPath string) error
+	RepinMap(ctx context.Context, srcPath, dstPath string) error
 }
 
 // Driver implements a CSI node plugin that exposes BPF maps to pods.

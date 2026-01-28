@@ -23,7 +23,7 @@ import (
 // If retprobe is true, attaches as a uretprobe instead of uprobe.
 // If containerPid > 0, uses the bpfman-ns helper subprocess to attach
 // in the target container's mount namespace.
-func (k *kernelAdapter) AttachUprobe(progPinPath, target, fnName string, offset uint64, retprobe bool, linkPinPath string, containerPid int32) (bpfman.ManagedLink, error) {
+func (k *kernelAdapter) AttachUprobe(ctx context.Context, progPinPath, target, fnName string, offset uint64, retprobe bool, linkPinPath string, containerPid int32) (bpfman.ManagedLink, error) {
 	k.logger.Debug("AttachUprobe called",
 		"target", target,
 		"fn_name", fnName,
