@@ -7,8 +7,8 @@
 //
 // Use Open for local BPF program management:
 //
-//	c, err := client.Open()
-//	c, err := client.Open(client.WithRuntimeDir("/tmp/mybpfman"))
+//	c, err := client.Open(ctx)
+//	c, err := client.Open(ctx, client.WithRuntimeDir("/tmp/mybpfman"))
 //
 // Both return a Client that can be used identically.
 package client

@@ -43,9 +43,9 @@ type ephemeralClient struct {
 
 // newEphemeral creates a Client that spawns an in-process gRPC
 // server using a temporary Unix socket.
-func newEphemeral(dirs config.RuntimeDirs, cfg config.Config, logger *slog.Logger) (Client, error) {
+func newEphemeral(ctx context.Context, dirs config.RuntimeDirs, cfg config.Config, logger *slog.Logger) (Client, error) {
 	// Set up runtime environment (ensures directories, opens store, creates manager)
-	env, err := manager.SetupRuntimeEnv(dirs, logger)
+	env, err := manager.SetupRuntimeEnv(ctx, dirs, logger)
 	if err != nil {
 		return nil, fmt.Errorf("setup runtime: %w", err)
 	}

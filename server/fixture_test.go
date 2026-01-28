@@ -62,7 +62,7 @@ type testFixture struct {
 // newTestFixture creates a complete test fixture with accessible components.
 func newTestFixture(t *testing.T) *testFixture {
 	t.Helper()
-	store, err := sqlite.NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(context.Background(), testLogger())
 	require.NoError(t, err, "failed to create store")
 	t.Cleanup(func() { store.Close() })
 	dirs := config.NewRuntimeDirs(t.TempDir())

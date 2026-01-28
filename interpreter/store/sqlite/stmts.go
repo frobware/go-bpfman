@@ -1,9 +1,12 @@
 package sqlite
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+)
 
 // prepareProgramStatements prepares all program-related SQL statements.
-func (s *sqliteStore) prepareProgramStatements() error {
+func (s *sqliteStore) prepareProgramStatements(ctx context.Context) error {
 	var err error
 
 	const sqlGetProgram = `
@@ -14,7 +17,7 @@ func (s *sqliteStore) prepareProgramStatements() error {
 		LEFT JOIN program_tags t ON m.kernel_id = t.kernel_id
 		WHERE m.kernel_id = ?
 		GROUP BY m.kernel_id`
-	if s.stmtGetProgram, err = s.db.Prepare(sqlGetProgram); err != nil {
+	if s.stmtGetProgram, err = s.db.PrepareContext(ctx, sqlGetProgram); err != nil {
 		return fmt.Errorf("prepare GetProgram: %w", err)
 	}
 
@@ -49,22 +52,22 @@ func (s *sqliteStore) prepareProgramStatements() error {
 		  owner = excluded.owner,
 		  description = excluded.description,
 		  updated_at = excluded.updated_at`
-	if s.stmtSaveProgram, err = s.db.Prepare(sqlSaveProgram); err != nil {
+	if s.stmtSaveProgram, err = s.db.PrepareContext(ctx, sqlSaveProgram); err != nil {
 		return fmt.Errorf("prepare SaveProgram: %w", err)
 	}
 
 	const sqlDeleteProgramMetadataIndex = "DELETE FROM program_metadata_index WHERE kernel_id = ?"
-	if s.stmtDeleteProgramMetadataIndex, err = s.db.Prepare(sqlDeleteProgramMetadataIndex); err != nil {
+	if s.stmtDeleteProgramMetadataIndex, err = s.db.PrepareContext(ctx, sqlDeleteProgramMetadataIndex); err != nil {
 		return fmt.Errorf("prepare DeleteProgramMetadataIndex: %w", err)
 	}
 
 	const sqlInsertProgramMetadataIndex = "INSERT INTO program_metadata_index (kernel_id, key, value) VALUES (?, ?, ?)"
-	if s.stmtInsertProgramMetadataIndex, err = s.db.Prepare(sqlInsertProgramMetadataIndex); err != nil {
+	if s.stmtInsertProgramMetadataIndex, err = s.db.PrepareContext(ctx, sqlInsertProgramMetadataIndex); err != nil {
 		return fmt.Errorf("prepare InsertProgramMetadataIndex: %w", err)
 	}
 
 	const sqlDeleteProgram = "DELETE FROM managed_programs WHERE kernel_id = ?"
-	if s.stmtDeleteProgram, err = s.db.Prepare(sqlDeleteProgram); err != nil {
+	if s.stmtDeleteProgram, err = s.db.PrepareContext(ctx, sqlDeleteProgram); err != nil {
 		return fmt.Errorf("prepare DeleteProgram: %w", err)
 	}
 
@@ -75,7 +78,7 @@ func (s *sqliteStore) prepareProgramStatements() error {
 		FROM managed_programs m
 		LEFT JOIN program_tags t ON m.kernel_id = t.kernel_id
 		GROUP BY m.kernel_id`
-	if s.stmtListPrograms, err = s.db.Prepare(sqlListPrograms); err != nil {
+	if s.stmtListPrograms, err = s.db.PrepareContext(ctx, sqlListPrograms); err != nil {
 		return fmt.Errorf("prepare ListPrograms: %w", err)
 	}
 
@@ -89,7 +92,7 @@ func (s *sqliteStore) prepareProgramStatements() error {
 		WHERE i.key = ? AND i.value = ?
 		GROUP BY m.kernel_id
 		LIMIT 1`
-	if s.stmtFindProgramByMetadata, err = s.db.Prepare(sqlFindProgramByMetadata); err != nil {
+	if s.stmtFindProgramByMetadata, err = s.db.PrepareContext(ctx, sqlFindProgramByMetadata); err != nil {
 		return fmt.Errorf("prepare FindProgramByMetadata: %w", err)
 	}
 
@@ -102,28 +105,28 @@ func (s *sqliteStore) prepareProgramStatements() error {
 		LEFT JOIN program_tags t ON m.kernel_id = t.kernel_id
 		WHERE i.key = ? AND i.value = ?
 		GROUP BY m.kernel_id`
-	if s.stmtFindAllProgramsByMetadata, err = s.db.Prepare(sqlFindAllProgramsByMetadata); err != nil {
+	if s.stmtFindAllProgramsByMetadata, err = s.db.PrepareContext(ctx, sqlFindAllProgramsByMetadata); err != nil {
 		return fmt.Errorf("prepare FindAllProgramsByMetadata: %w", err)
 	}
 
 	const sqlCountDependentPrograms = "SELECT COUNT(*) FROM managed_programs WHERE map_owner_id = ?"
-	if s.stmtCountDependentPrograms, err = s.db.Prepare(sqlCountDependentPrograms); err != nil {
+	if s.stmtCountDependentPrograms, err = s.db.PrepareContext(ctx, sqlCountDependentPrograms); err != nil {
 		return fmt.Errorf("prepare CountDependentPrograms: %w", err)
 	}
 
 	// Tag statements
 	const sqlInsertTag = "INSERT INTO program_tags (kernel_id, tag) VALUES (?, ?)"
-	if s.stmtInsertTag, err = s.db.Prepare(sqlInsertTag); err != nil {
+	if s.stmtInsertTag, err = s.db.PrepareContext(ctx, sqlInsertTag); err != nil {
 		return fmt.Errorf("prepare InsertTag: %w", err)
 	}
 
 	const sqlDeleteTags = "DELETE FROM program_tags WHERE kernel_id = ?"
-	if s.stmtDeleteTags, err = s.db.Prepare(sqlDeleteTags); err != nil {
+	if s.stmtDeleteTags, err = s.db.PrepareContext(ctx, sqlDeleteTags); err != nil {
 		return fmt.Errorf("prepare DeleteTags: %w", err)
 	}
 
 	const sqlGetUserMetadata = "SELECT key, value FROM program_metadata_index WHERE kernel_id = ?"
-	if s.stmtGetUserMetadata, err = s.db.Prepare(sqlGetUserMetadata); err != nil {
+	if s.stmtGetUserMetadata, err = s.db.PrepareContext(ctx, sqlGetUserMetadata); err != nil {
 		return fmt.Errorf("prepare GetUserMetadata: %w", err)
 	}
 
@@ -131,39 +134,39 @@ func (s *sqliteStore) prepareProgramStatements() error {
 }
 
 // prepareLinkRegistryStatements prepares all link registry SQL statements.
-func (s *sqliteStore) prepareLinkRegistryStatements() error {
+func (s *sqliteStore) prepareLinkRegistryStatements(ctx context.Context) error {
 	var err error
 
 	const sqlDeleteLink = "DELETE FROM link_registry WHERE kernel_link_id = ?"
-	if s.stmtDeleteLink, err = s.db.Prepare(sqlDeleteLink); err != nil {
+	if s.stmtDeleteLink, err = s.db.PrepareContext(ctx, sqlDeleteLink); err != nil {
 		return fmt.Errorf("prepare DeleteLink: %w", err)
 	}
 
 	const sqlGetLinkRegistry = `
 		SELECT kernel_link_id, link_type, kernel_program_id, pin_path, created_at
 		FROM link_registry WHERE kernel_link_id = ?`
-	if s.stmtGetLinkRegistry, err = s.db.Prepare(sqlGetLinkRegistry); err != nil {
+	if s.stmtGetLinkRegistry, err = s.db.PrepareContext(ctx, sqlGetLinkRegistry); err != nil {
 		return fmt.Errorf("prepare GetLinkRegistry: %w", err)
 	}
 
 	const sqlListLinks = `
 		SELECT kernel_link_id, link_type, kernel_program_id, pin_path, created_at
 		FROM link_registry`
-	if s.stmtListLinks, err = s.db.Prepare(sqlListLinks); err != nil {
+	if s.stmtListLinks, err = s.db.PrepareContext(ctx, sqlListLinks); err != nil {
 		return fmt.Errorf("prepare ListLinks: %w", err)
 	}
 
 	const sqlListLinksByProgram = `
 		SELECT kernel_link_id, link_type, kernel_program_id, pin_path, created_at
 		FROM link_registry WHERE kernel_program_id = ?`
-	if s.stmtListLinksByProgram, err = s.db.Prepare(sqlListLinksByProgram); err != nil {
+	if s.stmtListLinksByProgram, err = s.db.PrepareContext(ctx, sqlListLinksByProgram); err != nil {
 		return fmt.Errorf("prepare ListLinksByProgram: %w", err)
 	}
 
 	const sqlInsertLinkRegistry = `
 		INSERT INTO link_registry (kernel_link_id, link_type, kernel_program_id, pin_path, created_at)
 		VALUES (?, ?, ?, ?, ?)`
-	if s.stmtInsertLinkRegistry, err = s.db.Prepare(sqlInsertLinkRegistry); err != nil {
+	if s.stmtInsertLinkRegistry, err = s.db.PrepareContext(ctx, sqlInsertLinkRegistry); err != nil {
 		return fmt.Errorf("prepare InsertLinkRegistry: %w", err)
 	}
 
@@ -173,7 +176,7 @@ func (s *sqliteStore) prepareLinkRegistryStatements() error {
 		JOIN tcx_link_details td ON lr.kernel_link_id = td.kernel_link_id
 		WHERE td.nsid = ? AND td.ifindex = ? AND td.direction = ?
 		ORDER BY td.priority ASC`
-	if s.stmtListTCXLinksByInterface, err = s.db.Prepare(sqlListTCXLinksByInterface); err != nil {
+	if s.stmtListTCXLinksByInterface, err = s.db.PrepareContext(ctx, sqlListTCXLinksByInterface); err != nil {
 		return fmt.Errorf("prepare ListTCXLinksByInterface: %w", err)
 	}
 
@@ -181,53 +184,53 @@ func (s *sqliteStore) prepareLinkRegistryStatements() error {
 }
 
 // prepareLinkDetailStatements prepares all link detail SQL statements.
-func (s *sqliteStore) prepareLinkDetailStatements() error {
+func (s *sqliteStore) prepareLinkDetailStatements(ctx context.Context) error {
 	var err error
 
 	// Get statements
 	const sqlGetTracepointDetails = "SELECT tracepoint_group, tracepoint_name FROM tracepoint_link_details WHERE kernel_link_id = ?"
-	if s.stmtGetTracepointDetails, err = s.db.Prepare(sqlGetTracepointDetails); err != nil {
+	if s.stmtGetTracepointDetails, err = s.db.PrepareContext(ctx, sqlGetTracepointDetails); err != nil {
 		return fmt.Errorf("prepare GetTracepointDetails: %w", err)
 	}
 
 	const sqlGetKprobeDetails = "SELECT fn_name, offset, retprobe FROM kprobe_link_details WHERE kernel_link_id = ?"
-	if s.stmtGetKprobeDetails, err = s.db.Prepare(sqlGetKprobeDetails); err != nil {
+	if s.stmtGetKprobeDetails, err = s.db.PrepareContext(ctx, sqlGetKprobeDetails); err != nil {
 		return fmt.Errorf("prepare GetKprobeDetails: %w", err)
 	}
 
 	const sqlGetUprobeDetails = "SELECT target, fn_name, offset, pid, retprobe FROM uprobe_link_details WHERE kernel_link_id = ?"
-	if s.stmtGetUprobeDetails, err = s.db.Prepare(sqlGetUprobeDetails); err != nil {
+	if s.stmtGetUprobeDetails, err = s.db.PrepareContext(ctx, sqlGetUprobeDetails); err != nil {
 		return fmt.Errorf("prepare GetUprobeDetails: %w", err)
 	}
 
 	const sqlGetFentryDetails = "SELECT fn_name FROM fentry_link_details WHERE kernel_link_id = ?"
-	if s.stmtGetFentryDetails, err = s.db.Prepare(sqlGetFentryDetails); err != nil {
+	if s.stmtGetFentryDetails, err = s.db.PrepareContext(ctx, sqlGetFentryDetails); err != nil {
 		return fmt.Errorf("prepare GetFentryDetails: %w", err)
 	}
 
 	const sqlGetFexitDetails = "SELECT fn_name FROM fexit_link_details WHERE kernel_link_id = ?"
-	if s.stmtGetFexitDetails, err = s.db.Prepare(sqlGetFexitDetails); err != nil {
+	if s.stmtGetFexitDetails, err = s.db.PrepareContext(ctx, sqlGetFexitDetails); err != nil {
 		return fmt.Errorf("prepare GetFexitDetails: %w", err)
 	}
 
 	const sqlGetXDPDetails = `
 		SELECT interface, ifindex, priority, position, proceed_on, netns, nsid, dispatcher_kernel_id, revision
 		FROM xdp_link_details WHERE kernel_link_id = ?`
-	if s.stmtGetXDPDetails, err = s.db.Prepare(sqlGetXDPDetails); err != nil {
+	if s.stmtGetXDPDetails, err = s.db.PrepareContext(ctx, sqlGetXDPDetails); err != nil {
 		return fmt.Errorf("prepare GetXDPDetails: %w", err)
 	}
 
 	const sqlGetTCDetails = `
 		SELECT interface, ifindex, direction, priority, position, proceed_on, netns, nsid, dispatcher_kernel_id, revision
 		FROM tc_link_details WHERE kernel_link_id = ?`
-	if s.stmtGetTCDetails, err = s.db.Prepare(sqlGetTCDetails); err != nil {
+	if s.stmtGetTCDetails, err = s.db.PrepareContext(ctx, sqlGetTCDetails); err != nil {
 		return fmt.Errorf("prepare GetTCDetails: %w", err)
 	}
 
 	const sqlGetTCXDetails = `
 		SELECT interface, ifindex, direction, priority, netns, nsid
 		FROM tcx_link_details WHERE kernel_link_id = ?`
-	if s.stmtGetTCXDetails, err = s.db.Prepare(sqlGetTCXDetails); err != nil {
+	if s.stmtGetTCXDetails, err = s.db.PrepareContext(ctx, sqlGetTCXDetails); err != nil {
 		return fmt.Errorf("prepare GetTCXDetails: %w", err)
 	}
 
@@ -235,56 +238,56 @@ func (s *sqliteStore) prepareLinkDetailStatements() error {
 	const sqlSaveTracepointDetails = `
 		INSERT INTO tracepoint_link_details (kernel_link_id, tracepoint_group, tracepoint_name)
 		VALUES (?, ?, ?)`
-	if s.stmtSaveTracepointDetails, err = s.db.Prepare(sqlSaveTracepointDetails); err != nil {
+	if s.stmtSaveTracepointDetails, err = s.db.PrepareContext(ctx, sqlSaveTracepointDetails); err != nil {
 		return fmt.Errorf("prepare SaveTracepointDetails: %w", err)
 	}
 
 	const sqlSaveKprobeDetails = `
 		INSERT INTO kprobe_link_details (kernel_link_id, fn_name, offset, retprobe)
 		VALUES (?, ?, ?, ?)`
-	if s.stmtSaveKprobeDetails, err = s.db.Prepare(sqlSaveKprobeDetails); err != nil {
+	if s.stmtSaveKprobeDetails, err = s.db.PrepareContext(ctx, sqlSaveKprobeDetails); err != nil {
 		return fmt.Errorf("prepare SaveKprobeDetails: %w", err)
 	}
 
 	const sqlSaveUprobeDetails = `
 		INSERT INTO uprobe_link_details (kernel_link_id, target, fn_name, offset, pid, retprobe)
 		VALUES (?, ?, ?, ?, ?, ?)`
-	if s.stmtSaveUprobeDetails, err = s.db.Prepare(sqlSaveUprobeDetails); err != nil {
+	if s.stmtSaveUprobeDetails, err = s.db.PrepareContext(ctx, sqlSaveUprobeDetails); err != nil {
 		return fmt.Errorf("prepare SaveUprobeDetails: %w", err)
 	}
 
 	const sqlSaveFentryDetails = `
 		INSERT INTO fentry_link_details (kernel_link_id, fn_name)
 		VALUES (?, ?)`
-	if s.stmtSaveFentryDetails, err = s.db.Prepare(sqlSaveFentryDetails); err != nil {
+	if s.stmtSaveFentryDetails, err = s.db.PrepareContext(ctx, sqlSaveFentryDetails); err != nil {
 		return fmt.Errorf("prepare SaveFentryDetails: %w", err)
 	}
 
 	const sqlSaveFexitDetails = `
 		INSERT INTO fexit_link_details (kernel_link_id, fn_name)
 		VALUES (?, ?)`
-	if s.stmtSaveFexitDetails, err = s.db.Prepare(sqlSaveFexitDetails); err != nil {
+	if s.stmtSaveFexitDetails, err = s.db.PrepareContext(ctx, sqlSaveFexitDetails); err != nil {
 		return fmt.Errorf("prepare SaveFexitDetails: %w", err)
 	}
 
 	const sqlSaveXDPDetails = `
 		INSERT INTO xdp_link_details (kernel_link_id, interface, ifindex, priority, position, proceed_on, netns, nsid, dispatcher_kernel_id, revision)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-	if s.stmtSaveXDPDetails, err = s.db.Prepare(sqlSaveXDPDetails); err != nil {
+	if s.stmtSaveXDPDetails, err = s.db.PrepareContext(ctx, sqlSaveXDPDetails); err != nil {
 		return fmt.Errorf("prepare SaveXDPDetails: %w", err)
 	}
 
 	const sqlSaveTCDetails = `
 		INSERT INTO tc_link_details (kernel_link_id, interface, ifindex, direction, priority, position, proceed_on, netns, nsid, dispatcher_kernel_id, revision)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-	if s.stmtSaveTCDetails, err = s.db.Prepare(sqlSaveTCDetails); err != nil {
+	if s.stmtSaveTCDetails, err = s.db.PrepareContext(ctx, sqlSaveTCDetails); err != nil {
 		return fmt.Errorf("prepare SaveTCDetails: %w", err)
 	}
 
 	const sqlSaveTCXDetails = `
 		INSERT INTO tcx_link_details (kernel_link_id, interface, ifindex, direction, priority, netns, nsid)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`
-	if s.stmtSaveTCXDetails, err = s.db.Prepare(sqlSaveTCXDetails); err != nil {
+	if s.stmtSaveTCXDetails, err = s.db.PrepareContext(ctx, sqlSaveTCXDetails); err != nil {
 		return fmt.Errorf("prepare SaveTCXDetails: %w", err)
 	}
 
@@ -292,20 +295,20 @@ func (s *sqliteStore) prepareLinkDetailStatements() error {
 }
 
 // prepareDispatcherStatements prepares all dispatcher SQL statements.
-func (s *sqliteStore) prepareDispatcherStatements() error {
+func (s *sqliteStore) prepareDispatcherStatements(ctx context.Context) error {
 	var err error
 
 	const sqlGetDispatcher = `
 		SELECT id, type, nsid, ifindex, revision, kernel_id, link_id, priority
 		FROM dispatchers WHERE type = ? AND nsid = ? AND ifindex = ?`
-	if s.stmtGetDispatcher, err = s.db.Prepare(sqlGetDispatcher); err != nil {
+	if s.stmtGetDispatcher, err = s.db.PrepareContext(ctx, sqlGetDispatcher); err != nil {
 		return fmt.Errorf("prepare GetDispatcher: %w", err)
 	}
 
 	const sqlListDispatchers = `
 		SELECT id, type, nsid, ifindex, revision, kernel_id, link_id, priority
 		FROM dispatchers`
-	if s.stmtListDispatchers, err = s.db.Prepare(sqlListDispatchers); err != nil {
+	if s.stmtListDispatchers, err = s.db.PrepareContext(ctx, sqlListDispatchers); err != nil {
 		return fmt.Errorf("prepare ListDispatchers: %w", err)
 	}
 
@@ -318,12 +321,12 @@ func (s *sqliteStore) prepareDispatcherStatements() error {
 		  link_id = excluded.link_id,
 		  priority = excluded.priority,
 		  updated_at = excluded.updated_at`
-	if s.stmtSaveDispatcher, err = s.db.Prepare(sqlSaveDispatcher); err != nil {
+	if s.stmtSaveDispatcher, err = s.db.PrepareContext(ctx, sqlSaveDispatcher); err != nil {
 		return fmt.Errorf("prepare SaveDispatcher: %w", err)
 	}
 
 	const sqlDeleteDispatcher = "DELETE FROM dispatchers WHERE type = ? AND nsid = ? AND ifindex = ?"
-	if s.stmtDeleteDispatcher, err = s.db.Prepare(sqlDeleteDispatcher); err != nil {
+	if s.stmtDeleteDispatcher, err = s.db.PrepareContext(ctx, sqlDeleteDispatcher); err != nil {
 		return fmt.Errorf("prepare DeleteDispatcher: %w", err)
 	}
 
@@ -332,12 +335,12 @@ func (s *sqliteStore) prepareDispatcherStatements() error {
 		SET revision = CASE WHEN revision = 4294967295 THEN 1 ELSE revision + 1 END,
 		    updated_at = ?
 		WHERE type = ? AND nsid = ? AND ifindex = ?`
-	if s.stmtIncrementRevision, err = s.db.Prepare(sqlIncrementRevision); err != nil {
+	if s.stmtIncrementRevision, err = s.db.PrepareContext(ctx, sqlIncrementRevision); err != nil {
 		return fmt.Errorf("prepare IncrementRevision: %w", err)
 	}
 
 	const sqlGetDispatcherByType = "SELECT revision FROM dispatchers WHERE type = ? AND nsid = ? AND ifindex = ?"
-	if s.stmtGetDispatcherByType, err = s.db.Prepare(sqlGetDispatcherByType); err != nil {
+	if s.stmtGetDispatcherByType, err = s.db.PrepareContext(ctx, sqlGetDispatcherByType); err != nil {
 		return fmt.Errorf("prepare GetDispatcherByType: %w", err)
 	}
 
@@ -345,7 +348,7 @@ func (s *sqliteStore) prepareDispatcherStatements() error {
 		SELECT
 			(SELECT COUNT(*) FROM tc_link_details WHERE dispatcher_kernel_id = ?) +
 			(SELECT COUNT(*) FROM xdp_link_details WHERE dispatcher_kernel_id = ?)`
-	if s.stmtCountDispatcherLinks, err = s.db.Prepare(sqlCountDispatcherLinks); err != nil {
+	if s.stmtCountDispatcherLinks, err = s.db.PrepareContext(ctx, sqlCountDispatcherLinks); err != nil {
 		return fmt.Errorf("prepare CountDispatcherLinks: %w", err)
 	}
 

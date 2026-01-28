@@ -11,7 +11,6 @@ func TestUndoStack_ReverseOrder(t *testing.T) {
 	var order []int
 	var undo undoStack
 	for i := 0; i < 3; i++ {
-		i := i
 		undo.push(func() error {
 			order = append(order, i)
 			return nil

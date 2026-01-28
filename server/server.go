@@ -78,7 +78,7 @@ func Run(ctx context.Context, cfg RunConfig) error {
 
 	// Open shared SQLite store
 	dbPath := dirs.DBPath()
-	st, err := sqlite.New(dbPath, logger)
+	st, err := sqlite.New(ctx, dbPath, logger)
 	if err != nil {
 		return fmt.Errorf("failed to open store at %s: %w", dbPath, err)
 	}
@@ -240,7 +240,7 @@ func (s *Server) serve(ctx context.Context, socketPath, tcpAddr string) error {
 	// Open SQLite store if not already set (e.g., when using newWithStore)
 	closeStore := false
 	if s.store == nil {
-		st, err := sqlite.New(s.dirs.DBPath(), s.logger)
+		st, err := sqlite.New(ctx, s.dirs.DBPath(), s.logger)
 		if err != nil {
 			return fmt.Errorf("failed to open store: %w", err)
 		}

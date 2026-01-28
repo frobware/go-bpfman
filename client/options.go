@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"io"
 	"log/slog"
 
@@ -110,16 +111,16 @@ func Dial(address string, opts ...Option) (Client, error) {
 // Example:
 //
 //	// Use defaults (/run/bpfman, default config)
-//	c, err := client.Open()
+//	c, err := client.Open(ctx)
 //
 //	// Use custom runtime directory
-//	c, err := client.Open(client.WithRuntimeDir("/tmp/mybpfman"))
+//	c, err := client.Open(ctx, client.WithRuntimeDir("/tmp/mybpfman"))
 //
 //	// Use custom logger
-//	c, err := client.Open(client.WithLogger(myLogger))
+//	c, err := client.Open(ctx, client.WithLogger(myLogger))
 //
 // The returned client must be closed when no longer needed.
-func Open(opts ...Option) (Client, error) {
+func Open(ctx context.Context, opts ...Option) (Client, error) {
 	o := &openOptions{
 		logger: discardLogger(),
 		path:   "", // empty means use default
@@ -137,5 +138,5 @@ func Open(opts ...Option) (Client, error) {
 		dirs = config.DefaultRuntimeDirs()
 	}
 
-	return newEphemeral(dirs, o.config, o.logger)
+	return newEphemeral(ctx, dirs, o.config, o.logger)
 }

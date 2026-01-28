@@ -78,7 +78,7 @@ func NewTestEnv(t *testing.T) *TestEnv {
 	cfg.Signing.AllowUnsigned = true  // Allow unsigned images
 	cfg.Signing.VerifyEnabled = false // Disable signature verification for tests
 
-	c, err := client.Open(
+	c, err := client.Open(context.Background(),
 		client.WithRuntimeDir(baseDir),
 		client.WithLogger(logger),
 		client.WithConfig(cfg),

@@ -1,6 +1,7 @@
 package manager
 
 import (
+	"context"
 	"log/slog"
 
 	"github.com/frobware/go-bpfman/config"
@@ -33,7 +34,7 @@ func (r *RuntimeEnv) Close() error {
 //
 // This is the single entry point for setting up the runtime environment.
 // Both the CLI and server use this to avoid duplicating setup logic.
-func SetupRuntimeEnv(dirs config.RuntimeDirs, logger *slog.Logger) (*RuntimeEnv, error) {
+func SetupRuntimeEnv(ctx context.Context, dirs config.RuntimeDirs, logger *slog.Logger) (*RuntimeEnv, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -52,7 +53,7 @@ func SetupRuntimeEnv(dirs config.RuntimeDirs, logger *slog.Logger) (*RuntimeEnv,
 	setupLogger.Debug("runtime directories ready")
 
 	setupLogger.Debug("opening database", "path", dirs.DBPath())
-	store, err := sqlite.New(dirs.DBPath(), logger)
+	store, err := sqlite.New(ctx, dirs.DBPath(), logger)
 	if err != nil {
 		setupLogger.Error("failed to open database", "error", err)
 		return nil, err
@@ -79,8 +80,8 @@ func SetupRuntimeEnv(dirs config.RuntimeDirs, logger *slog.Logger) (*RuntimeEnv,
 // opening the database.
 //
 // Deprecated: Use SetupRuntimeEnv for access to all components.
-func Setup(dirs config.RuntimeDirs, logger *slog.Logger) (*Manager, func(), error) {
-	env, err := SetupRuntimeEnv(dirs, logger)
+func Setup(ctx context.Context, dirs config.RuntimeDirs, logger *slog.Logger) (*Manager, func(), error) {
+	env, err := SetupRuntimeEnv(ctx, dirs, logger)
 	if err != nil {
 		return nil, nil, err
 	}

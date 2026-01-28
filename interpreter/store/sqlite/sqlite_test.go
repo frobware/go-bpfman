@@ -38,7 +38,7 @@ func testProgram() bpfman.Program {
 }
 
 func TestForeignKey_LinkRequiresProgram(t *testing.T) {
-	store, err := sqlite.NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(context.Background(), testLogger())
 	require.NoError(t, err, "failed to create store")
 	defer store.Close()
 
@@ -62,7 +62,7 @@ func TestForeignKey_LinkRequiresProgram(t *testing.T) {
 }
 
 func TestForeignKey_CascadeDeleteRemovesLinks(t *testing.T) {
-	store, err := sqlite.NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(context.Background(), testLogger())
 	require.NoError(t, err, "failed to create store")
 	defer store.Close()
 
@@ -105,7 +105,7 @@ func TestForeignKey_CascadeDeleteRemovesLinks(t *testing.T) {
 }
 
 func TestForeignKey_CascadeDeleteRemovesMetadataIndex(t *testing.T) {
-	store, err := sqlite.NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(context.Background(), testLogger())
 	require.NoError(t, err, "failed to create store")
 	defer store.Close()
 
@@ -138,7 +138,7 @@ func TestForeignKey_CascadeDeleteRemovesMetadataIndex(t *testing.T) {
 func TestProgramName_DuplicatesAllowed(t *testing.T) {
 	// Multiple programs can share the same bpfman.io/ProgramName, e.g., when
 	// loading multiple BPF programs from a single OCI image via the operator.
-	store, err := sqlite.NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(context.Background(), testLogger())
 	require.NoError(t, err, "failed to create store")
 	defer store.Close()
 
@@ -163,7 +163,7 @@ func TestProgramName_DuplicatesAllowed(t *testing.T) {
 }
 
 func TestUniqueIndex_DifferentNamesAllowed(t *testing.T) {
-	store, err := sqlite.NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(context.Background(), testLogger())
 	require.NoError(t, err, "failed to create store")
 	defer store.Close()
 
@@ -186,7 +186,7 @@ func TestUniqueIndex_DifferentNamesAllowed(t *testing.T) {
 }
 
 func TestUniqueIndex_NameCanBeReusedAfterDelete(t *testing.T) {
-	store, err := sqlite.NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(context.Background(), testLogger())
 	require.NoError(t, err, "failed to create store")
 	defer store.Close()
 
@@ -219,7 +219,7 @@ func TestUniqueIndex_NameCanBeReusedAfterDelete(t *testing.T) {
 }
 
 func TestLinkRegistry_TracepointRoundTrip(t *testing.T) {
-	store, err := sqlite.NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(context.Background(), testLogger())
 	require.NoError(t, err, "failed to create store")
 	defer store.Close()
 
@@ -261,7 +261,7 @@ func TestLinkRegistry_TracepointRoundTrip(t *testing.T) {
 }
 
 func TestLinkRegistry_KernelLinkIDUniqueness(t *testing.T) {
-	store, err := sqlite.NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(context.Background(), testLogger())
 	require.NoError(t, err, "failed to create store")
 	defer store.Close()
 
@@ -299,7 +299,7 @@ func TestLinkRegistry_KernelLinkIDUniqueness(t *testing.T) {
 }
 
 func TestLinkRegistry_CascadeDeleteFromRegistry(t *testing.T) {
-	store, err := sqlite.NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(context.Background(), testLogger())
 	require.NoError(t, err, "failed to create store")
 	defer store.Close()
 
@@ -334,7 +334,7 @@ func TestLinkRegistry_CascadeDeleteFromRegistry(t *testing.T) {
 // ----------------------------------------------------------------------------
 
 func TestDispatcherStore_SaveAndGet(t *testing.T) {
-	store, err := sqlite.NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(context.Background(), testLogger())
 	require.NoError(t, err, "failed to create store")
 	defer store.Close()
 
@@ -365,7 +365,7 @@ func TestDispatcherStore_SaveAndGet(t *testing.T) {
 }
 
 func TestDispatcherStore_Update(t *testing.T) {
-	store, err := sqlite.NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(context.Background(), testLogger())
 	require.NoError(t, err, "failed to create store")
 	defer store.Close()
 
@@ -396,7 +396,7 @@ func TestDispatcherStore_Update(t *testing.T) {
 }
 
 func TestDispatcherStore_Delete(t *testing.T) {
-	store, err := sqlite.NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(context.Background(), testLogger())
 	require.NoError(t, err, "failed to create store")
 	defer store.Close()
 
@@ -423,7 +423,7 @@ func TestDispatcherStore_Delete(t *testing.T) {
 }
 
 func TestDispatcherStore_DeleteNonExistent(t *testing.T) {
-	store, err := sqlite.NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(context.Background(), testLogger())
 	require.NoError(t, err, "failed to create store")
 	defer store.Close()
 
@@ -435,7 +435,7 @@ func TestDispatcherStore_DeleteNonExistent(t *testing.T) {
 }
 
 func TestDispatcherStore_IncrementRevision(t *testing.T) {
-	store, err := sqlite.NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(context.Background(), testLogger())
 	require.NoError(t, err, "failed to create store")
 	defer store.Close()
 
@@ -470,7 +470,7 @@ func TestDispatcherStore_IncrementRevision(t *testing.T) {
 }
 
 func TestDispatcherStore_UniqueConstraint(t *testing.T) {
-	store, err := sqlite.NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(context.Background(), testLogger())
 	require.NoError(t, err, "failed to create store")
 	defer store.Close()
 
@@ -509,7 +509,7 @@ func TestDispatcherStore_UniqueConstraint(t *testing.T) {
 }
 
 func TestDispatcherStore_DifferentInterfaces(t *testing.T) {
-	store, err := sqlite.NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(context.Background(), testLogger())
 	require.NoError(t, err, "failed to create store")
 	defer store.Close()
 
@@ -543,7 +543,7 @@ func TestDispatcherStore_DifferentInterfaces(t *testing.T) {
 // ----------------------------------------------------------------------------
 
 func TestMapOwnership_CountDependentPrograms(t *testing.T) {
-	store, err := sqlite.NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(context.Background(), testLogger())
 	require.NoError(t, err, "failed to create store")
 	defer store.Close()
 
@@ -585,7 +585,7 @@ func TestMapOwnership_CountDependentPrograms(t *testing.T) {
 }
 
 func TestMapOwnership_ForeignKeyPreventsDeletingOwner(t *testing.T) {
-	store, err := sqlite.NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(context.Background(), testLogger())
 	require.NoError(t, err, "failed to create store")
 	defer store.Close()
 
@@ -619,7 +619,7 @@ func TestMapOwnership_ForeignKeyPreventsDeletingOwner(t *testing.T) {
 }
 
 func TestMapOwnership_MapPinPathPersisted(t *testing.T) {
-	store, err := sqlite.NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(context.Background(), testLogger())
 	require.NoError(t, err, "failed to create store")
 	defer store.Close()
 
@@ -639,7 +639,7 @@ func TestMapOwnership_MapPinPathPersisted(t *testing.T) {
 }
 
 func TestMapOwnership_MapOwnerIDPersisted(t *testing.T) {
-	store, err := sqlite.NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(context.Background(), testLogger())
 	require.NoError(t, err, "failed to create store")
 	defer store.Close()
 
@@ -667,7 +667,7 @@ func TestMapOwnership_MapOwnerIDPersisted(t *testing.T) {
 }
 
 func TestMapOwnership_ListIncludesMapFields(t *testing.T) {
-	store, err := sqlite.NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(context.Background(), testLogger())
 	require.NoError(t, err, "failed to create store")
 	defer store.Close()
 
@@ -708,7 +708,7 @@ func TestMapOwnership_ListIncludesMapFields(t *testing.T) {
 // returned in priority order (ascending), which is critical for correctly
 // computing attach order when inserting new TCX programs.
 func TestListTCXLinksByInterface_OrderByPriority(t *testing.T) {
-	store, err := sqlite.NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(context.Background(), testLogger())
 	require.NoError(t, err, "failed to create store")
 	defer store.Close()
 
@@ -780,7 +780,7 @@ func TestListTCXLinksByInterface_OrderByPriority(t *testing.T) {
 // TestListTCXLinksByInterface_FiltersByInterfaceAndDirection verifies that
 // only links matching the specified nsid, ifindex, and direction are returned.
 func TestListTCXLinksByInterface_FiltersByInterfaceAndDirection(t *testing.T) {
-	store, err := sqlite.NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(context.Background(), testLogger())
 	require.NoError(t, err, "failed to create store")
 	defer store.Close()
 
@@ -853,7 +853,7 @@ func TestListTCXLinksByInterface_FiltersByInterfaceAndDirection(t *testing.T) {
 // TestListTCXLinksByInterface_EmptyResult verifies that querying for
 // an interface with no TCX links returns an empty slice, not nil.
 func TestListTCXLinksByInterface_EmptyResult(t *testing.T) {
-	store, err := sqlite.NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(context.Background(), testLogger())
 	require.NoError(t, err, "failed to create store")
 	defer store.Close()
 
@@ -870,7 +870,7 @@ func TestListTCXLinksByInterface_EmptyResult(t *testing.T) {
 // -----------------------------------------------------------------------------
 
 func TestGC_EmptyStore(t *testing.T) {
-	store, err := sqlite.NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(context.Background(), testLogger())
 	require.NoError(t, err)
 	defer store.Close()
 
@@ -885,7 +885,7 @@ func TestGC_EmptyStore(t *testing.T) {
 }
 
 func TestGC_AllProgramsInKernel(t *testing.T) {
-	store, err := sqlite.NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(context.Background(), testLogger())
 	require.NoError(t, err)
 	defer store.Close()
 
@@ -907,7 +907,7 @@ func TestGC_AllProgramsInKernel(t *testing.T) {
 }
 
 func TestGC_StalePrograms(t *testing.T) {
-	store, err := sqlite.NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(context.Background(), testLogger())
 	require.NoError(t, err)
 	defer store.Close()
 
@@ -940,7 +940,7 @@ func TestGC_MapOwnerOrdering(t *testing.T) {
 	// Test that GC correctly handles map_owner_id FK constraint.
 	// Programs with MapOwnerID (dependents) must be deleted before
 	// the programs they reference (owners).
-	store, err := sqlite.NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(context.Background(), testLogger())
 	require.NoError(t, err)
 	defer store.Close()
 
@@ -981,7 +981,7 @@ func TestGC_MapOwnerOrdering(t *testing.T) {
 }
 
 func TestGC_StaleDispatchers(t *testing.T) {
-	store, err := sqlite.NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(context.Background(), testLogger())
 	require.NoError(t, err)
 	defer store.Close()
 
@@ -1023,7 +1023,7 @@ func TestGC_StaleDispatchers(t *testing.T) {
 }
 
 func TestGC_StaleLinks(t *testing.T) {
-	store, err := sqlite.NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(context.Background(), testLogger())
 	require.NoError(t, err)
 	defer store.Close()
 
@@ -1070,7 +1070,7 @@ func TestGC_StaleLinks(t *testing.T) {
 
 func TestGC_Comprehensive(t *testing.T) {
 	// Test GC with mixed stale entries across all types
-	store, err := sqlite.NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(context.Background(), testLogger())
 	require.NoError(t, err)
 	defer store.Close()
 
@@ -1167,7 +1167,7 @@ func TestGC_SyntheticLinkIDsSkipped(t *testing.T) {
 	// Test that GC skips links with synthetic IDs (>= 0x80000000).
 	// These are used for perf_event-based links (e.g., container uprobes)
 	// that cannot be enumerated via the kernel's link iterator.
-	store, err := sqlite.NewInMemory(testLogger())
+	store, err := sqlite.NewInMemory(context.Background(), testLogger())
 	require.NoError(t, err)
 	defer store.Close()
 

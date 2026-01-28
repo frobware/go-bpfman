@@ -200,7 +200,7 @@ type sqliteStore struct {
 }
 
 // New creates a new SQLite store at the given path.
-func New(dbPath string, logger *slog.Logger) (interpreter.Store, error) {
+func New(ctx context.Context, dbPath string, logger *slog.Logger) (interpreter.Store, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -217,11 +217,11 @@ func New(dbPath string, logger *slog.Logger) (interpreter.Store, error) {
 	}
 
 	s := &sqliteStore{db: db, conn: db, logger: logger}
-	if err := s.migrate(); err != nil {
+	if err := s.migrate(ctx); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
-	if err := s.prepareStatements(); err != nil {
+	if err := s.prepareStatements(ctx); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to prepare statements: %w", err)
 	}
@@ -231,7 +231,7 @@ func New(dbPath string, logger *slog.Logger) (interpreter.Store, error) {
 }
 
 // NewInMemory creates an in-memory SQLite store for testing.
-func NewInMemory(logger *slog.Logger) (interpreter.Store, error) {
+func NewInMemory(ctx context.Context, logger *slog.Logger) (interpreter.Store, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -243,11 +243,11 @@ func NewInMemory(logger *slog.Logger) (interpreter.Store, error) {
 	}
 
 	s := &sqliteStore{db: db, conn: db, logger: logger}
-	if err := s.migrate(); err != nil {
+	if err := s.migrate(ctx); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
-	if err := s.prepareStatements(); err != nil {
+	if err := s.prepareStatements(ctx); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to prepare statements: %w", err)
 	}
@@ -315,26 +315,26 @@ func (s *sqliteStore) closeStatements() {
 	}
 }
 
-func (s *sqliteStore) migrate() error {
+func (s *sqliteStore) migrate(ctx context.Context) error {
 	// Execute the embedded schema
-	if _, err := s.db.Exec(schemaSQL); err != nil {
+	if _, err := s.db.ExecContext(ctx, schemaSQL); err != nil {
 		return fmt.Errorf("failed to execute schema: %w", err)
 	}
 	return nil
 }
 
 // prepareStatements prepares all SQL statements for reuse.
-func (s *sqliteStore) prepareStatements() error {
-	if err := s.prepareProgramStatements(); err != nil {
+func (s *sqliteStore) prepareStatements(ctx context.Context) error {
+	if err := s.prepareProgramStatements(ctx); err != nil {
 		return err
 	}
-	if err := s.prepareLinkRegistryStatements(); err != nil {
+	if err := s.prepareLinkRegistryStatements(ctx); err != nil {
 		return err
 	}
-	if err := s.prepareLinkDetailStatements(); err != nil {
+	if err := s.prepareLinkDetailStatements(ctx); err != nil {
 		return err
 	}
-	return s.prepareDispatcherStatements()
+	return s.prepareDispatcherStatements(ctx)
 }
 
 // RunInTransaction executes the callback within a database transaction.

@@ -28,7 +28,7 @@ func ExampleDial() {
 }
 
 func ExampleOpen() {
-	c, err := client.Open()
+	c, err := client.Open(context.Background())
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func ExampleOpen() {
 }
 
 func ExampleClient_Load() {
-	c, err := client.Open()
+	c, err := client.Open(context.Background())
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -4,6 +4,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -174,7 +175,7 @@ func (c *CLI) Client() (client.Client, error) {
 		return nil, fmt.Errorf("failed to load config: %w", err)
 	}
 
-	return client.Open(
+	return client.Open(context.Background(),
 		client.WithLogger(logger),
 		client.WithRuntimeDir(c.RuntimeDir),
 		client.WithConfig(cfg),
