@@ -72,7 +72,7 @@ func (s *sqliteStore) ListDispatchers(ctx context.Context) ([]dispatcher.State, 
 
 // SaveDispatcher creates or updates a dispatcher.
 func (s *sqliteStore) SaveDispatcher(ctx context.Context, state dispatcher.State) error {
-	now := time.Now().Format(time.RFC3339)
+	now := time.Now().UTC().Format(time.RFC3339)
 
 	start := time.Now()
 	result, err := s.stmtSaveDispatcher.ExecContext(ctx,
@@ -114,7 +114,7 @@ func (s *sqliteStore) DeleteDispatcher(ctx context.Context, dispType string, nsi
 // Returns the new revision number. Wraps from MaxUint32 to 1.
 // For atomicity with other operations, wrap in RunInTransaction.
 func (s *sqliteStore) IncrementRevision(ctx context.Context, dispType string, nsid uint64, ifindex uint32) (uint32, error) {
-	now := time.Now().Format(time.RFC3339)
+	now := time.Now().UTC().Format(time.RFC3339)
 
 	// Use CASE to handle wrap-around at MaxUint32
 	start := time.Now()
