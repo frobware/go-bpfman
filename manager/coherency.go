@@ -277,8 +277,11 @@ func (s *ObservedState) Programs() []ProgramState {
 		}
 		if prog.PinPath != "" {
 			_, err := os.Stat(prog.PinPath)
-			exists := !os.IsNotExist(err)
-			ps.PinExist = &exists
+			if err == nil || os.IsNotExist(err) {
+				exists := err == nil
+				ps.PinExist = &exists
+			}
+			// Other errors (EPERM, EIO): leave PinExist nil.
 		}
 		s.programs = append(s.programs, ps)
 	}
@@ -300,8 +303,10 @@ func (s *ObservedState) Links() []LinkState {
 		}
 		if link.PinPath != "" && !ls.Synthetic {
 			_, err := os.Stat(link.PinPath)
-			exists := !os.IsNotExist(err)
-			ls.PinExist = &exists
+			if err == nil || os.IsNotExist(err) {
+				exists := err == nil
+				ls.PinExist = &exists
+			}
 		}
 		s.links = append(s.links, ls)
 	}
@@ -327,17 +332,19 @@ func (s *ObservedState) Dispatchers() []DispatcherState {
 		}
 
 		// Prog pin existence.
-		_, err := os.Stat(progPin)
-		ppExists := !os.IsNotExist(err)
-		ds.ProgPinExist = &ppExists
+		if _, err := os.Stat(progPin); err == nil || os.IsNotExist(err) {
+			ppExists := err == nil
+			ds.ProgPinExist = &ppExists
+		}
 
 		// XDP link checks.
 		if d.Type == dispatcher.DispatcherTypeXDP {
 			ds.KernelLink = d.LinkID != 0 && s.kernelLinks[d.LinkID]
 			linkPin := dispatcher.DispatcherLinkPath(s.dirs.FS, d.Type, d.Nsid, d.Ifindex)
-			_, err := os.Stat(linkPin)
-			lpExists := !os.IsNotExist(err)
-			ds.LinkPinExist = &lpExists
+			if _, err := os.Stat(linkPin); err == nil || os.IsNotExist(err) {
+				lpExists := err == nil
+				ds.LinkPinExist = &lpExists
+			}
 		}
 
 		// TC filter check.
@@ -773,7 +780,7 @@ func GCRules() []Rule {
 							Description: fmt.Sprintf("delete dispatcher %s/%d/%d and filesystem artefacts", d.DB.Type, d.DB.Nsid, d.DB.Ifindex),
 							Execute: func() error {
 								os.Remove(dd.ProgPin)
-								os.Remove(dd.RevDir)
+								os.RemoveAll(dd.RevDir)
 								if dd.DB.Type == dispatcher.DispatcherTypeXDP {
 									linkPin := dispatcher.DispatcherLinkPath(s.dirs.FS, dd.DB.Type, dd.DB.Nsid, dd.DB.Ifindex)
 									os.Remove(linkPin)
