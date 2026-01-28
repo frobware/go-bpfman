@@ -9,6 +9,7 @@ import (
 
 	"github.com/frobware/go-bpfman"
 	"github.com/frobware/go-bpfman/action"
+	"github.com/frobware/go-bpfman/interpreter"
 )
 
 // LoadOpts contains optional metadata for a Load operation.
@@ -63,7 +64,13 @@ func (m *Manager) Load(ctx context.Context, spec bpfman.LoadSpec, opts LoadOpts)
 		CreatedAt:    now,
 	}
 
-	if err := m.store.Save(ctx, loaded.Kernel.ID(), metadata); err != nil {
+	// Save atomically persists program metadata. RunInTransaction ensures
+	// the upsert, tag updates, and metadata index updates all commit or
+	// roll back together.
+	err = m.store.RunInTransaction(ctx, func(txStore interpreter.Store) error {
+		return txStore.Save(ctx, loaded.Kernel.ID(), metadata)
+	})
+	if err != nil {
 		m.logger.Error("persist failed, rolling back", "kernel_id", loaded.Kernel.ID(), "error", err)
 		// Cleanup kernel state using the upstream layout
 		if rbErr := m.kernel.UnloadProgram(ctx, loaded.Managed.PinPath, loaded.Managed.PinDir); rbErr != nil {

@@ -381,10 +381,10 @@ func (s *sqliteStore) RunInTransaction(ctx context.Context, fn func(interpreter.
 		stmtDeleteTags:      tx.StmtContext(ctx, s.stmtDeleteTags),
 		stmtGetUserMetadata: tx.StmtContext(ctx, s.stmtGetUserMetadata),
 		// Link registry statements
-		stmtDeleteLink:         tx.StmtContext(ctx, s.stmtDeleteLink),
-		stmtGetLinkRegistry:    tx.StmtContext(ctx, s.stmtGetLinkRegistry),
-		stmtListLinks:          tx.StmtContext(ctx, s.stmtListLinks),
-		stmtListLinksByProgram: tx.StmtContext(ctx, s.stmtListLinksByProgram),
+		stmtDeleteLink:              tx.StmtContext(ctx, s.stmtDeleteLink),
+		stmtGetLinkRegistry:         tx.StmtContext(ctx, s.stmtGetLinkRegistry),
+		stmtListLinks:               tx.StmtContext(ctx, s.stmtListLinks),
+		stmtListLinksByProgram:      tx.StmtContext(ctx, s.stmtListLinksByProgram),
 		stmtInsertLinkRegistry:      tx.StmtContext(ctx, s.stmtInsertLinkRegistry),
 		stmtListTCXLinksByInterface: tx.StmtContext(ctx, s.stmtListTCXLinksByInterface),
 		// Link detail get statements
