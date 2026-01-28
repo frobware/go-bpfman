@@ -36,7 +36,9 @@ package manager
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"os"
 	"sync"
 	"time"
 
@@ -88,6 +90,11 @@ type GCResult = interpreter.GCResult
 //   - The daemon restarts but kernel state was lost (e.g., system reboot)
 //   - A previous unload operation failed partway through
 //   - External tools removed BPF objects without updating the database
+//   - The kernel reused a program ID after unload
+//
+// A DB program is only preserved if both the kernel ID is live and our
+// bpffs pin path exists. This prevents stale DB rows from surviving
+// when the kernel reuses an ID that now belongs to a different program.
 func (m *Manager) GC(ctx context.Context) (GCResult, error) {
 	start := time.Now()
 
@@ -99,6 +106,26 @@ func (m *Manager) GC(ctx context.Context) (GCResult, error) {
 			continue
 		}
 		kernelProgramIDs[kp.ID] = true
+	}
+
+	// For any DB program whose kernel ID is still live, verify
+	// that our bpffs pin exists. If the pin is gone the kernel
+	// ID may have been recycled to a program that is not ours;
+	// remove it from the live set so the store GC reaps the row.
+	dbPrograms, err := m.store.List(ctx)
+	if err != nil {
+		return GCResult{}, err
+	}
+	for id := range dbPrograms {
+		if !kernelProgramIDs[id] {
+			continue // already absent; store GC will reap
+		}
+		pinPath := m.dirs.ProgPinPath(id)
+		if _, err := os.Stat(pinPath); errors.Is(err, os.ErrNotExist) {
+			m.logger.Info("pin missing for live kernel ID, marking for reap",
+				"kernel_id", id, "pin_path", pinPath)
+			delete(kernelProgramIDs, id)
+		}
 	}
 
 	kernelLinkIDs := make(map[uint32]bool)

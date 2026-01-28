@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"iter"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -257,6 +258,15 @@ func (f *fakeKernel) Load(_ context.Context, spec bpfman.LoadSpec) (bpfman.Manag
 	} else {
 		// Own maps - use our kernel ID
 		mapsDir = fmt.Sprintf("%s/maps/%d", spec.PinPath(), id)
+	}
+
+	// Create the pin file on disk so that GC's ownership check
+	// (os.Stat on the pin path) recognises this as our program.
+	if err := os.MkdirAll(spec.PinPath(), 0755); err != nil {
+		return bpfman.ManagedProgram{}, fmt.Errorf("fake kernel: mkdir pin dir: %w", err)
+	}
+	if err := os.WriteFile(progPinPath, nil, 0644); err != nil {
+		return bpfman.ManagedProgram{}, fmt.Errorf("fake kernel: create pin file: %w", err)
 	}
 
 	fp := fakeProgram{
