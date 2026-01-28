@@ -281,114 +281,123 @@ func (s *sqliteStore) Delete(ctx context.Context, kernelID uint32) error {
 // GC removes all stale entries (programs, dispatchers, links) that don't
 // exist in the provided kernel state. Handles internal ordering constraints
 // (e.g., dependent programs before map owners for FK constraints).
+//
+// All deletions run within a single transaction so the store is never
+// left in a partially collected state.
 func (s *sqliteStore) GC(ctx context.Context, kernelProgramIDs, kernelLinkIDs map[uint32]bool) (interpreter.GCResult, error) {
 	start := time.Now()
 	var result interpreter.GCResult
 
-	// 1. GC programs (order: dependents before owners)
-	stored, err := s.List(ctx)
-	if err != nil {
-		return result, fmt.Errorf("list programs: %w", err)
-	}
+	err := s.RunInTransaction(ctx, func(txStore interpreter.Store) error {
+		ts := txStore.(*sqliteStore)
 
-	var dependents, owners []uint32
-	for id, prog := range stored {
-		if !kernelProgramIDs[id] {
-			if prog.MapOwnerID != 0 {
-				dependents = append(dependents, id)
-			} else {
-				owners = append(owners, id)
-			}
-		}
-	}
-
-	for _, id := range dependents {
-		if err := s.Delete(ctx, id); err != nil {
-			s.logger.Warn("failed to delete dependent program", "kernel_id", id, "error", err)
-			continue
-		}
-		result.ProgramsRemoved++
-	}
-	for _, id := range owners {
-		if err := s.Delete(ctx, id); err != nil {
-			s.logger.Warn("failed to delete owner program", "kernel_id", id, "error", err)
-			continue
-		}
-		result.ProgramsRemoved++
-	}
-
-	// 2. Reconcile dispatchers (delete those referencing gone programs)
-	dispatchers, err := s.ListDispatchers(ctx)
-	if err != nil {
-		return result, fmt.Errorf("list dispatchers: %w", err)
-	}
-
-	for _, disp := range dispatchers {
-		if !kernelProgramIDs[disp.KernelID] {
-			if err := s.DeleteDispatcher(ctx, string(disp.Type), disp.Nsid, disp.Ifindex); err != nil {
-				s.logger.Warn("failed to delete dispatcher", "type", disp.Type, "nsid", disp.Nsid, "ifindex", disp.Ifindex, "error", err)
-				continue
-			}
-			result.DispatchersRemoved++
-		}
-	}
-
-	// 3. Reconcile links (delete those not in kernel)
-	// Skip synthetic link IDs (>= 0x80000000) since they're not real kernel links
-	// and cannot be enumerated via the kernel's link iterator. These are used for
-	// perf_event-based attachments (e.g., container uprobes) that lack kernel link IDs.
-	links, err := s.ListLinks(ctx)
-	if err != nil {
-		return result, fmt.Errorf("list links: %w", err)
-	}
-
-	for _, link := range links {
-		// Skip synthetic link IDs - they're not in kernelLinkIDs but are valid
-		if bpfman.IsSyntheticLinkID(link.KernelLinkID) {
-			continue
-		}
-		if !kernelLinkIDs[link.KernelLinkID] {
-			if err := s.DeleteLink(ctx, link.KernelLinkID); err != nil {
-				s.logger.Warn("failed to delete link", "kernel_link_id", link.KernelLinkID, "error", err)
-				continue
-			}
-			result.LinksRemoved++
-		}
-	}
-
-	// 4. Reconcile dispatchers after link GC: delete any dispatcher
-	// that has no remaining extension links so the next attach
-	// recreates a fresh dispatcher.
-	if result.LinksRemoved > 0 {
-		surviving, err := s.ListDispatchers(ctx)
+		// 1. GC programs (order: dependents before owners)
+		stored, err := ts.List(ctx)
 		if err != nil {
-			return result, fmt.Errorf("list dispatchers after link GC: %w", err)
+			return fmt.Errorf("list programs: %w", err)
 		}
-		for _, disp := range surviving {
-			liveLinks, err := s.CountDispatcherLinks(ctx, disp.KernelID)
-			if err != nil {
-				s.logger.Warn("failed to count dispatcher links", "kernel_id", disp.KernelID, "error", err)
+
+		var dependents, owners []uint32
+		for id, prog := range stored {
+			if !kernelProgramIDs[id] {
+				if prog.MapOwnerID != 0 {
+					dependents = append(dependents, id)
+				} else {
+					owners = append(owners, id)
+				}
+			}
+		}
+
+		for _, id := range dependents {
+			if err := ts.Delete(ctx, id); err != nil {
+				s.logger.Warn("failed to delete dependent program", "kernel_id", id, "error", err)
 				continue
 			}
-			if liveLinks == 0 {
-				s.logger.Info("deleting dispatcher with no live extensions",
-					"type", disp.Type, "nsid", disp.Nsid, "ifindex", disp.Ifindex,
-					"kernel_id", disp.KernelID)
-				if err := s.DeleteDispatcher(ctx, string(disp.Type), disp.Nsid, disp.Ifindex); err != nil {
-					s.logger.Warn("failed to delete stale dispatcher", "kernel_id", disp.KernelID, "error", err)
+			result.ProgramsRemoved++
+		}
+		for _, id := range owners {
+			if err := ts.Delete(ctx, id); err != nil {
+				s.logger.Warn("failed to delete owner program", "kernel_id", id, "error", err)
+				continue
+			}
+			result.ProgramsRemoved++
+		}
+
+		// 2. Reconcile dispatchers (delete those referencing gone programs)
+		dispatchers, err := ts.ListDispatchers(ctx)
+		if err != nil {
+			return fmt.Errorf("list dispatchers: %w", err)
+		}
+
+		for _, disp := range dispatchers {
+			if !kernelProgramIDs[disp.KernelID] {
+				if err := ts.DeleteDispatcher(ctx, string(disp.Type), disp.Nsid, disp.Ifindex); err != nil {
+					s.logger.Warn("failed to delete dispatcher", "type", disp.Type, "nsid", disp.Nsid, "ifindex", disp.Ifindex, "error", err)
 					continue
 				}
 				result.DispatchersRemoved++
 			}
 		}
-	}
+
+		// 3. Reconcile links (delete those not in kernel)
+		// Skip synthetic link IDs (>= 0x80000000) since they're not real kernel links
+		// and cannot be enumerated via the kernel's link iterator. These are used for
+		// perf_event-based attachments (e.g., container uprobes) that lack kernel link IDs.
+		links, err := ts.ListLinks(ctx)
+		if err != nil {
+			return fmt.Errorf("list links: %w", err)
+		}
+
+		for _, link := range links {
+			// Skip synthetic link IDs - they're not in kernelLinkIDs but are valid
+			if bpfman.IsSyntheticLinkID(link.KernelLinkID) {
+				continue
+			}
+			if !kernelLinkIDs[link.KernelLinkID] {
+				if err := ts.DeleteLink(ctx, link.KernelLinkID); err != nil {
+					s.logger.Warn("failed to delete link", "kernel_link_id", link.KernelLinkID, "error", err)
+					continue
+				}
+				result.LinksRemoved++
+			}
+		}
+
+		// 4. Reconcile dispatchers after link GC: delete any dispatcher
+		// that has no remaining extension links so the next attach
+		// recreates a fresh dispatcher.
+		if result.LinksRemoved > 0 {
+			surviving, err := ts.ListDispatchers(ctx)
+			if err != nil {
+				return fmt.Errorf("list dispatchers after link GC: %w", err)
+			}
+			for _, disp := range surviving {
+				liveLinks, err := ts.CountDispatcherLinks(ctx, disp.KernelID)
+				if err != nil {
+					s.logger.Warn("failed to count dispatcher links", "kernel_id", disp.KernelID, "error", err)
+					continue
+				}
+				if liveLinks == 0 {
+					s.logger.Info("deleting dispatcher with no live extensions",
+						"type", disp.Type, "nsid", disp.Nsid, "ifindex", disp.Ifindex,
+						"kernel_id", disp.KernelID)
+					if err := ts.DeleteDispatcher(ctx, string(disp.Type), disp.Nsid, disp.Ifindex); err != nil {
+						s.logger.Warn("failed to delete stale dispatcher", "kernel_id", disp.KernelID, "error", err)
+						continue
+					}
+					result.DispatchersRemoved++
+				}
+			}
+		}
+
+		return nil
+	})
 
 	s.logger.Debug("reconcile", "duration_ms", msec(time.Since(start)),
 		"programs_removed", result.ProgramsRemoved,
 		"dispatchers_removed", result.DispatchersRemoved,
 		"links_removed", result.LinksRemoved)
 
-	return result, nil
+	return result, err
 }
 
 // CountDependentPrograms returns the number of programs that share maps with
