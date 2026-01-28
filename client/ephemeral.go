@@ -36,7 +36,6 @@ type ephemeralClient struct {
 	grpcServer *grpc.Server
 	listener   net.Listener
 	socketPath string // Cleaned up on Close
-	cancel     context.CancelFunc
 	wg         sync.WaitGroup
 	logger     *slog.Logger
 }
@@ -93,14 +92,11 @@ func newEphemeral(ctx context.Context, dirs config.RuntimeDirs, cfg config.Confi
 		return nil, fmt.Errorf("listen on socket %s: %w", socketPath, err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-
 	e := &ephemeralClient{
 		env:        env,
 		grpcServer: grpcServer,
 		listener:   listener,
 		socketPath: socketPath,
-		cancel:     cancel,
 		logger:     logger,
 	}
 
@@ -122,7 +118,6 @@ func newEphemeral(ctx context.Context, dirs config.RuntimeDirs, cfg config.Confi
 	// Connect remoteClient to the ephemeral server
 	remote, err := newRemote(socketPath, logger)
 	if err != nil {
-		cancel()
 		grpcServer.GracefulStop()
 		if closeErr := env.Close(); closeErr != nil {
 			logger.Warn("failed to close runtime env during cleanup", "error", closeErr)
@@ -139,7 +134,6 @@ func newEphemeral(ctx context.Context, dirs config.RuntimeDirs, cfg config.Confi
 
 // Close shuts down the ephemeral server and releases all resources.
 func (e *ephemeralClient) Close() error {
-	e.cancel()
 	if e.remote != nil {
 		if err := e.remote.Close(); err != nil {
 			e.logger.Warn("failed to close remote client", "error", err)
