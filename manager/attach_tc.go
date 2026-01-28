@@ -82,7 +82,7 @@ func (m *Manager) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts b
 		return bpfman.LinkSummary{}, fmt.Errorf("get dispatcher: %w", err)
 	}
 
-	m.logger.Debug("using TC dispatcher",
+	m.logger.DebugContext(ctx, "using TC dispatcher",
 		"interface", ifname,
 		"direction", direction,
 		"nsid", nsid,
@@ -124,7 +124,7 @@ func (m *Manager) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts b
 		if !errors.Is(err, os.ErrNotExist) {
 			return bpfman.LinkSummary{}, fmt.Errorf("attach TC extension to %s %s slot %d: %w", ifname, direction, position, err)
 		}
-		m.logger.Warn("dispatcher pin missing, recreating",
+		m.logger.WarnContext(ctx, "dispatcher pin missing, recreating",
 			"prog_pin_path", progPinPath,
 			"dispatcher_id", dispState.KernelID,
 			"error", err)
@@ -182,14 +182,14 @@ func (m *Manager) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts b
 
 	// EXECUTE: Save dispatcher update and link metadata
 	if err := m.executor.ExecuteAll(ctx, saveActions); err != nil {
-		m.logger.Error("persist failed, rolling back", "program_id", programKernelID, "error", err)
+		m.logger.ErrorContext(ctx, "persist failed, rolling back", "program_id", programKernelID, "error", err)
 		if rbErr := undo.rollback(m.logger); rbErr != nil {
 			return bpfman.LinkSummary{}, errors.Join(fmt.Errorf("save link metadata: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
 		}
 		return bpfman.LinkSummary{}, fmt.Errorf("save link metadata: %w", err)
 	}
 
-	m.logger.Info("attached TC via dispatcher",
+	m.logger.InfoContext(ctx, "attached TC via dispatcher",
 		"kernel_link_id", link.Kernel.ID(),
 		"program_id", programKernelID,
 		"interface", ifname,
@@ -297,7 +297,7 @@ func (m *Manager) AttachTCX(ctx context.Context, spec bpfman.TCXAttachSpec, opts
 
 	// KERNEL I/O: Remove stale pin if it exists from a previous daemon run.
 	if _, statErr := os.Stat(linkPinPath); statErr == nil {
-		m.logger.Warn("removing stale TCX link pin", "path", linkPinPath)
+		m.logger.WarnContext(ctx, "removing stale TCX link pin", "path", linkPinPath)
 		if removeErr := os.Remove(linkPinPath); removeErr != nil {
 			return bpfman.LinkSummary{}, fmt.Errorf("remove stale TCX link pin %s: %w", linkPinPath, removeErr)
 		}
@@ -317,7 +317,7 @@ func (m *Manager) AttachTCX(ctx context.Context, spec bpfman.TCXAttachSpec, opts
 	// We need to find where to insert this program in the priority-sorted chain.
 	order := computeTCXAttachOrder(existingLinks, int32(priority))
 
-	m.logger.Debug("computed TCX attach order",
+	m.logger.DebugContext(ctx, "computed TCX attach order",
 		"program_id", programKernelID,
 		"priority", priority,
 		"existing_links", len(existingLinks),
@@ -359,14 +359,14 @@ func (m *Manager) AttachTCX(ctx context.Context, spec bpfman.TCXAttachSpec, opts
 
 	// EXECUTE: Save link metadata
 	if err := m.executor.Execute(ctx, saveAction); err != nil {
-		m.logger.Error("persist failed, rolling back", "program_id", programKernelID, "error", err)
+		m.logger.ErrorContext(ctx, "persist failed, rolling back", "program_id", programKernelID, "error", err)
 		if rbErr := undo.rollback(m.logger); rbErr != nil {
 			return bpfman.LinkSummary{}, errors.Join(fmt.Errorf("save TCX link metadata: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
 		}
 		return bpfman.LinkSummary{}, fmt.Errorf("save TCX link metadata: %w", err)
 	}
 
-	m.logger.Info("attached TCX program",
+	m.logger.InfoContext(ctx, "attached TCX program",
 		"kernel_link_id", link.Kernel.ID(),
 		"program_id", programKernelID,
 		"interface", ifname,
@@ -421,7 +421,7 @@ func (m *Manager) createTCDispatcher(ctx context.Context, nsid uint64, ifindex u
 	revisionDir := dispatcher.DispatcherRevisionDir(m.dirs.FS, dispType, nsid, ifindex, revision)
 	progPinPath := dispatcher.DispatcherProgPath(revisionDir)
 
-	m.logger.Info("creating TC dispatcher",
+	m.logger.InfoContext(ctx, "creating TC dispatcher",
 		"direction", direction,
 		"nsid", nsid,
 		"ifindex", ifindex,
@@ -460,14 +460,14 @@ func (m *Manager) createTCDispatcher(ctx context.Context, nsid uint64, ifindex u
 
 	// EXECUTE: Save through executor
 	if err := m.executor.Execute(ctx, saveAction); err != nil {
-		m.logger.Error("persist failed, rolling back TC dispatcher", "ifname", ifname, "error", err)
+		m.logger.ErrorContext(ctx, "persist failed, rolling back TC dispatcher", "ifname", ifname, "error", err)
 		if rbErr := undo.rollback(m.logger); rbErr != nil {
 			return dispatcher.State{}, errors.Join(fmt.Errorf("save TC dispatcher: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
 		}
 		return dispatcher.State{}, fmt.Errorf("save TC dispatcher: %w", err)
 	}
 
-	m.logger.Info("created TC dispatcher",
+	m.logger.InfoContext(ctx, "created TC dispatcher",
 		"direction", direction,
 		"nsid", nsid,
 		"ifindex", ifindex,

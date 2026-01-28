@@ -64,7 +64,7 @@ func (s *Server) Attach(ctx context.Context, req *pb.AttachRequest) (*pb.AttachR
 		return nil, err
 	}
 
-	s.logger.Info("Attach", "type", attachType, "program_id", req.Id, "link_id", resp.LinkId)
+	s.logger.InfoContext(ctx, "Attach", "type", attachType, "program_id", req.Id, "link_id", resp.LinkId)
 
 	return resp, nil
 }
@@ -250,7 +250,7 @@ func (s *Server) attachKprobe(ctx context.Context, programID uint32, info *pb.Kp
 
 // attachUprobe handles uprobe/uretprobe attachment via the manager.
 func (s *Server) attachUprobe(ctx context.Context, programID uint32, info *pb.UprobeAttachInfo) (*pb.AttachResponse, error) {
-	s.logger.Debug("attachUprobe request",
+	s.logger.DebugContext(ctx, "attachUprobe request",
 		"program_id", programID,
 		"target", info.Target,
 		"fn_name", info.GetFnName(),
@@ -275,7 +275,7 @@ func (s *Server) attachUprobe(ctx context.Context, programID uint32, info *pb.Up
 		spec = spec.WithOffset(info.Offset)
 	}
 	if info.ContainerPid != nil && *info.ContainerPid > 0 {
-		s.logger.Debug("setting container_pid on spec", "container_pid", *info.ContainerPid)
+		s.logger.DebugContext(ctx, "setting container_pid on spec", "container_pid", *info.ContainerPid)
 		spec = spec.WithContainerPid(*info.ContainerPid)
 	}
 
@@ -349,7 +349,7 @@ func (s *Server) Detach(ctx context.Context, req *pb.DetachRequest) (*pb.DetachR
 		return nil, status.Errorf(codes.Internal, "detach link: %v", err)
 	}
 
-	s.logger.Info("Detach", "link_id", req.LinkId)
+	s.logger.InfoContext(ctx, "Detach", "link_id", req.LinkId)
 
 	return &pb.DetachResponse{}, nil
 }

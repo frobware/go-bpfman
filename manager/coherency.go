@@ -897,12 +897,12 @@ func (m *Manager) CoherencyGC(ctx context.Context) (int, error) {
 			continue
 		}
 		if err := v.Op.Execute(); err != nil {
-			m.logger.Warn("gc operation failed",
+			m.logger.WarnContext(ctx, "gc operation failed",
 				"op", v.Op.Description,
 				"error", err)
 			continue
 		}
-		m.logger.Info("gc operation applied", "op", v.Op.Description)
+		m.logger.InfoContext(ctx, "gc operation applied", "op", v.Op.Description)
 		applied++
 	}
 	return applied, nil

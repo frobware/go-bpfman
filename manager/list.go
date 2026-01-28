@@ -149,7 +149,7 @@ func (m *Manager) Get(ctx context.Context, kernelID uint32) (ProgramInfo, error)
 		// Fetch details for this link
 		_, details, err := m.store.GetLink(ctx, sl.KernelLinkID)
 		if err != nil {
-			m.logger.Warn("failed to get link details", "kernel_link_id", sl.KernelLinkID, "error", err)
+			m.logger.WarnContext(ctx, "failed to get link details", "kernel_link_id", sl.KernelLinkID, "error", err)
 			// Include summary only with nil details
 			linksWithDetails = append(linksWithDetails, LinkWithDetails{
 				Summary: sl,
@@ -230,7 +230,7 @@ func (m *Manager) ListLoadedPrograms(ctx context.Context) ([]LoadedProgram, erro
 		kp, err := m.kernel.GetProgramByID(ctx, kernelID)
 		if err != nil {
 			// Program not in kernel - skip (stale DB entry)
-			m.logger.Debug("skipping stale program",
+			m.logger.DebugContext(ctx, "skipping stale program",
 				"kernel_id", kernelID,
 				"name", prog.ProgramName,
 				"reason", "not in kernel",
@@ -296,7 +296,7 @@ func (m *Manager) FindLoadedProgramByMetadata(ctx context.Context, key, value st
 			return bpfman.Program{}, 0, fmt.Errorf("%w: %d programs with %s=%s but no map owner (kernel IDs: %v)",
 				ErrMultipleProgramsFound, len(matches), key, value, ids)
 		case 1:
-			m.logger.Debug("found map owner among multiple matching programs",
+			m.logger.DebugContext(ctx, "found map owner among multiple matching programs",
 				"key", key,
 				"value", value,
 				"total_matches", len(matches),

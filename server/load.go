@@ -90,7 +90,7 @@ func (s *Server) Load(ctx context.Context, req *pb.LoadRequest) (*pb.LoadRespons
 	rollback := func() {
 		for i := len(loadedKernelIDs) - 1; i >= 0; i-- {
 			if err := s.mgr.Unload(ctx, loadedKernelIDs[i]); err != nil {
-				s.logger.Error("rollback failed", "kernel_id", loadedKernelIDs[i], "error", err)
+				s.logger.ErrorContext(ctx, "rollback failed", "kernel_id", loadedKernelIDs[i], "error", err)
 			}
 		}
 	}
@@ -153,17 +153,17 @@ func (s *Server) Load(ctx context.Context, req *pb.LoadRequest) (*pb.LoadRespons
 		// - Else if this is not the first program in this request: use first program's ID
 		if req.MapOwnerId != nil && *req.MapOwnerId != 0 {
 			spec = spec.WithMapOwnerID(*req.MapOwnerId)
-			s.logger.Info("using explicit map_owner_id from request",
+			s.logger.InfoContext(ctx, "using explicit map_owner_id from request",
 				"program", info.Name,
 				"map_owner_id", *req.MapOwnerId)
 		} else if i > 0 && mapOwnerKernelID != 0 {
 			// Subsequent programs in same request share maps with the first
 			spec = spec.WithMapOwnerID(mapOwnerKernelID)
-			s.logger.Info("sharing maps with first program in request",
+			s.logger.InfoContext(ctx, "sharing maps with first program in request",
 				"program", info.Name,
 				"map_owner_id", mapOwnerKernelID)
 		} else if i == 0 {
-			s.logger.Info("first program in request will own maps",
+			s.logger.InfoContext(ctx, "first program in request will own maps",
 				"program", info.Name)
 		}
 
@@ -230,7 +230,7 @@ func (s *Server) Load(ctx context.Context, req *pb.LoadRequest) (*pb.LoadRespons
 	for i, info := range req.Info {
 		names[i] = info.Name
 	}
-	s.logger.Info("Load", "programs", names, "kernel_ids", loadedKernelIDs)
+	s.logger.InfoContext(ctx, "Load", "programs", names, "kernel_ids", loadedKernelIDs)
 
 	return resp, nil
 }
@@ -252,7 +252,7 @@ func (s *Server) Unload(ctx context.Context, req *pb.UnloadRequest) (*pb.UnloadR
 		return nil, status.Errorf(codes.Internal, "failed to unload program: %v", err)
 	}
 
-	s.logger.Info("Unload", "program_id", req.Id)
+	s.logger.InfoContext(ctx, "Unload", "program_id", req.Id)
 
 	return &pb.UnloadResponse{}, nil
 }

@@ -39,7 +39,7 @@ func (m *Manager) Load(ctx context.Context, spec bpfman.LoadSpec, opts LoadOpts)
 	if err != nil {
 		return bpfman.ManagedProgram{}, fmt.Errorf("load program %s: %w", spec.ProgramName(), err)
 	}
-	m.logger.Info("loaded program",
+	m.logger.InfoContext(ctx, "loaded program",
 		"name", spec.ProgramName(),
 		"kernel_id", loaded.Kernel.ID(),
 		"prog_pin", loaded.Managed.PinPath,
@@ -77,7 +77,7 @@ func (m *Manager) Load(ctx context.Context, spec bpfman.LoadSpec, opts LoadOpts)
 		return txStore.Save(ctx, loaded.Kernel.ID(), metadata)
 	})
 	if err != nil {
-		m.logger.Error("persist failed, rolling back", "kernel_id", loaded.Kernel.ID(), "error", err)
+		m.logger.ErrorContext(ctx, "persist failed, rolling back", "kernel_id", loaded.Kernel.ID(), "error", err)
 		if rbErr := undo.rollback(m.logger); rbErr != nil {
 			return bpfman.ManagedProgram{}, errors.Join(
 				fmt.Errorf("persist metadata: %w", err),
@@ -128,7 +128,7 @@ func (m *Manager) Unload(ctx context.Context, kernelID uint32) error {
 	// COMPUTE: Build unload actions
 	actions := computeUnloadActions(kernelID, progPinPath, mapsDir, linksDir, links)
 
-	m.logger.Info("unloading program", "kernel_id", kernelID, "links", len(links))
+	m.logger.InfoContext(ctx, "unloading program", "kernel_id", kernelID, "links", len(links))
 
 	// EXECUTE: Run all actions
 	if err := m.executor.ExecuteAll(ctx, actions); err != nil {
@@ -138,7 +138,7 @@ func (m *Manager) Unload(ctx context.Context, kernelID uint32) error {
 	// Clean up any dispatchers left empty by the link removal.
 	m.cleanupEmptyDispatchers(ctx, dispatcherKeys)
 
-	m.logger.Info("unloaded program", "kernel_id", kernelID)
+	m.logger.InfoContext(ctx, "unloaded program", "kernel_id", kernelID)
 	return nil
 }
 

@@ -77,7 +77,7 @@ func (s *Server) List(ctx context.Context, req *pb.ListRequest) (*pb.ListRespons
 		})
 	}
 
-	s.logger.Info("List", "programs", len(results))
+	s.logger.InfoContext(ctx, "List", "programs", len(results))
 
 	return &pb.ListResponse{Results: results}, nil
 }
@@ -115,7 +115,7 @@ func (s *Server) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, 
 		linkIDs = append(linkIDs, link.KernelLinkID)
 	}
 
-	s.logger.Info("Get", "program_id", req.Id, "program_name", metadata.ProgramName, "links", len(linkIDs))
+	s.logger.InfoContext(ctx, "Get", "program_id", req.Id, "program_name", metadata.ProgramName, "links", len(linkIDs))
 
 	info := &pb.ProgramInfo{
 		Name:       metadata.ProgramName,
@@ -175,7 +175,7 @@ func (s *Server) ListLinks(ctx context.Context, req *pb.ListLinksRequest) (*pb.L
 		})
 	}
 
-	s.logger.Info("ListLinks", "links", len(links))
+	s.logger.InfoContext(ctx, "ListLinks", "links", len(links))
 
 	return resp, nil
 }
@@ -197,7 +197,7 @@ func (s *Server) GetLink(ctx context.Context, req *pb.GetLinkRequest) (*pb.GetLi
 		return nil, status.Errorf(codes.Internal, "failed to get link: %v", err)
 	}
 
-	s.logger.Info("GetLink", "link_id", req.KernelLinkId, "type", summary.LinkType, "program_id", summary.KernelProgramID)
+	s.logger.InfoContext(ctx, "GetLink", "link_id", req.KernelLinkId, "type", summary.LinkType, "program_id", summary.KernelProgramID)
 
 	return &pb.GetLinkResponse{
 		Link: &pb.LinkInfo{

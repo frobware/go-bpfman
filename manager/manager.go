@@ -46,6 +46,22 @@ import (
 	"github.com/frobware/go-bpfman/interpreter"
 )
 
+// opIDKey is the context key for operation IDs.
+type opIDKey struct{}
+
+// ContextWithOpID returns a new context with the given operation ID.
+func ContextWithOpID(ctx context.Context, opID uint64) context.Context {
+	return context.WithValue(ctx, opIDKey{}, opID)
+}
+
+// OpIDFromContext extracts the operation ID from context, or returns 0 if not set.
+func OpIDFromContext(ctx context.Context) uint64 {
+	if v := ctx.Value(opIDKey{}); v != nil {
+		return v.(uint64)
+	}
+	return 0
+}
+
 // Manager orchestrates BPF program management using fetch/compute/execute.
 type Manager struct {
 	dirs     config.RuntimeDirs
@@ -60,6 +76,8 @@ type Manager struct {
 }
 
 // New creates a new Manager.
+// The logger should already be wrapped with WithOpIDHandler by the caller
+// (typically the server) to enable op_id extraction from context.
 func New(dirs config.RuntimeDirs, store interpreter.Store, kernel interpreter.KernelOperations, logger *slog.Logger) *Manager {
 	if logger == nil {
 		logger = slog.Default()
@@ -102,7 +120,7 @@ func (m *Manager) GC(ctx context.Context) (GCResult, error) {
 	kernelProgramIDs := make(map[uint32]bool)
 	for kp, err := range m.kernel.Programs(ctx) {
 		if err != nil {
-			m.logger.Warn("error iterating kernel programs", "error", err)
+			m.logger.WarnContext(ctx, "error iterating kernel programs", "error", err)
 			continue
 		}
 		kernelProgramIDs[kp.ID] = true
@@ -122,7 +140,7 @@ func (m *Manager) GC(ctx context.Context) (GCResult, error) {
 		}
 		pinPath := m.dirs.ProgPinPath(id)
 		if _, err := os.Stat(pinPath); errors.Is(err, os.ErrNotExist) {
-			m.logger.Info("pin missing for live kernel ID, marking for reap",
+			m.logger.InfoContext(ctx, "pin missing for live kernel ID, marking for reap",
 				"kernel_id", id, "pin_path", pinPath)
 			delete(kernelProgramIDs, id)
 		}
@@ -131,7 +149,7 @@ func (m *Manager) GC(ctx context.Context) (GCResult, error) {
 	kernelLinkIDs := make(map[uint32]bool)
 	for kl, err := range m.kernel.Links(ctx) {
 		if err != nil {
-			m.logger.Warn("error iterating kernel links", "error", err)
+			m.logger.WarnContext(ctx, "error iterating kernel links", "error", err)
 			continue
 		}
 		kernelLinkIDs[kl.ID] = true
@@ -149,7 +167,7 @@ func (m *Manager) GC(ctx context.Context) (GCResult, error) {
 	// G5-G12.
 	state, err := GatherState(ctx, m.store, m.kernel, m.dirs)
 	if err != nil {
-		m.logger.Warn("failed to gather state for post-store GC", "error", err)
+		m.logger.WarnContext(ctx, "failed to gather state for post-store GC", "error", err)
 	} else {
 		violations := Evaluate(state, GCRules())
 		for _, v := range violations {
@@ -157,10 +175,10 @@ func (m *Manager) GC(ctx context.Context) (GCResult, error) {
 				continue
 			}
 			if err := v.Op.Execute(); err != nil {
-				m.logger.Warn("gc operation failed", "op", v.Op.Description, "error", err)
+				m.logger.WarnContext(ctx, "gc operation failed", "op", v.Op.Description, "error", err)
 				continue
 			}
-			m.logger.Info("gc operation applied", "op", v.Op.Description)
+			m.logger.InfoContext(ctx, "gc operation applied", "op", v.Op.Description)
 			switch v.Category {
 			case "gc-dispatcher":
 				result.DispatchersRemoved++
@@ -172,14 +190,14 @@ func (m *Manager) GC(ctx context.Context) (GCResult, error) {
 
 	elapsed := time.Since(start)
 	if result.ProgramsRemoved > 0 || result.DispatchersRemoved > 0 || result.LinksRemoved > 0 || result.OrphanPinsRemoved > 0 {
-		m.logger.Info("gc complete",
+		m.logger.InfoContext(ctx, "gc complete",
 			"duration", elapsed,
 			"programs_removed", result.ProgramsRemoved,
 			"dispatchers_removed", result.DispatchersRemoved,
 			"links_removed", result.LinksRemoved,
 			"orphan_pins_removed", result.OrphanPinsRemoved)
 	} else {
-		m.logger.Debug("gc complete", "duration", elapsed)
+		m.logger.DebugContext(ctx, "gc complete", "duration", elapsed)
 	}
 
 	return result, nil

@@ -38,7 +38,7 @@ func (m *Manager) Detach(ctx context.Context, kernelLinkID uint32) error {
 		if dispType != "" {
 			state, err := m.store.GetDispatcher(ctx, string(dispType), nsid, ifindex)
 			if err != nil {
-				m.logger.Warn("failed to get dispatcher for cleanup", "error", err)
+				m.logger.WarnContext(ctx, "failed to get dispatcher for cleanup", "error", err)
 			} else {
 				dispState = &state
 			}
@@ -46,7 +46,7 @@ func (m *Manager) Detach(ctx context.Context, kernelLinkID uint32) error {
 	}
 
 	// Log before executing
-	m.logger.Info("detaching link",
+	m.logger.InfoContext(ctx, "detaching link",
 		"kernel_link_id", kernelLinkID,
 		"type", summary.LinkType,
 		"program_id", summary.KernelProgramID,
@@ -66,7 +66,7 @@ func (m *Manager) Detach(ctx context.Context, kernelLinkID uint32) error {
 		}
 	}
 
-	m.logger.Info("removed link", "kernel_link_id", kernelLinkID, "type", summary.LinkType, "program_id", summary.KernelProgramID)
+	m.logger.InfoContext(ctx, "removed link", "kernel_link_id", kernelLinkID, "type", summary.LinkType, "program_id", summary.KernelProgramID)
 	return nil
 }
 
@@ -125,7 +125,7 @@ func tcParentHandle(dispType dispatcher.DispatcherType) uint32 {
 func (m *Manager) cleanupEmptyDispatcher(ctx context.Context, state dispatcher.State) error {
 	remaining, err := m.store.CountDispatcherLinks(ctx, state.KernelID)
 	if err != nil {
-		m.logger.Warn("failed to count dispatcher links", "error", err)
+		m.logger.WarnContext(ctx, "failed to count dispatcher links", "error", err)
 		return nil
 	}
 	if remaining > 0 {
@@ -139,7 +139,7 @@ func (m *Manager) cleanupEmptyDispatcher(ctx context.Context, state dispatcher.S
 		parent := tcParentHandle(state.Type)
 		handle, err := m.kernel.FindTCFilterHandle(int(state.Ifindex), parent, state.Priority)
 		if err != nil {
-			m.logger.Warn("failed to find TC filter handle", "error", err)
+			m.logger.WarnContext(ctx, "failed to find TC filter handle", "error", err)
 		} else {
 			tcHandle = handle
 		}
@@ -163,13 +163,13 @@ func (m *Manager) collectDispatcherKeys(ctx context.Context, links []bpfman.Link
 		}
 		_, details, err := m.store.GetLink(ctx, link.KernelLinkID)
 		if err != nil {
-			m.logger.Warn("failed to get link details for dispatcher cleanup",
+			m.logger.WarnContext(ctx, "failed to get link details for dispatcher cleanup",
 				"kernel_link_id", link.KernelLinkID, "error", err)
 			continue
 		}
 		dispType, nsid, ifindex, err := extractDispatcherKey(details)
 		if err != nil {
-			m.logger.Warn("failed to extract dispatcher key",
+			m.logger.WarnContext(ctx, "failed to extract dispatcher key",
 				"kernel_link_id", link.KernelLinkID, "error", err)
 			continue
 		}
@@ -192,7 +192,7 @@ func (m *Manager) cleanupEmptyDispatchers(ctx context.Context, dispatchers map[d
 			continue
 		}
 		if err := m.cleanupEmptyDispatcher(ctx, state); err != nil {
-			m.logger.Warn("dispatcher cleanup failed",
+			m.logger.WarnContext(ctx, "dispatcher cleanup failed",
 				"type", key.Type,
 				"nsid", key.Nsid,
 				"ifindex", key.Ifindex,

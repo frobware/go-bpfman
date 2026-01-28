@@ -53,14 +53,14 @@ func (m *Manager) AttachTracepoint(ctx context.Context, spec bpfman.TracepointAt
 
 	// EXECUTE: Save link metadata
 	if err := m.executor.Execute(ctx, saveAction); err != nil {
-		m.logger.Error("persist failed, rolling back", "program_id", programKernelID, "error", err)
+		m.logger.ErrorContext(ctx, "persist failed, rolling back", "program_id", programKernelID, "error", err)
 		if rbErr := undo.rollback(m.logger); rbErr != nil {
 			return bpfman.LinkSummary{}, errors.Join(fmt.Errorf("save link metadata: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
 		}
 		return bpfman.LinkSummary{}, fmt.Errorf("save link metadata: %w", err)
 	}
 
-	m.logger.Info("attached tracepoint",
+	m.logger.InfoContext(ctx, "attached tracepoint",
 		"kernel_link_id", link.Kernel.ID(),
 		"program_id", programKernelID,
 		"tracepoint", group+"/"+name,
@@ -136,7 +136,7 @@ func (m *Manager) AttachKprobe(ctx context.Context, spec bpfman.KprobeAttachSpec
 
 	// EXECUTE: Save link metadata
 	if err := m.executor.Execute(ctx, saveAction); err != nil {
-		m.logger.Error("persist failed, rolling back", "program_id", programKernelID, "error", err)
+		m.logger.ErrorContext(ctx, "persist failed, rolling back", "program_id", programKernelID, "error", err)
 		if rbErr := undo.rollback(m.logger); rbErr != nil {
 			return bpfman.LinkSummary{}, errors.Join(fmt.Errorf("save link metadata: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
 		}
@@ -147,7 +147,7 @@ func (m *Manager) AttachKprobe(ctx context.Context, spec bpfman.KprobeAttachSpec
 	if retprobe {
 		probeType = "kretprobe"
 	}
-	m.logger.Info("attached "+probeType,
+	m.logger.InfoContext(ctx, "attached "+probeType,
 		"kernel_link_id", link.Kernel.ID(),
 		"program_id", programKernelID,
 		"fn_name", fnName,
@@ -239,7 +239,7 @@ func (m *Manager) AttachUprobe(ctx context.Context, spec bpfman.UprobeAttachSpec
 
 	// EXECUTE: Save link metadata
 	if err := m.executor.Execute(ctx, saveAction); err != nil {
-		m.logger.Error("persist failed, rolling back", "program_id", programKernelID, "error", err)
+		m.logger.ErrorContext(ctx, "persist failed, rolling back", "program_id", programKernelID, "error", err)
 		if rbErr := undo.rollback(m.logger); rbErr != nil {
 			return bpfman.LinkSummary{}, errors.Join(fmt.Errorf("save link metadata: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
 		}
@@ -250,7 +250,7 @@ func (m *Manager) AttachUprobe(ctx context.Context, spec bpfman.UprobeAttachSpec
 	if retprobe {
 		probeType = "uretprobe"
 	}
-	m.logger.Info("attached "+probeType,
+	m.logger.InfoContext(ctx, "attached "+probeType,
 		"kernel_link_id", kernelLinkID,
 		"program_id", programKernelID,
 		"target", target,
@@ -333,14 +333,14 @@ func (m *Manager) AttachFentry(ctx context.Context, spec bpfman.FentryAttachSpec
 
 	// EXECUTE: Save link metadata
 	if err := m.executor.Execute(ctx, saveAction); err != nil {
-		m.logger.Error("persist failed, rolling back", "program_id", programKernelID, "error", err)
+		m.logger.ErrorContext(ctx, "persist failed, rolling back", "program_id", programKernelID, "error", err)
 		if rbErr := undo.rollback(m.logger); rbErr != nil {
 			return bpfman.LinkSummary{}, errors.Join(fmt.Errorf("save link metadata: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
 		}
 		return bpfman.LinkSummary{}, fmt.Errorf("save link metadata: %w", err)
 	}
 
-	m.logger.Info("attached fentry",
+	m.logger.InfoContext(ctx, "attached fentry",
 		"kernel_link_id", link.Kernel.ID(),
 		"program_id", programKernelID,
 		"fn_name", fnName,
@@ -412,14 +412,14 @@ func (m *Manager) AttachFexit(ctx context.Context, spec bpfman.FexitAttachSpec, 
 
 	// EXECUTE: Save link metadata
 	if err := m.executor.Execute(ctx, saveAction); err != nil {
-		m.logger.Error("persist failed, rolling back", "program_id", programKernelID, "error", err)
+		m.logger.ErrorContext(ctx, "persist failed, rolling back", "program_id", programKernelID, "error", err)
 		if rbErr := undo.rollback(m.logger); rbErr != nil {
 			return bpfman.LinkSummary{}, errors.Join(fmt.Errorf("save link metadata: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
 		}
 		return bpfman.LinkSummary{}, fmt.Errorf("save link metadata: %w", err)
 	}
 
-	m.logger.Info("attached fexit",
+	m.logger.InfoContext(ctx, "attached fexit",
 		"kernel_link_id", link.Kernel.ID(),
 		"program_id", programKernelID,
 		"fn_name", fnName,

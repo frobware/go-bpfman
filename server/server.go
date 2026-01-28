@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 
 	"google.golang.org/grpc"
 
@@ -66,6 +67,9 @@ func Run(ctx context.Context, cfg RunConfig) error {
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	}
+	// Wrap with context-aware handler to extract op_id from context.
+	// This must happen at the server level since op_id is generated here.
+	logger = manager.WithOpIDHandler(logger)
 
 	// Ensure directories exist and bpffs is mounted
 	if err := dirs.EnsureDirectories(); err != nil {
@@ -184,17 +188,19 @@ func Run(ctx context.Context, cfg RunConfig) error {
 type Server struct {
 	pb.UnimplementedBpfmanServer
 
-	mu       sync.RWMutex
-	dirs     config.RuntimeDirs
-	kernel   interpreter.KernelOperations
-	store    interpreter.Store
-	puller   interpreter.ImagePuller
-	netIface NetIfaceResolver
-	mgr      *manager.Manager
-	logger   *slog.Logger
+	mu        sync.RWMutex
+	dirs      config.RuntimeDirs
+	kernel    interpreter.KernelOperations
+	store     interpreter.Store
+	puller    interpreter.ImagePuller
+	netIface  NetIfaceResolver
+	mgr       *manager.Manager
+	logger    *slog.Logger
+	opCounter atomic.Uint64
 }
 
 // newWithStore creates a new bpfman gRPC server with a pre-configured store and manager.
+// The logger should already be wrapped with WithOpIDHandler by the caller.
 func newWithStore(dirs config.RuntimeDirs, store interpreter.Store, puller interpreter.ImagePuller, mgr *manager.Manager, logger *slog.Logger) *Server {
 	if logger == nil {
 		logger = slog.Default()
@@ -215,6 +221,8 @@ func New(dirs config.RuntimeDirs, store interpreter.Store, kernel interpreter.Ke
 	if logger == nil {
 		logger = slog.Default()
 	}
+	// Wrap with context-aware handler to extract op_id from context.
+	logger = manager.WithOpIDHandler(logger)
 	s := &Server{
 		dirs:     dirs,
 		kernel:   kernel,
@@ -293,7 +301,7 @@ func (s *Server) serve(ctx context.Context, socketPath, tcpAddr string) error {
 
 	// Start Unix socket server
 	go func() {
-		s.logger.Info("bpfman gRPC server listening", "socket", socketPath)
+		s.logger.InfoContext(ctx, "bpfman gRPC server listening", "socket", socketPath)
 		if err := grpcServer.Serve(unixListener); err != nil {
 			errChan <- fmt.Errorf("unix socket server: %w", err)
 		}
@@ -308,7 +316,7 @@ func (s *Server) serve(ctx context.Context, socketPath, tcpAddr string) error {
 		}
 
 		go func() {
-			s.logger.Info("bpfman gRPC server listening", "tcp", tcpAddr)
+			s.logger.InfoContext(ctx, "bpfman gRPC server listening", "tcp", tcpAddr)
 			if err := grpcServer.Serve(tcpListener); err != nil {
 				errChan <- fmt.Errorf("tcp server: %w", err)
 			}
@@ -318,7 +326,7 @@ func (s *Server) serve(ctx context.Context, socketPath, tcpAddr string) error {
 	// Handle context cancellation for graceful shutdown
 	go func() {
 		<-ctx.Done()
-		s.logger.Info("shutting down gRPC server")
+		s.logger.InfoContext(ctx, "shutting down gRPC server")
 		grpcServer.GracefulStop()
 	}()
 
@@ -331,12 +339,15 @@ func (s *Server) serve(ctx context.Context, socketPath, tcpAddr string) error {
 	}
 }
 
-// loggingInterceptor returns a gRPC unary interceptor that logs incoming requests.
+// loggingInterceptor returns a gRPC unary interceptor that assigns a
+// monotonic operation ID to each request and logs errors.
 func (s *Server) loggingInterceptor() grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		opID := s.opCounter.Add(1)
+		ctx = manager.ContextWithOpID(ctx, opID)
 		resp, err := handler(ctx, req)
 		if err != nil {
-			s.logger.Error("grpc error", "method", info.FullMethod, "error", err)
+			s.logger.ErrorContext(ctx, "grpc error", "op_id", opID, "method", info.FullMethod, "error", err)
 		}
 		return resp, err
 	}

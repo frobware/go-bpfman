@@ -65,7 +65,7 @@ func (m *Manager) AttachXDP(ctx context.Context, spec bpfman.XDPAttachSpec, opts
 		return bpfman.LinkSummary{}, fmt.Errorf("get dispatcher: %w", err)
 	}
 
-	m.logger.Debug("using dispatcher",
+	m.logger.DebugContext(ctx, "using dispatcher",
 		"interface", ifname,
 		"nsid", nsid,
 		"ifindex", ifindex,
@@ -105,7 +105,7 @@ func (m *Manager) AttachXDP(ctx context.Context, spec bpfman.XDPAttachSpec, opts
 		if !errors.Is(err, os.ErrNotExist) {
 			return bpfman.LinkSummary{}, fmt.Errorf("attach XDP extension to %s slot %d: %w", ifname, position, err)
 		}
-		m.logger.Warn("dispatcher pin missing, recreating",
+		m.logger.WarnContext(ctx, "dispatcher pin missing, recreating",
 			"prog_pin_path", progPinPath,
 			"dispatcher_id", dispState.KernelID,
 			"error", err)
@@ -159,14 +159,14 @@ func (m *Manager) AttachXDP(ctx context.Context, spec bpfman.XDPAttachSpec, opts
 
 	// EXECUTE: Save dispatcher update and link metadata
 	if err := m.executor.ExecuteAll(ctx, saveActions); err != nil {
-		m.logger.Error("persist failed, rolling back", "program_id", programKernelID, "error", err)
+		m.logger.ErrorContext(ctx, "persist failed, rolling back", "program_id", programKernelID, "error", err)
 		if rbErr := undo.rollback(m.logger); rbErr != nil {
 			return bpfman.LinkSummary{}, errors.Join(fmt.Errorf("save link metadata: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
 		}
 		return bpfman.LinkSummary{}, fmt.Errorf("save link metadata: %w", err)
 	}
 
-	m.logger.Info("attached XDP via dispatcher",
+	m.logger.InfoContext(ctx, "attached XDP via dispatcher",
 		"kernel_link_id", link.Kernel.ID(),
 		"program_id", programKernelID,
 		"interface", ifname,
@@ -235,7 +235,7 @@ func (m *Manager) createXDPDispatcher(ctx context.Context, nsid uint64, ifindex 
 	revisionDir := dispatcher.DispatcherRevisionDir(m.dirs.FS, dispatcher.DispatcherTypeXDP, nsid, ifindex, revision)
 	progPinPath := dispatcher.DispatcherProgPath(revisionDir)
 
-	m.logger.Info("creating XDP dispatcher",
+	m.logger.InfoContext(ctx, "creating XDP dispatcher",
 		"nsid", nsid,
 		"ifindex", ifindex,
 		"netns", netnsPath,
@@ -272,14 +272,14 @@ func (m *Manager) createXDPDispatcher(ctx context.Context, nsid uint64, ifindex 
 
 	// EXECUTE: Save through executor
 	if err := m.executor.Execute(ctx, saveAction); err != nil {
-		m.logger.Error("persist failed, rolling back XDP dispatcher", "ifindex", ifindex, "error", err)
+		m.logger.ErrorContext(ctx, "persist failed, rolling back XDP dispatcher", "ifindex", ifindex, "error", err)
 		if rbErr := undo.rollback(m.logger); rbErr != nil {
 			return dispatcher.State{}, errors.Join(fmt.Errorf("save dispatcher: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
 		}
 		return dispatcher.State{}, fmt.Errorf("save dispatcher: %w", err)
 	}
 
-	m.logger.Info("created XDP dispatcher",
+	m.logger.InfoContext(ctx, "created XDP dispatcher",
 		"nsid", nsid,
 		"ifindex", ifindex,
 		"dispatcher_id", result.DispatcherID,
