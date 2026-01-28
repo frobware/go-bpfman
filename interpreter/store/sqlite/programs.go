@@ -69,7 +69,10 @@ func (s *sqliteStore) scanProgram(row *sql.Row) (bpfman.Program, error) {
 	}
 
 	// Parse program type
-	programType, _ := bpfman.ParseProgramType(programTypeStr)
+	programType, ok := bpfman.ParseProgramType(programTypeStr)
+	if !ok {
+		return bpfman.Program{}, fmt.Errorf("invalid program type: %q", programTypeStr)
+	}
 
 	// Parse nullable scalar fields
 	var attachFuncVal string
@@ -99,6 +102,12 @@ func (s *sqliteStore) scanProgram(row *sql.Row) (bpfman.Program, error) {
 		}
 	}
 
+	// Parse timestamp
+	createdAt, err := time.Parse(time.RFC3339, createdAtStr)
+	if err != nil {
+		return bpfman.Program{}, fmt.Errorf("invalid created_at timestamp %q: %w", createdAtStr, err)
+	}
+
 	// Build the Program directly from the stored fields
 	prog := bpfman.Program{
 		ProgramName: programName,
@@ -110,6 +119,7 @@ func (s *sqliteStore) scanProgram(row *sql.Row) (bpfman.Program, error) {
 		AttachFunc:  attachFuncVal,
 		MapOwnerID:  mapOwnerIDVal,
 		MapPinPath:  mapPinPathVal,
+		CreatedAt:   createdAt,
 	}
 	if owner.Valid {
 		prog.Owner = owner.String
@@ -122,9 +132,6 @@ func (s *sqliteStore) scanProgram(row *sql.Row) (bpfman.Program, error) {
 	if tagsStr.Valid && tagsStr.String != "" {
 		prog.Tags = strings.Split(tagsStr.String, ",")
 	}
-
-	// Parse timestamp
-	prog.CreatedAt, _ = time.Parse(time.RFC3339, createdAtStr)
 
 	return prog, nil
 }
@@ -466,7 +473,10 @@ func (s *sqliteStore) scanProgramFromRows(rows *sql.Rows) (uint32, bpfman.Progra
 	}
 
 	// Parse program type
-	programType, _ := bpfman.ParseProgramType(programTypeStr)
+	programType, ok := bpfman.ParseProgramType(programTypeStr)
+	if !ok {
+		return 0, bpfman.Program{}, fmt.Errorf("invalid program type for %d: %q", kernelID, programTypeStr)
+	}
 
 	// Parse nullable scalar fields
 	var attachFuncVal string
@@ -496,6 +506,12 @@ func (s *sqliteStore) scanProgramFromRows(rows *sql.Rows) (uint32, bpfman.Progra
 		}
 	}
 
+	// Parse timestamp
+	createdAt, err := time.Parse(time.RFC3339, createdAtStr)
+	if err != nil {
+		return 0, bpfman.Program{}, fmt.Errorf("invalid created_at timestamp for %d: %q: %w", kernelID, createdAtStr, err)
+	}
+
 	// Build the Program directly from the stored fields
 	prog := bpfman.Program{
 		ProgramName: programName,
@@ -507,6 +523,7 @@ func (s *sqliteStore) scanProgramFromRows(rows *sql.Rows) (uint32, bpfman.Progra
 		AttachFunc:  attachFuncVal,
 		MapOwnerID:  mapOwnerIDVal,
 		MapPinPath:  mapPinPathVal,
+		CreatedAt:   createdAt,
 	}
 	if owner.Valid {
 		prog.Owner = owner.String
@@ -519,9 +536,6 @@ func (s *sqliteStore) scanProgramFromRows(rows *sql.Rows) (uint32, bpfman.Progra
 	if tagsStr.Valid && tagsStr.String != "" {
 		prog.Tags = strings.Split(tagsStr.String, ",")
 	}
-
-	// Parse timestamp
-	prog.CreatedAt, _ = time.Parse(time.RFC3339, createdAtStr)
 
 	return kernelID, prog, nil
 }

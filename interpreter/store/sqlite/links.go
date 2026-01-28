@@ -340,7 +340,11 @@ func (s *sqliteStore) scanLinkSummary(row *sql.Row) (bpfman.LinkSummary, error) 
 	if pinPath.Valid {
 		summary.PinPath = pinPath.String
 	}
-	summary.CreatedAt, _ = time.Parse(time.RFC3339, createdAtStr)
+	createdAt, err := time.Parse(time.RFC3339, createdAtStr)
+	if err != nil {
+		return bpfman.LinkSummary{}, fmt.Errorf("invalid created_at timestamp for link %d: %q: %w", summary.KernelLinkID, createdAtStr, err)
+	}
+	summary.CreatedAt = createdAt
 
 	return summary, nil
 }
@@ -364,7 +368,11 @@ func (s *sqliteStore) scanLinkSummaries(rows *sql.Rows) ([]bpfman.LinkSummary, e
 		if pinPath.Valid {
 			summary.PinPath = pinPath.String
 		}
-		summary.CreatedAt, _ = time.Parse(time.RFC3339, createdAtStr)
+		createdAt, err := time.Parse(time.RFC3339, createdAtStr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid created_at timestamp for link %d: %q: %w", summary.KernelLinkID, createdAtStr, err)
+		}
+		summary.CreatedAt = createdAt
 
 		result = append(result, summary)
 	}
