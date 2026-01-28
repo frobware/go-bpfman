@@ -65,7 +65,7 @@ kernel program is still loaded.
 | Rule | Scope | Predicate | Severity | Exceptions |
 |------|-------|-----------|----------|------------|
 | orphan-fs-entries | Each `prog_*` entry in bpffs root | Matching DB program exists (by pin path) | WARNING | None |
-| orphan-fs-entries | Each numeric directory in `fs/links/` | Matching DB program exists (by kernel ID) | WARNING | None |
+| orphan-fs-entries | Each program ID directory in `fs/links/` | Matching DB program exists (by kernel ID) | WARNING | None |
 | orphan-fs-entries | Each numeric directory in `fs/maps/` | Matching DB program exists (by kernel ID) | WARNING | None |
 | orphan-fs-entries | Each `dispatcher_{nsid}_{ifindex}_{rev}` directory | Matching DB dispatcher exists (by type, nsid, ifindex) | WARNING | None |
 

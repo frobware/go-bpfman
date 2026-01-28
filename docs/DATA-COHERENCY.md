@@ -111,7 +111,7 @@ ifindex, revision)` using functions in `dispatcher/paths.go`:
 Program and link pins for non-dispatcher objects use `RuntimeDirs`:
 
 - **Program pin**: `{bpffsRoot}/prog_{kernelID}`
-- **Link pin**: `{bpffsRoot}/links/link_{kernelLinkID}`
+- **Link pin**: `{bpffsRoot}/links/{kernelProgramID}/` (directory per program, containing named link pin files)
 
 ## Implementation
 
@@ -126,3 +126,18 @@ check. It reports findings grouped by severity:
 
 The command is read-only. It does not modify the kernel, filesystem, or
 database. Remediation is left to `bpfman gc` or manual intervention.
+
+## Concurrency
+
+In daemon mode (`bpfman serve`), all mutating operations
+(load/attach/detach/unload) are serialised by the server. There is no
+concurrent access to the filesystem or database.
+
+In non-daemon mode, two concurrent bpfman processes share mutable
+state (bpffs, the SQLite database) with no coordination. For example,
+a detach that removes an empty link pin directory may race with a
+concurrent attach that is about to create a pin inside it. The attach
+path mitigates this by calling `MkdirAll` immediately before pinning,
+so it recreates the directory if it vanishes. Failures at any point
+roll back, so the system self-heals. However, there is no global lock
+and no formal transaction boundary outside of `serve`.
