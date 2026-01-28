@@ -1,12 +1,15 @@
 # Coherency Rules
 
-This document enumerates every coherency rule enforced by `bpfman
-doctor` and `bpfman gc`. Each rule cross-references two of the three
-state sources (database, kernel, filesystem) and specifies what
-constitutes a violation.
+All coherency rules are comparisons between sources; no rule
+inspects a single source in isolation. This document enumerates
+every coherency rule enforced by `bpfman doctor` and `bpfman gc`.
+Each rule cross-references two of the three state sources (database,
+kernel, filesystem) and specifies what constitutes a violation.
 
 Rule names match the `Name` field in the `Rule` struct in
-`manager/coherency.go`.
+`manager/coherency.go`. Rules are grouped by source comparison, not
+by subsystem. Rule names are stable identifiers that may be consumed
+programmatically by tooling.
 
 ## Notation
 

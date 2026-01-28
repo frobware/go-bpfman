@@ -1,5 +1,9 @@
 # Data coherency in bpfman
 
+All coherency rules are comparisons between sources; no rule
+inspects a single source in isolation. This document enumerates all
+divergence scenarios currently recognised by bpfman.
+
 bpfman maintains state across three independent sources of truth:
 
 1. **Kernel** — BPF programs, links, and maps loaded into the kernel,

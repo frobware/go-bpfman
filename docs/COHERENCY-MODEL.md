@@ -8,6 +8,9 @@
 - **Manager GC**: handles cases store GC cannot see
 - **Invariant**: DB intent must be satisfiable by kernel + filesystem
 
+All coherency rules are comparisons between sources; no rule
+inspects a single source in isolation.
+
 ## The Three Sources of State
 
 bpfman maintains state in three places:
