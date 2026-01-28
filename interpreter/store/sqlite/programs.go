@@ -47,7 +47,7 @@ func (s *sqliteStore) scanProgram(row *sql.Row) (bpfman.Program, error) {
 	var programName, programTypeStr, objectPath, pinPath string
 	var attachFunc, globalDataJSON, mapPinPath, imageSourceJSON, owner, description, tagsStr sql.NullString
 	var mapOwnerID sql.NullInt64
-	var createdAtStr string
+	var createdAtStr, updatedAtStr string
 
 	err := row.Scan(
 		&programName,
@@ -62,6 +62,7 @@ func (s *sqliteStore) scanProgram(row *sql.Row) (bpfman.Program, error) {
 		&owner,
 		&description,
 		&createdAtStr,
+		&updatedAtStr,
 		&tagsStr,
 	)
 	if err != nil {
@@ -102,10 +103,14 @@ func (s *sqliteStore) scanProgram(row *sql.Row) (bpfman.Program, error) {
 		}
 	}
 
-	// Parse timestamp
+	// Parse timestamps
 	createdAt, err := time.Parse(time.RFC3339, createdAtStr)
 	if err != nil {
 		return bpfman.Program{}, fmt.Errorf("invalid created_at timestamp %q: %w", createdAtStr, err)
+	}
+	updatedAt, err := time.Parse(time.RFC3339, updatedAtStr)
+	if err != nil {
+		return bpfman.Program{}, fmt.Errorf("invalid updated_at timestamp %q: %w", updatedAtStr, err)
 	}
 
 	// Build the Program directly from the stored fields
@@ -120,6 +125,7 @@ func (s *sqliteStore) scanProgram(row *sql.Row) (bpfman.Program, error) {
 		MapOwnerID:  mapOwnerIDVal,
 		MapPinPath:  mapPinPathVal,
 		CreatedAt:   createdAt,
+		UpdatedAt:   updatedAt,
 	}
 	if owner.Valid {
 		prog.Owner = owner.String
@@ -158,7 +164,17 @@ func (s *sqliteStore) getUserMetadata(ctx context.Context, kernelID uint32) (map
 	return metadata, rows.Err()
 }
 
-// Save stores program metadata.
+// Save stores program metadata using last-write-wins upsert semantics.
+//
+// If a row with the same kernel_id already exists it is overwritten
+// rather than rejected. This is necessary because the kernel reuses
+// program IDs aggressively after unload, so a collision may simply
+// mean the ID was recycled rather than indicating a bug.
+//
+// On overwrite the original created_at is preserved and updated_at
+// is set to the current time so that created_at != updated_at serves
+// as a clear signal that the kernel_id was reused.
+//
 // For atomicity with other operations, wrap in RunInTransaction.
 func (s *sqliteStore) Save(ctx context.Context, kernelID uint32, metadata bpfman.Program) error {
 	// Marshal only opaque fields to JSON
@@ -198,6 +214,8 @@ func (s *sqliteStore) Save(ctx context.Context, kernelID uint32, metadata bpfman
 		description = sql.NullString{String: metadata.Description, Valid: true}
 	}
 
+	now := time.Now().UTC().Format(time.RFC3339)
+
 	start := time.Now()
 	result, err := s.stmtSaveProgram.ExecContext(ctx,
 		kernelID,
@@ -213,6 +231,7 @@ func (s *sqliteStore) Save(ctx context.Context, kernelID uint32, metadata bpfman
 		owner,
 		description,
 		metadata.CreatedAt.Format(time.RFC3339),
+		now,
 	)
 	if err != nil {
 		s.logger.Debug("sql", "stmt", "SaveProgram", "args", []any{kernelID, metadata.ProgramName, "(columns)"}, "duration_ms", msec(time.Since(start)), "error", err)
@@ -458,7 +477,7 @@ func (s *sqliteStore) scanProgramFromRows(rows *sql.Rows) (uint32, bpfman.Progra
 	var programName, programTypeStr, objectPath, pinPath string
 	var attachFunc, globalDataJSON, mapPinPath, imageSourceJSON, owner, description, tagsStr sql.NullString
 	var mapOwnerID sql.NullInt64
-	var createdAtStr string
+	var createdAtStr, updatedAtStr string
 
 	err := rows.Scan(
 		&kernelID,
@@ -474,6 +493,7 @@ func (s *sqliteStore) scanProgramFromRows(rows *sql.Rows) (uint32, bpfman.Progra
 		&owner,
 		&description,
 		&createdAtStr,
+		&updatedAtStr,
 		&tagsStr,
 	)
 	if err != nil {
@@ -514,10 +534,14 @@ func (s *sqliteStore) scanProgramFromRows(rows *sql.Rows) (uint32, bpfman.Progra
 		}
 	}
 
-	// Parse timestamp
+	// Parse timestamps
 	createdAt, err := time.Parse(time.RFC3339, createdAtStr)
 	if err != nil {
 		return 0, bpfman.Program{}, fmt.Errorf("invalid created_at timestamp for %d: %q: %w", kernelID, createdAtStr, err)
+	}
+	updatedAt, err := time.Parse(time.RFC3339, updatedAtStr)
+	if err != nil {
+		return 0, bpfman.Program{}, fmt.Errorf("invalid updated_at timestamp for %d: %q: %w", kernelID, updatedAtStr, err)
 	}
 
 	// Build the Program directly from the stored fields
@@ -532,6 +556,7 @@ func (s *sqliteStore) scanProgramFromRows(rows *sql.Rows) (uint32, bpfman.Progra
 		MapOwnerID:  mapOwnerIDVal,
 		MapPinPath:  mapPinPathVal,
 		CreatedAt:   createdAt,
+		UpdatedAt:   updatedAt,
 	}
 	if owner.Valid {
 		prog.Owner = owner.String

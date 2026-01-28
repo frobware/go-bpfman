@@ -8,8 +8,8 @@ func (s *sqliteStore) prepareProgramStatements() error {
 
 	const sqlGetProgram = `
 		SELECT m.program_name, m.program_type, m.object_path, m.pin_path, m.attach_func,
-		       m.global_data, m.map_owner_id, m.map_pin_path, m.image_source, m.owner, m.description, m.created_at,
-		       GROUP_CONCAT(t.tag) as tags
+		       m.global_data, m.map_owner_id, m.map_pin_path, m.image_source, m.owner, m.description,
+		       m.created_at, m.updated_at, GROUP_CONCAT(t.tag) as tags
 		FROM managed_programs m
 		LEFT JOIN program_tags t ON m.kernel_id = t.kernel_id
 		WHERE m.kernel_id = ?
@@ -18,11 +18,24 @@ func (s *sqliteStore) prepareProgramStatements() error {
 		return fmt.Errorf("prepare GetProgram: %w", err)
 	}
 
+	// Save uses upsert semantics: insert a new row, or overwrite an
+	// existing row that has the same kernel_id. This is necessary
+	// because the kernel can reuse program IDs aggressively after
+	// unload, so a kernel_id collision does not necessarily indicate
+	// a bug -- it may simply mean the ID was recycled. The store
+	// treats Save as "last write wins" and the DB as a cache of
+	// currently managed kernel objects.
+	//
+	// On conflict, created_at is deliberately preserved from the
+	// original row so it records when the kernel_id first appeared
+	// in the store. updated_at is set to the caller-supplied
+	// timestamp so that created_at != updated_at serves as a clear
+	// signal that a kernel_id was reused and the row was overwritten.
 	const sqlSaveProgram = `
 		INSERT INTO managed_programs
 		(kernel_id, program_name, program_type, object_path, pin_path, attach_func,
-		 global_data, map_owner_id, map_pin_path, image_source, owner, description, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 global_data, map_owner_id, map_pin_path, image_source, owner, description, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(kernel_id) DO UPDATE SET
 		  program_name = excluded.program_name,
 		  program_type = excluded.program_type,
@@ -35,7 +48,7 @@ func (s *sqliteStore) prepareProgramStatements() error {
 		  image_source = excluded.image_source,
 		  owner = excluded.owner,
 		  description = excluded.description,
-		  created_at = excluded.created_at`
+		  updated_at = excluded.updated_at`
 	if s.stmtSaveProgram, err = s.db.Prepare(sqlSaveProgram); err != nil {
 		return fmt.Errorf("prepare SaveProgram: %w", err)
 	}
@@ -57,8 +70,8 @@ func (s *sqliteStore) prepareProgramStatements() error {
 
 	const sqlListPrograms = `
 		SELECT m.kernel_id, m.program_name, m.program_type, m.object_path, m.pin_path, m.attach_func,
-		       m.global_data, m.map_owner_id, m.map_pin_path, m.image_source, m.owner, m.description, m.created_at,
-		       GROUP_CONCAT(t.tag) as tags
+		       m.global_data, m.map_owner_id, m.map_pin_path, m.image_source, m.owner, m.description,
+		       m.created_at, m.updated_at, GROUP_CONCAT(t.tag) as tags
 		FROM managed_programs m
 		LEFT JOIN program_tags t ON m.kernel_id = t.kernel_id
 		GROUP BY m.kernel_id`
@@ -68,8 +81,8 @@ func (s *sqliteStore) prepareProgramStatements() error {
 
 	const sqlFindProgramByMetadata = `
 		SELECT m.kernel_id, m.program_name, m.program_type, m.object_path, m.pin_path, m.attach_func,
-		       m.global_data, m.map_owner_id, m.map_pin_path, m.image_source, m.owner, m.description, m.created_at,
-		       GROUP_CONCAT(t.tag) as tags
+		       m.global_data, m.map_owner_id, m.map_pin_path, m.image_source, m.owner, m.description,
+		       m.created_at, m.updated_at, GROUP_CONCAT(t.tag) as tags
 		FROM managed_programs m
 		JOIN program_metadata_index i ON m.kernel_id = i.kernel_id
 		LEFT JOIN program_tags t ON m.kernel_id = t.kernel_id
@@ -82,8 +95,8 @@ func (s *sqliteStore) prepareProgramStatements() error {
 
 	const sqlFindAllProgramsByMetadata = `
 		SELECT m.kernel_id, m.program_name, m.program_type, m.object_path, m.pin_path, m.attach_func,
-		       m.global_data, m.map_owner_id, m.map_pin_path, m.image_source, m.owner, m.description, m.created_at,
-		       GROUP_CONCAT(t.tag) as tags
+		       m.global_data, m.map_owner_id, m.map_pin_path, m.image_source, m.owner, m.description,
+		       m.created_at, m.updated_at, GROUP_CONCAT(t.tag) as tags
 		FROM managed_programs m
 		JOIN program_metadata_index i ON m.kernel_id = i.kernel_id
 		LEFT JOIN program_tags t ON m.kernel_id = t.kernel_id

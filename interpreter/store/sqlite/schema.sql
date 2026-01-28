@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS managed_programs (
     owner TEXT,
     description TEXT,
     created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
 
     FOREIGN KEY (map_owner_id)
         REFERENCES managed_programs(kernel_id)

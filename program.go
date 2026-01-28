@@ -129,6 +129,7 @@ type Program struct {
 	Description  string            `json:"description,omitempty"`
 	Owner        string            `json:"owner,omitempty"`
 	CreatedAt    time.Time         `json:"created_at"`
+	UpdatedAt    time.Time         `json:"updated_at"`
 }
 
 // WithTag returns a new Program with the tag added.
