@@ -2,8 +2,6 @@ package ebpf
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/cilium/ebpf"
@@ -34,13 +32,7 @@ func (k *kernelAdapter) AttachTracepoint(progPinPath, group, name, linkPinPath s
 
 	// Pin the link if a path is provided
 	if linkPinPath != "" {
-		// Ensure parent directory exists
-		if err := os.MkdirAll(filepath.Dir(linkPinPath), 0755); err != nil {
-			lnk.Close()
-			return bpfman.ManagedLink{}, fmt.Errorf("create link pin directory: %w", err)
-		}
-
-		if err := lnk.Pin(linkPinPath); err != nil {
+		if err := pinWithRetry(lnk, linkPinPath); err != nil {
 			lnk.Close()
 			return bpfman.ManagedLink{}, fmt.Errorf("pin link to %s: %w", linkPinPath, err)
 		}
@@ -100,13 +92,7 @@ func (k *kernelAdapter) AttachKprobe(progPinPath, fnName string, offset uint64, 
 
 	// Pin the link if a path is provided
 	if linkPinPath != "" {
-		// Ensure parent directory exists
-		if err := os.MkdirAll(filepath.Dir(linkPinPath), 0755); err != nil {
-			lnk.Close()
-			return bpfman.ManagedLink{}, fmt.Errorf("create link pin directory: %w", err)
-		}
-
-		if err := lnk.Pin(linkPinPath); err != nil {
+		if err := pinWithRetry(lnk, linkPinPath); err != nil {
 			lnk.Close()
 			return bpfman.ManagedLink{}, fmt.Errorf("pin link to %s: %w", linkPinPath, err)
 		}
@@ -176,13 +162,7 @@ func (k *kernelAdapter) attachTracing(progPinPath, fnName, linkPinPath string, l
 
 	// Pin the link if a path is provided
 	if linkPinPath != "" {
-		// Ensure parent directory exists
-		if err := os.MkdirAll(filepath.Dir(linkPinPath), 0755); err != nil {
-			lnk.Close()
-			return bpfman.ManagedLink{}, fmt.Errorf("create link pin directory: %w", err)
-		}
-
-		if err := lnk.Pin(linkPinPath); err != nil {
+		if err := pinWithRetry(lnk, linkPinPath); err != nil {
 			lnk.Close()
 			return bpfman.ManagedLink{}, fmt.Errorf("pin link to %s: %w", linkPinPath, err)
 		}

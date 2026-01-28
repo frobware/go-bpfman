@@ -41,12 +41,7 @@ func (k *kernelAdapter) AttachXDP(progPinPath string, ifindex int, linkPinPath s
 
 	// Pin the link if a path is provided
 	if linkPinPath != "" {
-		if err := os.MkdirAll(filepath.Dir(linkPinPath), 0755); err != nil {
-			lnk.Close()
-			return bpfman.ManagedLink{}, fmt.Errorf("create link pin directory: %w", err)
-		}
-
-		if err := lnk.Pin(linkPinPath); err != nil {
+		if err := pinWithRetry(lnk, linkPinPath); err != nil {
 			lnk.Close()
 			return bpfman.ManagedLink{}, fmt.Errorf("pin link to %s: %w", linkPinPath, err)
 		}
@@ -393,12 +388,7 @@ func (k *kernelAdapter) AttachXDPExtension(dispatcherPinPath, objectPath, progra
 
 	// Pin the link if path provided
 	if linkPinPath != "" {
-		if err := os.MkdirAll(filepath.Dir(linkPinPath), 0755); err != nil {
-			lnk.Close()
-			return bpfman.ManagedLink{}, fmt.Errorf("create extension link pin directory: %w", err)
-		}
-
-		if err := lnk.Pin(linkPinPath); err != nil {
+		if err := pinWithRetry(lnk, linkPinPath); err != nil {
 			lnk.Close()
 			return bpfman.ManagedLink{}, fmt.Errorf("pin extension link to %s: %w", linkPinPath, err)
 		}

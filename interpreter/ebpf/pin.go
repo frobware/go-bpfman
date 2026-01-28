@@ -172,7 +172,41 @@ func (k *kernelAdapter) DetachLink(linkPinPath string) error {
 		}
 		return fmt.Errorf("remove link pin %s: %w", linkPinPath, err)
 	}
+	// Best-effort removal of the parent directory. This races
+	// with concurrent attach in non-daemon mode (no global lock),
+	// but attach calls MkdirAll before pinning, so it recovers
+	// if the directory disappears underneath it.
+	os.Remove(filepath.Dir(linkPinPath))
 	return nil
+}
+
+// pinnable is satisfied by any object that can be pinned to bpffs
+// (e.g. *link.Link, *ebpf.Program).
+type pinnable interface {
+	Pin(string) error
+}
+
+// pinWithRetry creates the parent directory and pins the object. If
+// the pin fails because a concurrent detach removed the directory, it
+// retries once. This covers the race between detach (which removes
+// empty link directories) and attach (which creates them) when
+// running outside daemon mode with no global lock.
+func pinWithRetry(obj pinnable, path string) error {
+	// Two attempts total: one initial attempt plus one retry.
+	for attempt := range 2 {
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			return fmt.Errorf("create pin directory: %w", err)
+		}
+		err := obj.Pin(path)
+		if err == nil {
+			return nil
+		}
+		if attempt == 0 && os.IsNotExist(err) {
+			continue // directory removed between MkdirAll and Pin
+		}
+		return err
+	}
+	return fmt.Errorf("pin %s: directory removed between retries", path)
 }
 
 // RemovePin removes a pin or empty directory from bpffs.

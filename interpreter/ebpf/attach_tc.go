@@ -312,12 +312,7 @@ func (k *kernelAdapter) AttachTCExtension(dispatcherPinPath, objectPath, program
 
 	// Pin the link if path provided
 	if linkPinPath != "" {
-		if err := os.MkdirAll(filepath.Dir(linkPinPath), 0755); err != nil {
-			lnk.Close()
-			return bpfman.ManagedLink{}, fmt.Errorf("create TC extension link pin directory: %w", err)
-		}
-
-		if err := lnk.Pin(linkPinPath); err != nil {
+		if err := pinWithRetry(lnk, linkPinPath); err != nil {
 			lnk.Close()
 			return bpfman.ManagedLink{}, fmt.Errorf("pin TC extension link to %s: %w", linkPinPath, err)
 		}
@@ -408,12 +403,7 @@ func (k *kernelAdapter) AttachTCX(ifindex int, direction, programPinPath, linkPi
 
 		// Pin the link if path provided
 		if linkPinPath != "" {
-			if err := os.MkdirAll(filepath.Dir(linkPinPath), 0755); err != nil {
-				lnk.Close()
-				return fmt.Errorf("create TCX link pin directory: %w", err)
-			}
-
-			if err := lnk.Pin(linkPinPath); err != nil {
+			if err := pinWithRetry(lnk, linkPinPath); err != nil {
 				lnk.Close()
 				return fmt.Errorf("pin TCX link to %s: %w", linkPinPath, err)
 			}
