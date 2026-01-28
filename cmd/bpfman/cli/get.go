@@ -21,14 +21,13 @@ type GetProgramCmd struct {
 }
 
 // Run executes the get program command.
-func (c *GetProgramCmd) Run(cli *CLI) error {
-	b, err := cli.Client()
+func (c *GetProgramCmd) Run(cli *CLI, ctx context.Context) error {
+	b, err := cli.Client(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create client: %w", err)
 	}
 	defer b.Close()
 
-	ctx := context.Background()
 	info, err := b.Get(ctx, c.ProgramID.Value)
 	if err != nil {
 		return err
@@ -50,14 +49,13 @@ type GetLinkCmd struct {
 }
 
 // Run executes the get link command.
-func (c *GetLinkCmd) Run(cli *CLI) error {
-	b, err := cli.Client()
+func (c *GetLinkCmd) Run(cli *CLI, ctx context.Context) error {
+	b, err := cli.Client(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create client: %w", err)
 	}
 	defer b.Close()
 
-	ctx := context.Background()
 	summary, details, err := b.GetLink(ctx, c.LinkID.Value)
 	if errors.Is(err, client.ErrNotSupported) {
 		return fmt.Errorf("getting link details is only available in local mode")

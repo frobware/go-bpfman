@@ -58,7 +58,7 @@ func resolveMode() string {
 // expects the Rust daemon's binary layout.
 // If invoked as "bpfman-ns" (via argv[0], argv[1], or BPFMAN_MODE), runs
 // the namespace helper for container uprobes.
-func Run() {
+func Run(ctx context.Context) {
 	// Check for bpfman-ns mode first - needs special early handling
 	if runAsNS() {
 		return
@@ -69,8 +69,9 @@ func Run() {
 	}
 
 	var c CLI
-	ctx := kong.Parse(&c, KongOptions()...)
-	ctx.FatalIfErrorf(ctx.Run(&c))
+	kctx := kong.Parse(&c, KongOptions()...)
+	kctx.BindTo(ctx, (*context.Context)(nil))
+	kctx.FatalIfErrorf(kctx.Run(&c))
 }
 
 // KongOptions returns the Kong configuration options for the CLI.
@@ -160,7 +161,7 @@ func (c *CLI) LoggerFromConfig() (*slog.Logger, error) {
 // Otherwise, returns a client that spawns an in-process gRPC server,
 // ensuring all operations use the same code path as remote clients.
 // The returned client must be closed when no longer needed.
-func (c *CLI) Client() (client.Client, error) {
+func (c *CLI) Client(ctx context.Context) (client.Client, error) {
 	logger, err := c.Logger()
 	if err != nil {
 		return nil, err
@@ -175,7 +176,7 @@ func (c *CLI) Client() (client.Client, error) {
 		return nil, fmt.Errorf("failed to load config: %w", err)
 	}
 
-	return client.Open(context.Background(),
+	return client.Open(ctx,
 		client.WithLogger(logger),
 		client.WithRuntimeDir(c.RuntimeDir),
 		client.WithConfig(cfg),

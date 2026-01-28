@@ -22,14 +22,13 @@ type ListProgramsCmd struct {
 }
 
 // Run executes the list programs command.
-func (c *ListProgramsCmd) Run(cli *CLI) error {
-	b, err := cli.Client()
+func (c *ListProgramsCmd) Run(cli *CLI, ctx context.Context) error {
+	b, err := cli.Client(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create client: %w", err)
 	}
 	defer b.Close()
 
-	ctx := context.Background()
 	programs, err := b.List(ctx)
 	if err != nil {
 		return err
@@ -59,14 +58,12 @@ type ListLinksCmd struct {
 }
 
 // Run executes the list links command.
-func (c *ListLinksCmd) Run(cli *CLI) error {
-	b, err := cli.Client()
+func (c *ListLinksCmd) Run(cli *CLI, ctx context.Context) error {
+	b, err := cli.Client(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create client: %w", err)
 	}
 	defer b.Close()
-
-	ctx := context.Background()
 
 	var links []interface{}
 	if c.ProgramID != nil {

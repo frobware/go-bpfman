@@ -13,14 +13,12 @@ import (
 type DoctorCmd struct{}
 
 // Run executes the doctor command.
-func (c *DoctorCmd) Run(cli *CLI) error {
-	b, err := cli.Client()
+func (c *DoctorCmd) Run(cli *CLI, ctx context.Context) error {
+	b, err := cli.Client(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create client: %w", err)
 	}
 	defer b.Close()
-
-	ctx := context.Background()
 
 	report, err := b.Doctor(ctx)
 	if errors.Is(err, client.ErrNotSupported) {

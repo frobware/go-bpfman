@@ -11,14 +11,13 @@ type UnloadCmd struct {
 }
 
 // Run executes the unload command.
-func (c *UnloadCmd) Run(cli *CLI) error {
-	b, err := cli.Client()
+func (c *UnloadCmd) Run(cli *CLI, ctx context.Context) error {
+	b, err := cli.Client(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create client: %w", err)
 	}
 	defer b.Close()
 
-	ctx := context.Background()
 	if err := b.Unload(ctx, c.ProgramID.Value); err != nil {
 		return err
 	}

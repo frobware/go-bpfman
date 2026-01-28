@@ -12,14 +12,12 @@ import (
 type GCCmd struct{}
 
 // Run executes the gc command.
-func (c *GCCmd) Run(cli *CLI) error {
-	b, err := cli.Client()
+func (c *GCCmd) Run(cli *CLI, ctx context.Context) error {
+	b, err := cli.Client(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create client: %w", err)
 	}
 	defer b.Close()
-
-	ctx := context.Background()
 
 	result, err := b.GC(ctx)
 	if errors.Is(err, client.ErrNotSupported) {

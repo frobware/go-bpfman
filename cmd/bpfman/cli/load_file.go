@@ -27,14 +27,14 @@ type LoadFileCmd struct {
 }
 
 // Run executes the load file command.
-func (c *LoadFileCmd) Run(cli *CLI) error {
+func (c *LoadFileCmd) Run(cli *CLI, ctx context.Context) error {
 	// Validate object file exists
 	objPath, err := ParseObjectPath(c.Path)
 	if err != nil {
 		return err
 	}
 
-	b, err := cli.Client()
+	b, err := cli.Client(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create client: %w", err)
 	}
@@ -55,7 +55,6 @@ func (c *LoadFileCmd) Run(cli *CLI) error {
 		metadata["bpfman.io/application"] = c.Application
 	}
 
-	ctx := context.Background()
 	results := make([]bpfman.ManagedProgram, 0, len(c.Programs))
 
 	for _, prog := range c.Programs {

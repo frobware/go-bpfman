@@ -22,7 +22,7 @@ type ImageVerifyCmd struct {
 }
 
 // Run executes the image verify command.
-func (c *ImageVerifyCmd) Run(cli *CLI) error {
+func (c *ImageVerifyCmd) Run(cli *CLI, ctx context.Context) error {
 	logger, err := cli.Logger()
 	if err != nil {
 		return fmt.Errorf("failed to create logger: %w", err)
@@ -56,7 +56,6 @@ func (c *ImageVerifyCmd) Run(cli *CLI) error {
 	)
 
 	// Verify
-	ctx := context.Background()
 	if err := verifier.Verify(ctx, c.ImageURL); err != nil {
 		return fmt.Errorf("verification failed: %w", err)
 	}

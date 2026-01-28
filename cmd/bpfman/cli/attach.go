@@ -45,30 +45,30 @@ type AttachCmd struct {
 }
 
 // Run executes the attach command.
-func (c *AttachCmd) Run(cli *CLI) error {
+func (c *AttachCmd) Run(cli *CLI, ctx context.Context) error {
 	switch c.Type {
 	case "tracepoint":
-		return c.attachTracepoint(cli)
+		return c.attachTracepoint(cli, ctx)
 	case "xdp":
-		return c.attachXDP(cli)
+		return c.attachXDP(cli, ctx)
 	case "tc":
-		return c.attachTC(cli)
+		return c.attachTC(cli, ctx)
 	case "tcx":
-		return c.attachTCX(cli)
+		return c.attachTCX(cli, ctx)
 	case "kprobe":
-		return c.attachKprobe(cli)
+		return c.attachKprobe(cli, ctx)
 	case "uprobe":
-		return c.attachUprobe(cli)
+		return c.attachUprobe(cli, ctx)
 	case "fentry":
-		return c.attachFentry(cli)
+		return c.attachFentry(cli, ctx)
 	case "fexit":
-		return c.attachFexit(cli)
+		return c.attachFexit(cli, ctx)
 	default:
 		return fmt.Errorf("unknown attach type: %s", c.Type)
 	}
 }
 
-func (c *AttachCmd) attachTracepoint(cli *CLI) error {
+func (c *AttachCmd) attachTracepoint(cli *CLI, ctx context.Context) error {
 	if c.Tracepoint == "" {
 		return fmt.Errorf("--tracepoint is required for tracepoint attachment")
 	}
@@ -84,13 +84,12 @@ func (c *AttachCmd) attachTracepoint(cli *CLI) error {
 		return fmt.Errorf("invalid tracepoint spec: %w", err)
 	}
 
-	b, err := cli.Client()
+	b, err := cli.Client(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create client: %w", err)
 	}
 	defer b.Close()
 
-	ctx := context.Background()
 	result, err := b.AttachTracepoint(ctx, spec, bpfman.AttachOpts{})
 	if err != nil {
 		return err
@@ -99,7 +98,7 @@ func (c *AttachCmd) attachTracepoint(cli *CLI) error {
 	return c.printLinkResult(ctx, b, result.KernelLinkID)
 }
 
-func (c *AttachCmd) attachXDP(cli *CLI) error {
+func (c *AttachCmd) attachXDP(cli *CLI, ctx context.Context) error {
 	if c.Iface == "" {
 		return fmt.Errorf("--iface is required for XDP attachment")
 	}
@@ -114,13 +113,12 @@ func (c *AttachCmd) attachXDP(cli *CLI) error {
 		return fmt.Errorf("invalid XDP spec: %w", err)
 	}
 
-	b, err := cli.Client()
+	b, err := cli.Client(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create client: %w", err)
 	}
 	defer b.Close()
 
-	ctx := context.Background()
 	result, err := b.AttachXDP(ctx, spec, bpfman.AttachOpts{})
 	if err != nil {
 		return err
@@ -129,7 +127,7 @@ func (c *AttachCmd) attachXDP(cli *CLI) error {
 	return c.printLinkResult(ctx, b, result.KernelLinkID)
 }
 
-func (c *AttachCmd) attachTC(cli *CLI) error {
+func (c *AttachCmd) attachTC(cli *CLI, ctx context.Context) error {
 	if c.Iface == "" {
 		return fmt.Errorf("--iface is required for TC attachment")
 	}
@@ -162,13 +160,12 @@ func (c *AttachCmd) attachTC(cli *CLI) error {
 	}
 	spec = spec.WithPriority(c.Priority).WithProceedOn(proceedOn)
 
-	b, err := cli.Client()
+	b, err := cli.Client(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create client: %w", err)
 	}
 	defer b.Close()
 
-	ctx := context.Background()
 	result, err := b.AttachTC(ctx, spec, bpfman.AttachOpts{})
 	if err != nil {
 		return err
@@ -177,7 +174,7 @@ func (c *AttachCmd) attachTC(cli *CLI) error {
 	return c.printLinkResult(ctx, b, result.KernelLinkID)
 }
 
-func (c *AttachCmd) attachTCX(cli *CLI) error {
+func (c *AttachCmd) attachTCX(cli *CLI, ctx context.Context) error {
 	if c.Iface == "" {
 		return fmt.Errorf("--iface is required for TCX attachment")
 	}
@@ -204,13 +201,12 @@ func (c *AttachCmd) attachTCX(cli *CLI) error {
 	}
 	spec = spec.WithPriority(c.Priority)
 
-	b, err := cli.Client()
+	b, err := cli.Client(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create client: %w", err)
 	}
 	defer b.Close()
 
-	ctx := context.Background()
 	result, err := b.AttachTCX(ctx, spec, bpfman.AttachOpts{})
 	if err != nil {
 		return err
@@ -219,7 +215,7 @@ func (c *AttachCmd) attachTCX(cli *CLI) error {
 	return c.printLinkResult(ctx, b, result.KernelLinkID)
 }
 
-func (c *AttachCmd) attachKprobe(cli *CLI) error {
+func (c *AttachCmd) attachKprobe(cli *CLI, ctx context.Context) error {
 	if c.FnName == "" {
 		return fmt.Errorf("--fn-name is required for kprobe attachment")
 	}
@@ -232,13 +228,12 @@ func (c *AttachCmd) attachKprobe(cli *CLI) error {
 		spec = spec.WithOffset(c.Offset)
 	}
 
-	b, err := cli.Client()
+	b, err := cli.Client(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create client: %w", err)
 	}
 	defer b.Close()
 
-	ctx := context.Background()
 	result, err := b.AttachKprobe(ctx, spec, bpfman.AttachOpts{})
 	if err != nil {
 		return err
@@ -247,7 +242,7 @@ func (c *AttachCmd) attachKprobe(cli *CLI) error {
 	return c.printLinkResult(ctx, b, result.KernelLinkID)
 }
 
-func (c *AttachCmd) attachUprobe(cli *CLI) error {
+func (c *AttachCmd) attachUprobe(cli *CLI, ctx context.Context) error {
 	if c.Target == "" {
 		return fmt.Errorf("--target is required for uprobe attachment")
 	}
@@ -266,13 +261,12 @@ func (c *AttachCmd) attachUprobe(cli *CLI) error {
 		spec = spec.WithContainerPid(c.ContainerPid)
 	}
 
-	b, err := cli.Client()
+	b, err := cli.Client(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create client: %w", err)
 	}
 	defer b.Close()
 
-	ctx := context.Background()
 	result, err := b.AttachUprobe(ctx, spec, bpfman.AttachOpts{})
 	if err != nil {
 		return err
@@ -281,19 +275,18 @@ func (c *AttachCmd) attachUprobe(cli *CLI) error {
 	return c.printLinkResult(ctx, b, result.KernelLinkID)
 }
 
-func (c *AttachCmd) attachFentry(cli *CLI) error {
+func (c *AttachCmd) attachFentry(cli *CLI, ctx context.Context) error {
 	spec, err := bpfman.NewFentryAttachSpec(c.ProgramID.Value)
 	if err != nil {
 		return fmt.Errorf("invalid fentry spec: %w", err)
 	}
 
-	b, err := cli.Client()
+	b, err := cli.Client(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create client: %w", err)
 	}
 	defer b.Close()
 
-	ctx := context.Background()
 	result, err := b.AttachFentry(ctx, spec, bpfman.AttachOpts{})
 	if err != nil {
 		return err
@@ -302,19 +295,18 @@ func (c *AttachCmd) attachFentry(cli *CLI) error {
 	return c.printLinkResult(ctx, b, result.KernelLinkID)
 }
 
-func (c *AttachCmd) attachFexit(cli *CLI) error {
+func (c *AttachCmd) attachFexit(cli *CLI, ctx context.Context) error {
 	spec, err := bpfman.NewFexitAttachSpec(c.ProgramID.Value)
 	if err != nil {
 		return fmt.Errorf("invalid fexit spec: %w", err)
 	}
 
-	b, err := cli.Client()
+	b, err := cli.Client(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create client: %w", err)
 	}
 	defer b.Close()
 
-	ctx := context.Background()
 	result, err := b.AttachFexit(ctx, spec, bpfman.AttachOpts{})
 	if err != nil {
 		return err

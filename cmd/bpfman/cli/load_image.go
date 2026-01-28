@@ -26,7 +26,7 @@ type LoadImageCmd struct {
 }
 
 // Run executes the load image command.
-func (c *LoadImageCmd) Run(cli *CLI) error {
+func (c *LoadImageCmd) Run(cli *CLI, ctx context.Context) error {
 	logger, err := cli.Logger()
 	if err != nil {
 		return fmt.Errorf("failed to create logger: %w", err)
@@ -45,7 +45,7 @@ func (c *LoadImageCmd) Run(cli *CLI) error {
 	}
 
 	// Get client
-	b, err := cli.Client()
+	b, err := cli.Client(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create client: %w", err)
 	}
@@ -110,7 +110,6 @@ func (c *LoadImageCmd) Run(cli *CLI) error {
 	}
 
 	// Load via gRPC - server handles image pulling
-	ctx := context.Background()
 	results, err := b.LoadImage(ctx, ref, programs, client.LoadImageOpts{
 		UserMetadata: metadata,
 	})
