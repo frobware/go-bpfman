@@ -34,11 +34,11 @@ func (c *LoadFileCmd) Run(cli *CLI, ctx context.Context) error {
 		return err
 	}
 
-	return cli.RunWithLock(ctx, func(ctx context.Context) error {
+	results, err := RunWithLockValue(ctx, cli, func(ctx context.Context) ([]bpfman.ManagedProgram, error) {
 		dirs := cli.RuntimeDirs()
 		b, err := cli.Client(ctx)
 		if err != nil {
-			return fmt.Errorf("failed to create client: %w", err)
+			return nil, fmt.Errorf("failed to create client: %w", err)
 		}
 		defer b.Close()
 
@@ -69,7 +69,7 @@ func (c *LoadFileCmd) Run(cli *CLI, ctx context.Context) error {
 				spec, err = bpfman.NewLoadSpec(objPath.Path, prog.Name, prog.Type)
 			}
 			if err != nil {
-				return fmt.Errorf("invalid load spec for %q: %w", prog.Name, err)
+				return nil, fmt.Errorf("invalid load spec for %q: %w", prog.Name, err)
 			}
 
 			// Apply optional fields
@@ -89,17 +89,21 @@ func (c *LoadFileCmd) Run(cli *CLI, ctx context.Context) error {
 			// Load through client
 			loaded, err := b.Load(ctx, spec, opts)
 			if err != nil {
-				return fmt.Errorf("failed to load program %q: %w", prog.Name, err)
+				return nil, fmt.Errorf("failed to load program %q: %w", prog.Name, err)
 			}
 			results = append(results, loaded)
 		}
 
-		output, err := FormatLoadedPrograms(results, &c.OutputFlags)
-		if err != nil {
-			return err
-		}
-
-		fmt.Print(output)
-		return nil
+		return results, nil
 	})
+	if err != nil {
+		return err
+	}
+
+	// Format and emit output outside the lock
+	output, err := FormatLoadedPrograms(results, &c.OutputFlags)
+	if err != nil {
+		return err
+	}
+	return cli.PrintOut(output)
 }

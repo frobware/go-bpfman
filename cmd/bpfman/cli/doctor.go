@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/frobware/go-bpfman/client"
 	"github.com/frobware/go-bpfman/manager"
@@ -16,7 +17,7 @@ type DoctorCmd struct{}
 func (c *DoctorCmd) Run(cli *CLI, ctx context.Context) error {
 	b, err := cli.Client(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to create client: %w", err)
+		return fmt.Errorf("create client: %w", err)
 	}
 	defer b.Close()
 
@@ -29,10 +30,11 @@ func (c *DoctorCmd) Run(cli *CLI, ctx context.Context) error {
 	}
 
 	if len(report.Findings) == 0 {
-		fmt.Println("All checks passed. Database, kernel, and filesystem are coherent.")
-		return nil
+		return cli.PrintOut("All checks passed. Database, kernel, and filesystem are coherent.\n")
 	}
 
+	// Build output in memory then write once
+	var out strings.Builder
 	var errorCount, warningCount int
 	lastCategory := ""
 
@@ -40,12 +42,13 @@ func (c *DoctorCmd) Run(cli *CLI, ctx context.Context) error {
 		category := categoryHeading(f.Category)
 		if category != lastCategory {
 			if lastCategory != "" {
-				fmt.Println()
+				out.WriteString("\n")
 			}
-			fmt.Println(category)
+			out.WriteString(category)
+			out.WriteString("\n")
 			lastCategory = category
 		}
-		fmt.Printf("  %-7s  %s\n", f.Severity, f.Description)
+		fmt.Fprintf(&out, "  %-7s  %s\n", f.Severity, f.Description)
 		switch f.Severity {
 		case manager.SeverityError:
 			errorCount++
@@ -54,9 +57,9 @@ func (c *DoctorCmd) Run(cli *CLI, ctx context.Context) error {
 		}
 	}
 
-	fmt.Printf("\nSummary: %d error(s), %d warning(s)\n", errorCount, warningCount)
+	fmt.Fprintf(&out, "\nSummary: %d error(s), %d warning(s)\n", errorCount, warningCount)
 
-	return nil
+	return cli.PrintOut(out.String())
 }
 
 func categoryHeading(cat string) string {

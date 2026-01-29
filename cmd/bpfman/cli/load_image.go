@@ -44,11 +44,11 @@ func (c *LoadImageCmd) Run(cli *CLI, ctx context.Context) error {
 		return fmt.Errorf("invalid pull policy %q", c.PullPolicy.Value)
 	}
 
-	return cli.RunWithLock(ctx, func(ctx context.Context) error {
+	results, err := RunWithLockValue(ctx, cli, func(ctx context.Context) ([]bpfman.ManagedProgram, error) {
 		// Get client
 		b, err := cli.Client(ctx)
 		if err != nil {
-			return fmt.Errorf("failed to create client: %w", err)
+			return nil, fmt.Errorf("failed to create client: %w", err)
 		}
 		defer b.Close()
 
@@ -57,7 +57,7 @@ func (c *LoadImageCmd) Run(cli *CLI, ctx context.Context) error {
 		if c.RegistryAuth != "" {
 			username, password, err := parseRegistryAuth(c.RegistryAuth)
 			if err != nil {
-				return fmt.Errorf("invalid registry-auth: %w", err)
+				return nil, fmt.Errorf("invalid registry-auth: %w", err)
 			}
 			logger.Debug("using registry auth", "username", username)
 			authConfig = &interpreter.ImageAuth{
@@ -99,7 +99,7 @@ func (c *LoadImageCmd) Run(cli *CLI, ctx context.Context) error {
 				progSpec, specErr = client.NewImageProgramSpec(spec.Name, spec.Type)
 			}
 			if specErr != nil {
-				return fmt.Errorf("invalid program spec for %q: %w", spec.Name, specErr)
+				return nil, fmt.Errorf("invalid program spec for %q: %w", spec.Name, specErr)
 			}
 			if globalData != nil {
 				progSpec = progSpec.WithGlobalData(globalData)
@@ -115,7 +115,7 @@ func (c *LoadImageCmd) Run(cli *CLI, ctx context.Context) error {
 			UserMetadata: metadata,
 		})
 		if err != nil {
-			return fmt.Errorf("failed to load from image: %w", err)
+			return nil, fmt.Errorf("failed to load from image: %w", err)
 		}
 
 		for _, loaded := range results {
@@ -126,15 +126,18 @@ func (c *LoadImageCmd) Run(cli *CLI, ctx context.Context) error {
 			)
 		}
 
-		// Output results
-		output, err := FormatLoadedPrograms(results, &c.OutputFlags)
-		if err != nil {
-			return err
-		}
-
-		fmt.Print(output)
-		return nil
+		return results, nil
 	})
+	if err != nil {
+		return err
+	}
+
+	// Format and emit output outside the lock
+	output, err := FormatLoadedPrograms(results, &c.OutputFlags)
+	if err != nil {
+		return err
+	}
+	return cli.PrintOut(output)
 }
 
 // parseRegistryAuth parses a base64-encoded "username:password" string.

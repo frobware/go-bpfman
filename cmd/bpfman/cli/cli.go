@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -30,6 +31,13 @@ type CLI struct {
 	Remote      string        `name:"remote" short:"r" help:"Remote endpoint (unix:///path or host:port). Connects via gRPC instead of local manager."`
 	LockTimeout time.Duration `name:"lock-timeout" help:"Timeout for acquiring the global writer lock (0 for indefinite)." default:"30s"`
 
+	// Out is the writer for command output. Defaults to os.Stdout.
+	// Injected for testability.
+	Out io.Writer `kong:"-"`
+	// Err is the writer for error output. Defaults to os.Stderr.
+	// Injected for testability.
+	Err io.Writer `kong:"-"`
+
 	Serve  ServeCmd  `cmd:"" help:"Start the gRPC daemon."`
 	Load   LoadCmd   `cmd:"" help:"Load a BPF program from an object file."`
 	Unload UnloadCmd `cmd:"" help:"Unload a managed BPF program."`
@@ -45,6 +53,31 @@ type CLI struct {
 // RuntimeDirs returns the runtime directories configuration.
 func (c *CLI) RuntimeDirs() config.RuntimeDirs {
 	return config.NewRuntimeDirs(c.RuntimeDir)
+}
+
+// WriteOut writes bytes to Out, returning an error if the write fails or
+// is short. Use this for all command output to ensure I/O errors are
+// propagated.
+func (c *CLI) WriteOut(p []byte) error {
+	n, err := c.Out.Write(p)
+	if err != nil {
+		return err
+	}
+	if n != len(p) {
+		return io.ErrShortWrite
+	}
+	return nil
+}
+
+// PrintOut writes a string to Out, returning an error on failure.
+func (c *CLI) PrintOut(s string) error {
+	return c.WriteOut([]byte(s))
+}
+
+// PrintOutf formats and writes to Out, returning an error on failure.
+// Formats in memory first to avoid partial writes on error.
+func (c *CLI) PrintOutf(format string, args ...any) error {
+	return c.PrintOut(fmt.Sprintf(format, args...))
 }
 
 // resolveMode returns the effective mode name by checking the
@@ -74,6 +107,15 @@ func Run(ctx context.Context) {
 
 	var c CLI
 	kctx := kong.Parse(&c, KongOptions()...)
+
+	// Default writers if not injected (e.g., by tests)
+	if c.Out == nil {
+		c.Out = os.Stdout
+	}
+	if c.Err == nil {
+		c.Err = os.Stderr
+	}
+
 	kctx.BindTo(ctx, (*context.Context)(nil))
 	kctx.FatalIfErrorf(kctx.Run(&c))
 }
@@ -215,4 +257,39 @@ func (c *CLI) RunWithLock(ctx context.Context, fn func(context.Context) error) e
 		return err
 	}
 	return nil
+}
+
+// RunWithLockValue is like RunWithLock but returns a value from the locked
+// section. Use this pattern to perform mutations under lock, then format and
+// emit output outside the lock to minimise critical section duration.
+func RunWithLockValue[T any](ctx context.Context, c *CLI, fn func(context.Context) (T, error)) (T, error) {
+	var result T
+
+	if c.Remote != "" {
+		return fn(ctx)
+	}
+
+	// Apply lock timeout if set (0 means indefinite)
+	if c.LockTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, c.LockTimeout)
+		defer cancel()
+	}
+
+	dirs := c.RuntimeDirs()
+	logger, _ := c.Logger()
+
+	err := lock.RunWithTiming(ctx, dirs.Lock, logger, func(ctx context.Context, _ lock.WriterScope) error {
+		var fnErr error
+		result, fnErr = fn(ctx)
+		return fnErr
+	})
+
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return result, fmt.Errorf("timed out waiting for lock %s (--lock-timeout=%v)", dirs.Lock, c.LockTimeout)
+		}
+		return result, err
+	}
+	return result, nil
 }

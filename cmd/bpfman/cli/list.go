@@ -25,7 +25,7 @@ type ListProgramsCmd struct {
 func (c *ListProgramsCmd) Run(cli *CLI, ctx context.Context) error {
 	b, err := cli.Client(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to create client: %w", err)
+		return fmt.Errorf("create client: %w", err)
 	}
 	defer b.Close()
 
@@ -38,17 +38,14 @@ func (c *ListProgramsCmd) Run(cli *CLI, ctx context.Context) error {
 	managedProgs := manager.FilterManaged(programs)
 
 	if len(managedProgs) == 0 {
-		fmt.Println("No managed programs found")
-		return nil
+		return cli.PrintOut("No managed programs found\n")
 	}
 
 	output, err := FormatProgramList(managedProgs, &c.OutputFlags)
 	if err != nil {
 		return err
 	}
-
-	fmt.Print(output)
-	return nil
+	return cli.PrintOut(output)
 }
 
 // ListLinksCmd lists managed links.
@@ -61,7 +58,7 @@ type ListLinksCmd struct {
 func (c *ListLinksCmd) Run(cli *CLI, ctx context.Context) error {
 	b, err := cli.Client(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to create client: %w", err)
+		return fmt.Errorf("create client: %w", err)
 	}
 	defer b.Close()
 
@@ -91,15 +88,12 @@ func (c *ListLinksCmd) Run(cli *CLI, ctx context.Context) error {
 	}
 
 	if len(links) == 0 {
-		fmt.Println("No managed links found")
-		return nil
+		return cli.PrintOut("No managed links found\n")
 	}
 
 	output, err := json.MarshalIndent(links, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal result: %w", err)
 	}
-
-	fmt.Println(string(output))
-	return nil
+	return cli.PrintOutf("%s\n", output)
 }

@@ -24,7 +24,7 @@ type GetProgramCmd struct {
 func (c *GetProgramCmd) Run(cli *CLI, ctx context.Context) error {
 	b, err := cli.Client(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to create client: %w", err)
+		return fmt.Errorf("create client: %w", err)
 	}
 	defer b.Close()
 
@@ -37,9 +37,7 @@ func (c *GetProgramCmd) Run(cli *CLI, ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-
-	fmt.Print(output)
-	return nil
+	return cli.PrintOut(output)
 }
 
 // GetLinkCmd gets details of a link by kernel link ID.
@@ -52,7 +50,7 @@ type GetLinkCmd struct {
 func (c *GetLinkCmd) Run(cli *CLI, ctx context.Context) error {
 	b, err := cli.Client(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to create client: %w", err)
+		return fmt.Errorf("create client: %w", err)
 	}
 	defer b.Close()
 
@@ -75,7 +73,5 @@ func (c *GetLinkCmd) Run(cli *CLI, ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-
-	fmt.Print(output)
-	return nil
+	return cli.PrintOut(output)
 }
