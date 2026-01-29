@@ -178,3 +178,15 @@ func (d RuntimeDirs) EnsureCSIDirectories() error {
 	}
 	return nil
 }
+
+// ScannerDirs returns a bpffs.ScannerDirs for use with bpffs.Scanner.
+func (d RuntimeDirs) ScannerDirs() bpffs.ScannerDirs {
+	return bpffs.ScannerDirs{
+		FS:        d.FS,
+		XDP:       d.FS_XDP,
+		TCIngress: d.FS_TC_INGRESS,
+		TCEgress:  d.FS_TC_EGRESS,
+		Maps:      d.FS_MAPS,
+		Links:     d.FS_LINKS,
+	}
+}

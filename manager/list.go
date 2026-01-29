@@ -6,6 +6,8 @@ import (
 	"fmt"
 
 	"github.com/frobware/go-bpfman"
+	"github.com/frobware/go-bpfman/bpffs"
+	"github.com/frobware/go-bpfman/inspect"
 	"github.com/frobware/go-bpfman/interpreter/store"
 	"github.com/frobware/go-bpfman/kernel"
 )
@@ -41,13 +43,6 @@ type LinkWithDetails struct {
 	Details bpfman.LinkDetails `json:"details"`
 }
 
-// LoadedProgram pairs a program's database metadata with its kernel info.
-type LoadedProgram struct {
-	KernelID   uint32
-	Program    bpfman.Program
-	KernelInfo kernel.Program
-}
-
 // ErrMultipleProgramsFound is returned when multiple programs match the
 // search criteria and none is the map owner.
 var ErrMultipleProgramsFound = errors.New("multiple programs found")
@@ -56,62 +51,11 @@ var ErrMultipleProgramsFound = errors.New("multiple programs found")
 // the map owner (MapOwnerID == 0). This indicates a data inconsistency.
 var ErrMultipleMapOwners = errors.New("multiple map owners found")
 
-// List returns all managed programs with their kernel info.
-func (m *Manager) List(ctx context.Context) ([]ManagedProgram, error) {
-	// FETCH - get store and kernel data
-	stored, err := m.store.List(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	var kernelPrograms []kernel.Program
-	for kp, err := range m.kernel.Programs(ctx) {
-		if err != nil {
-			continue // Skip programs we can't read
-		}
-		kernelPrograms = append(kernelPrograms, kp)
-	}
-
-	// COMPUTE - join data (pure)
-	return joinManagedPrograms(stored, kernelPrograms), nil
-}
-
-// joinManagedPrograms is a pure function that joins kernel and store data.
-func joinManagedPrograms(
-	stored map[uint32]bpfman.Program,
-	kps []kernel.Program,
-) []ManagedProgram {
-	result := make([]ManagedProgram, 0, len(kps))
-
-	for _, kp := range kps {
-		mp := ManagedProgram{
-			KernelProgram: kp,
-		}
-		if metadata, ok := stored[kp.ID]; ok {
-			mp.Metadata = &metadata
-		}
-		result = append(result, mp)
-	}
-
-	return result
-}
-
 // FilterManaged returns only managed programs.
 func FilterManaged(programs []ManagedProgram) []ManagedProgram {
 	var result []ManagedProgram
 	for _, p := range programs {
 		if p.Metadata != nil {
-			result = append(result, p)
-		}
-	}
-	return result
-}
-
-// FilterUnmanaged returns only unmanaged programs.
-func FilterUnmanaged(programs []ManagedProgram) []ManagedProgram {
-	var result []ManagedProgram
-	for _, p := range programs {
-		if p.Metadata == nil {
 			result = append(result, p)
 		}
 	}
@@ -213,40 +157,6 @@ func (m *Manager) GetLink(ctx context.Context, kernelLinkID uint32) (bpfman.Link
 	return m.store.GetLink(ctx, kernelLinkID)
 }
 
-// ListLoadedPrograms returns all programs that exist in both the database
-// and the kernel. This reconciles DB state with kernel state, filtering out
-// stale entries where a program exists in DB but not in the kernel (e.g.,
-// after a daemon restart or failed unload).
-func (m *Manager) ListLoadedPrograms(ctx context.Context) ([]LoadedProgram, error) {
-	// Get all programs from DB
-	dbPrograms, err := m.store.List(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("list programs from store: %w", err)
-	}
-
-	// Filter to only those that exist in kernel
-	var loaded []LoadedProgram
-	for kernelID, prog := range dbPrograms {
-		kp, err := m.kernel.GetProgramByID(ctx, kernelID)
-		if err != nil {
-			// Program not in kernel - skip (stale DB entry)
-			m.logger.DebugContext(ctx, "skipping stale program",
-				"kernel_id", kernelID,
-				"name", prog.ProgramName,
-				"reason", "not in kernel",
-			)
-			continue
-		}
-		loaded = append(loaded, LoadedProgram{
-			KernelID:   kernelID,
-			Program:    prog,
-			KernelInfo: kp,
-		})
-	}
-
-	return loaded, nil
-}
-
 // FindLoadedProgramByMetadata finds a program by metadata key/value from
 // the reconciled list of loaded programs (those in both DB and kernel).
 //
@@ -257,15 +167,20 @@ func (m *Manager) ListLoadedPrograms(ctx context.Context) ([]LoadedProgram, erro
 // Returns an error if no programs match, or if multiple map owners exist
 // (data inconsistency).
 func (m *Manager) FindLoadedProgramByMetadata(ctx context.Context, key, value string) (bpfman.Program, uint32, error) {
-	programs, err := m.ListLoadedPrograms(ctx)
+	scanner := bpffs.NewScanner(m.dirs.ScannerDirs())
+	world, err := inspect.Snapshot(ctx, m.store, m.kernel, scanner)
 	if err != nil {
-		return bpfman.Program{}, 0, fmt.Errorf("list loaded programs: %w", err)
+		return bpfman.Program{}, 0, fmt.Errorf("snapshot: %w", err)
 	}
 
-	var matches []LoadedProgram
-	for _, lp := range programs {
-		if lp.Program.UserMetadata[key] == value {
-			matches = append(matches, lp)
+	// Find managed programs that are also in kernel and match the metadata
+	var matches []inspect.ProgramRow
+	for _, row := range world.Programs {
+		if !row.Presence.InStore || !row.Presence.InKernel {
+			continue
+		}
+		if row.StoreProgram.UserMetadata[key] == value {
+			matches = append(matches, row)
 		}
 	}
 
@@ -273,15 +188,15 @@ func (m *Manager) FindLoadedProgramByMetadata(ctx context.Context, key, value st
 	case 0:
 		return bpfman.Program{}, 0, fmt.Errorf("program with %s=%s: %w", key, value, store.ErrNotFound)
 	case 1:
-		return matches[0].Program, matches[0].KernelID, nil
+		return *matches[0].StoreProgram, matches[0].KernelID, nil
 	default:
 		// Multiple programs match - find the map owner (MapOwnerID == 0).
 		// In multi-program loads, one program owns all maps and the others
 		// reference it via MapOwnerID.
-		var owners []LoadedProgram
-		for _, lp := range matches {
-			if lp.Program.MapOwnerID == 0 {
-				owners = append(owners, lp)
+		var owners []inspect.ProgramRow
+		for _, row := range matches {
+			if row.StoreProgram.MapOwnerID == 0 {
+				owners = append(owners, row)
 			}
 		}
 
@@ -290,8 +205,8 @@ func (m *Manager) FindLoadedProgramByMetadata(ctx context.Context, key, value st
 			// No map owner found - all programs reference another owner
 			// that doesn't match our metadata query. This shouldn't happen.
 			ids := make([]uint32, len(matches))
-			for i, m := range matches {
-				ids[i] = m.KernelID
+			for i, row := range matches {
+				ids[i] = row.KernelID
 			}
 			return bpfman.Program{}, 0, fmt.Errorf("%w: %d programs with %s=%s but no map owner (kernel IDs: %v)",
 				ErrMultipleProgramsFound, len(matches), key, value, ids)
@@ -301,14 +216,14 @@ func (m *Manager) FindLoadedProgramByMetadata(ctx context.Context, key, value st
 				"value", value,
 				"total_matches", len(matches),
 				"owner_kernel_id", owners[0].KernelID,
-				"owner_name", owners[0].Program.ProgramName,
+				"owner_name", owners[0].StoreProgram.ProgramName,
 			)
-			return owners[0].Program, owners[0].KernelID, nil
+			return *owners[0].StoreProgram, owners[0].KernelID, nil
 		default:
 			// Multiple map owners - data inconsistency
 			ids := make([]uint32, len(owners))
-			for i, o := range owners {
-				ids[i] = o.KernelID
+			for i, row := range owners {
+				ids[i] = row.KernelID
 			}
 			return bpfman.Program{}, 0, fmt.Errorf("%w: %d map owners with %s=%s (kernel IDs: %v)",
 				ErrMultipleMapOwners, len(owners), key, value, ids)

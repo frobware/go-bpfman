@@ -9,6 +9,8 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/frobware/go-bpfman"
+	"github.com/frobware/go-bpfman/bpffs"
+	"github.com/frobware/go-bpfman/inspect"
 	"github.com/frobware/go-bpfman/interpreter/store"
 	pb "github.com/frobware/go-bpfman/server/pb"
 )
@@ -22,17 +24,25 @@ func (s *Server) List(ctx context.Context, req *pb.ListRequest) (*pb.ListRespons
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	// Get reconciled list (programs in both DB and kernel)
-	loaded, err := s.mgr.ListLoadedPrograms(ctx)
+	scanner := bpffs.NewScanner(s.dirs.ScannerDirs())
+	world, err := inspect.Snapshot(ctx, s.store, s.kernel, scanner)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to list programs: %v", err)
+		return nil, status.Errorf(codes.Internal, "failed to snapshot: %v", err)
 	}
 
 	var results []*pb.ListResponse_ListResult
 
-	for _, lp := range loaded {
+	for _, row := range world.ManagedPrograms() {
+		// Only include programs that are also in kernel
+		if !row.Presence.InKernel {
+			continue
+		}
+
+		prog := row.StoreProgram
+		kp := row.KernelProgram
+
 		// Filter by program type if specified
-		if req.ProgramType != nil && *req.ProgramType != uint32(lp.Program.ProgramType) {
+		if req.ProgramType != nil && *req.ProgramType != uint32(prog.ProgramType) {
 			continue
 		}
 
@@ -40,7 +50,7 @@ func (s *Server) List(ctx context.Context, req *pb.ListRequest) (*pb.ListRespons
 		if len(req.MatchMetadata) > 0 {
 			match := true
 			for k, v := range req.MatchMetadata {
-				if lp.Program.UserMetadata[k] != v {
+				if prog.UserMetadata[k] != v {
 					match = false
 					break
 				}
@@ -51,28 +61,28 @@ func (s *Server) List(ctx context.Context, req *pb.ListRequest) (*pb.ListRespons
 		}
 
 		info := &pb.ProgramInfo{
-			Name:       lp.Program.ProgramName,
-			Bytecode:   &pb.BytecodeLocation{Location: &pb.BytecodeLocation_File{File: lp.Program.ObjectPath}},
-			Metadata:   lp.Program.UserMetadata,
-			GlobalData: lp.Program.GlobalData,
-			MapPinPath: lp.Program.MapPinPath,
+			Name:       prog.ProgramName,
+			Bytecode:   &pb.BytecodeLocation{Location: &pb.BytecodeLocation_File{File: prog.ObjectPath}},
+			Metadata:   prog.UserMetadata,
+			GlobalData: prog.GlobalData,
+			MapPinPath: prog.MapPinPath,
 		}
-		if lp.Program.MapOwnerID != 0 {
-			info.MapOwnerId = &lp.Program.MapOwnerID
+		if prog.MapOwnerID != 0 {
+			info.MapOwnerId = &prog.MapOwnerID
 		}
 
 		results = append(results, &pb.ListResponse_ListResult{
 			Info: info,
 			KernelInfo: &pb.KernelProgramInfo{
-				Id:          lp.KernelID,
-				Name:        lp.KernelInfo.Name,
-				ProgramType: uint32(lp.Program.ProgramType),
-				Tag:         lp.KernelInfo.Tag,
-				LoadedAt:    lp.KernelInfo.LoadedAt.Format(time.RFC3339),
-				MapIds:      lp.KernelInfo.MapIDs,
-				BtfId:       lp.KernelInfo.BTFId,
-				BytesXlated: lp.KernelInfo.XlatedSize,
-				BytesJited:  lp.KernelInfo.JitedSize,
+				Id:          row.KernelID,
+				Name:        kp.Name,
+				ProgramType: uint32(prog.ProgramType),
+				Tag:         kp.Tag,
+				LoadedAt:    kp.LoadedAt.Format(time.RFC3339),
+				MapIds:      kp.MapIDs,
+				BtfId:       kp.BTFId,
+				BytesXlated: kp.XlatedSize,
+				BytesJited:  kp.JitedSize,
 			},
 		})
 	}
