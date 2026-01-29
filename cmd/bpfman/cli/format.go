@@ -30,7 +30,11 @@ func toKernelType(t bpfman.ProgramType) string {
 
 // FormatProgramInfo formats a ProgramInfo according to the specified output flags.
 func FormatProgramInfo(info manager.ProgramInfo, flags *OutputFlags) (string, error) {
-	switch flags.Format() {
+	format, err := flags.Format()
+	if err != nil {
+		return "", err
+	}
+	switch format {
 	case OutputFormatJSON:
 		return formatProgramInfoJSON(info)
 	case OutputFormatTree:
@@ -255,7 +259,11 @@ func formatProgramInfoTable(info manager.ProgramInfo) string {
 
 // FormatProgramList formats a list of ManagedProgram according to the specified output flags.
 func FormatProgramList(programs []manager.ManagedProgram, flags *OutputFlags) (string, error) {
-	switch flags.Format() {
+	format, err := flags.Format()
+	if err != nil {
+		return "", err
+	}
+	switch format {
 	case OutputFormatJSON:
 		return formatProgramListJSON(programs)
 	case OutputFormatTable:
@@ -328,7 +336,11 @@ func formatProgramListTable(programs []manager.ManagedProgram) string {
 
 // FormatLinkList formats a list of LinkSummary according to the specified output flags.
 func FormatLinkList(links []bpfman.LinkSummary, flags *OutputFlags) (string, error) {
-	switch flags.Format() {
+	format, err := flags.Format()
+	if err != nil {
+		return "", err
+	}
+	switch format {
 	case OutputFormatJSON:
 		return formatLinkListJSON(links)
 	case OutputFormatTable:
@@ -389,7 +401,11 @@ func formatLinkListTable(links []bpfman.LinkSummary) string {
 // FormatLinkResult formats a link result (from attach command) according to
 // the specified output flags. The bpfFunction is the name of the BPF function.
 func FormatLinkResult(bpfFunction string, summary bpfman.LinkSummary, details bpfman.LinkDetails, flags *OutputFlags) (string, error) {
-	switch flags.Format() {
+	format, err := flags.Format()
+	if err != nil {
+		return "", err
+	}
+	switch format {
 	case OutputFormatJSON:
 		return formatLinkResultJSON(bpfFunction, summary, details)
 	case OutputFormatTable:
@@ -545,7 +561,11 @@ type LinkInfo struct {
 
 // FormatLinkInfo formats link info for the get link command according to the specified output flags.
 func FormatLinkInfo(bpfFunction string, summary bpfman.LinkSummary, details bpfman.LinkDetails, flags *OutputFlags) (string, error) {
-	switch flags.Format() {
+	format, err := flags.Format()
+	if err != nil {
+		return "", err
+	}
+	switch format {
 	case OutputFormatJSON:
 		return formatLinkInfoJSON(bpfFunction, summary, details)
 	case OutputFormatTable:
@@ -759,7 +779,11 @@ func formatAttachDetails(details bpfman.LinkDetails) string {
 
 // FormatLoadedPrograms formats a list of loaded ManagedProgram according to the specified output flags.
 func FormatLoadedPrograms(programs []bpfman.ManagedProgram, flags *OutputFlags) (string, error) {
-	switch flags.Format() {
+	format, err := flags.Format()
+	if err != nil {
+		return "", err
+	}
+	switch format {
 	case OutputFormatJSON:
 		return formatLoadedProgramsJSON(programs)
 	case OutputFormatTable:

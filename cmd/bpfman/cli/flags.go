@@ -1,6 +1,9 @@
 package cli
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // DryRunFlag provides a --dry-run flag for commands that support it.
 type DryRunFlag struct {
@@ -32,19 +35,19 @@ type OutputFlags struct {
 	Output string `short:"o" help:"Output format: table, tree, json, jsonpath=EXPR." default:"table"`
 }
 
-// Format returns the base format type.
-func (f *OutputFlags) Format() OutputFormat {
+// Format returns the base format type, or an error if the format is unrecognised.
+func (f *OutputFlags) Format() (OutputFormat, error) {
 	switch {
 	case f.Output == "table":
-		return OutputFormatTable
+		return OutputFormatTable, nil
 	case f.Output == "tree":
-		return OutputFormatTree
+		return OutputFormatTree, nil
 	case f.Output == "json":
-		return OutputFormatJSON
+		return OutputFormatJSON, nil
 	case len(f.Output) > 9 && f.Output[:9] == "jsonpath=":
-		return OutputFormatJSONPath
+		return OutputFormatJSONPath, nil
 	default:
-		return OutputFormatTable
+		return "", fmt.Errorf("unknown output format %q; valid formats: table, tree, json, jsonpath=EXPR", f.Output)
 	}
 }
 
