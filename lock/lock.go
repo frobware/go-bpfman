@@ -18,6 +18,7 @@ package lock
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"syscall"
 	"time"
@@ -80,6 +81,22 @@ func Run(ctx context.Context, lockPath string, fn func(context.Context, WriterSc
 	defer f.Close()
 
 	return fn(ctx, &writerScope{f: f})
+}
+
+// RunWithTiming wraps Run with timing logs for lock acquisition and release.
+// The logger parameter is required; use Run directly if logging is not needed.
+// Logs are tagged with component=lock for selective filtering.
+func RunWithTiming(ctx context.Context, lockPath string, logger *slog.Logger, fn func(context.Context, WriterScope) error) error {
+	logger = logger.With("component", "lock")
+	start := time.Now()
+	return Run(ctx, lockPath, func(ctx context.Context, scope WriterScope) error {
+		acquired := time.Now()
+		logger.Debug("lock acquired", "path", lockPath, "wait_ms", acquired.Sub(start).Milliseconds())
+		defer func() {
+			logger.Debug("lock released", "path", lockPath, "held_ms", time.Since(acquired).Milliseconds())
+		}()
+		return fn(ctx, scope)
+	})
 }
 
 // acquireWriter opens the lock file and acquires exclusive lock.

@@ -383,7 +383,7 @@ func (s *Server) lockInterceptor() grpc.UnaryServerInterceptor {
 		var resp any
 		var handlerErr error
 
-		runErr := lock.Run(ctx, s.dirs.Lock,
+		runErr := lock.RunWithTiming(ctx, s.dirs.Lock, s.logger,
 			func(ctx context.Context, scope lock.WriterScope) error {
 				// Stash scope in ctx so handlers can pass it to manager
 				// methods that need it (e.g., container uprobe).

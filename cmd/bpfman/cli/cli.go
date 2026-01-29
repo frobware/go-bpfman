@@ -204,7 +204,9 @@ func (c *CLI) RunWithLock(ctx context.Context, fn func(context.Context) error) e
 	}
 
 	dirs := c.RuntimeDirs()
-	if err := lock.Run(ctx, dirs.Lock, func(ctx context.Context, _ lock.WriterScope) error {
+	logger, _ := c.Logger()
+
+	if err := lock.RunWithTiming(ctx, dirs.Lock, logger, func(ctx context.Context, _ lock.WriterScope) error {
 		return fn(ctx)
 	}); err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
