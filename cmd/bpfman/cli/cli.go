@@ -297,7 +297,12 @@ func (c *CLI) RunWithLock(ctx context.Context, fn func(context.Context) error) e
 	}
 
 	dirs := c.RuntimeDirs()
-	logger, _ := c.Logger()
+	logger, err := c.Logger()
+	if err != nil {
+		// Fall back to default logger if config parsing fails.
+		// This allows operations to proceed even with invalid logging config.
+		logger = slog.Default()
+	}
 
 	if err := lock.RunWithTiming(ctx, dirs.Lock, logger, func(ctx context.Context, _ lock.WriterScope) error {
 		return fn(ctx)
@@ -328,7 +333,12 @@ func RunWithLockValue[T any](ctx context.Context, c *CLI, fn func(context.Contex
 	}
 
 	dirs := c.RuntimeDirs()
-	logger, _ := c.Logger()
+	logger, logErr := c.Logger()
+	if logErr != nil {
+		// Fall back to default logger if config parsing fails.
+		// This allows operations to proceed even with invalid logging config.
+		logger = slog.Default()
+	}
 
 	err := lock.RunWithTiming(ctx, dirs.Lock, logger, func(ctx context.Context, _ lock.WriterScope) error {
 		var fnErr error

@@ -28,15 +28,16 @@ type AttachCmd struct {
 	Direction string `short:"d" name:"direction" help:"Direction for TC/TCX (ingress or egress)."`
 
 	// TC proceed-on flag
-	ProceedOn []string `name:"proceed-on" help:"TC actions to proceed on (can be repeated). Values: unspec, ok, reclassify, shot, pipe, stolen, queued, repeat, redirect, trap, dispatcher_return." default:"ok,pipe,dispatcher_return"`
+	ProceedOn []string `name:"proceed-on" sep:"," help:"TC actions to proceed on (comma-separated or repeated). Values: unspec, ok, reclassify, shot, pipe, stolen, queued, repeat, redirect, trap, dispatcher_return." default:"ok,pipe,dispatcher_return"`
 
 	// Network namespace flag
 	Netns string `short:"n" name:"netns" help:"Network namespace path (e.g., /var/run/netns/myns)."`
 
 	// Kprobe/uprobe flags
+	// Note: retprobe is NOT a CLI flag - it's derived from the program type
+	// (kretprobe/uretprobe vs kprobe/uprobe) which is determined at load time.
 	FnName       string `short:"f" name:"fn-name" help:"Function name to attach to."`
 	Offset       uint64 `name:"offset" help:"Offset within the function." default:"0"`
-	RetProbe     bool   `name:"retprobe" help:"Attach as return probe instead of entry probe."`
 	Target       string `name:"target" help:"Path to target binary or library (required for uprobe)."`
 	ContainerPid int32  `name:"container-pid" help:"Container PID for namespace-aware uprobe attachment."`
 
@@ -153,6 +154,9 @@ func (c *AttachCmd) attachXDP(ctx context.Context, b client.Client) (attachResul
 	if err != nil {
 		return attachResult{}, fmt.Errorf("invalid XDP spec: %w", err)
 	}
+	if c.Netns != "" {
+		spec = spec.WithNetns(c.Netns)
+	}
 
 	result, err := b.AttachXDP(ctx, spec, bpfman.AttachOpts{})
 	if err != nil {
@@ -193,6 +197,9 @@ func (c *AttachCmd) attachTC(ctx context.Context, b client.Client) (attachResult
 		return attachResult{}, fmt.Errorf("invalid TC spec: %w", err)
 	}
 	spec = spec.WithPriority(c.Priority).WithProceedOn(proceedOn)
+	if c.Netns != "" {
+		spec = spec.WithNetns(c.Netns)
+	}
 
 	result, err := b.AttachTC(ctx, spec, bpfman.AttachOpts{})
 	if err != nil {
@@ -227,6 +234,9 @@ func (c *AttachCmd) attachTCX(ctx context.Context, b client.Client) (attachResul
 		return attachResult{}, fmt.Errorf("invalid TCX spec: %w", err)
 	}
 	spec = spec.WithPriority(c.Priority)
+	if c.Netns != "" {
+		spec = spec.WithNetns(c.Netns)
+	}
 
 	result, err := b.AttachTCX(ctx, spec, bpfman.AttachOpts{})
 	if err != nil {
