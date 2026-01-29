@@ -294,6 +294,14 @@ func protoGetResponseToInfo(resp *pb.GetResponse, kernelID uint32) (manager.Prog
 			GlobalData:   resp.Info.GlobalData,
 			UserMetadata: resp.Info.Metadata,
 		}
+		// GPL compatibility is stored in the database at load time (from the
+		// ELF license section). Despite the field name, KernelInfo.GplCompatible
+		// contains store-derived data, not live kernel data. The kernel doesn't
+		// expose GPL compatibility after load. The field is in KernelProgramInfo
+		// because the protobuf schema is a stable API that we cannot modify.
+		if resp.KernelInfo != nil {
+			prog.GPLCompatible = resp.KernelInfo.GplCompatible
+		}
 
 		// Convert link IDs to LinkWithDetails (summary only, no details from this RPC)
 		var linksWithDetails []manager.LinkWithDetails

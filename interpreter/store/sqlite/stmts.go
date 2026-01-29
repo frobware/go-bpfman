@@ -12,7 +12,7 @@ func (s *sqliteStore) prepareProgramStatements(ctx context.Context) error {
 	const sqlGetProgram = `
 		SELECT m.program_name, m.program_type, m.object_path, m.pin_path, m.attach_func,
 		       m.global_data, m.map_owner_id, m.map_pin_path, m.image_source, m.owner, m.description,
-		       m.created_at, m.updated_at, GROUP_CONCAT(t.tag) as tags
+		       m.gpl_compatible, m.created_at, m.updated_at, GROUP_CONCAT(t.tag) as tags
 		FROM managed_programs m
 		LEFT JOIN program_tags t ON m.kernel_id = t.kernel_id
 		WHERE m.kernel_id = ?
@@ -37,8 +37,8 @@ func (s *sqliteStore) prepareProgramStatements(ctx context.Context) error {
 	const sqlSaveProgram = `
 		INSERT INTO managed_programs
 		(kernel_id, program_name, program_type, object_path, pin_path, attach_func,
-		 global_data, map_owner_id, map_pin_path, image_source, owner, description, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 global_data, map_owner_id, map_pin_path, image_source, owner, description, gpl_compatible, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(kernel_id) DO UPDATE SET
 		  program_name = excluded.program_name,
 		  program_type = excluded.program_type,
@@ -51,6 +51,7 @@ func (s *sqliteStore) prepareProgramStatements(ctx context.Context) error {
 		  image_source = excluded.image_source,
 		  owner = excluded.owner,
 		  description = excluded.description,
+		  gpl_compatible = excluded.gpl_compatible,
 		  updated_at = excluded.updated_at`
 	if s.stmtSaveProgram, err = s.db.PrepareContext(ctx, sqlSaveProgram); err != nil {
 		return fmt.Errorf("prepare SaveProgram: %w", err)
@@ -74,7 +75,7 @@ func (s *sqliteStore) prepareProgramStatements(ctx context.Context) error {
 	const sqlListPrograms = `
 		SELECT m.kernel_id, m.program_name, m.program_type, m.object_path, m.pin_path, m.attach_func,
 		       m.global_data, m.map_owner_id, m.map_pin_path, m.image_source, m.owner, m.description,
-		       m.created_at, m.updated_at, GROUP_CONCAT(t.tag) as tags
+		       m.gpl_compatible, m.created_at, m.updated_at, GROUP_CONCAT(t.tag) as tags
 		FROM managed_programs m
 		LEFT JOIN program_tags t ON m.kernel_id = t.kernel_id
 		GROUP BY m.kernel_id`
@@ -85,7 +86,7 @@ func (s *sqliteStore) prepareProgramStatements(ctx context.Context) error {
 	const sqlFindProgramByMetadata = `
 		SELECT m.kernel_id, m.program_name, m.program_type, m.object_path, m.pin_path, m.attach_func,
 		       m.global_data, m.map_owner_id, m.map_pin_path, m.image_source, m.owner, m.description,
-		       m.created_at, m.updated_at, GROUP_CONCAT(t.tag) as tags
+		       m.gpl_compatible, m.created_at, m.updated_at, GROUP_CONCAT(t.tag) as tags
 		FROM managed_programs m
 		JOIN program_metadata_index i ON m.kernel_id = i.kernel_id
 		LEFT JOIN program_tags t ON m.kernel_id = t.kernel_id
@@ -99,7 +100,7 @@ func (s *sqliteStore) prepareProgramStatements(ctx context.Context) error {
 	const sqlFindAllProgramsByMetadata = `
 		SELECT m.kernel_id, m.program_name, m.program_type, m.object_path, m.pin_path, m.attach_func,
 		       m.global_data, m.map_owner_id, m.map_pin_path, m.image_source, m.owner, m.description,
-		       m.created_at, m.updated_at, GROUP_CONCAT(t.tag) as tags
+		       m.gpl_compatible, m.created_at, m.updated_at, GROUP_CONCAT(t.tag) as tags
 		FROM managed_programs m
 		JOIN program_metadata_index i ON m.kernel_id = i.kernel_id
 		LEFT JOIN program_tags t ON m.kernel_id = t.kernel_id

@@ -55,19 +55,20 @@ func (m *Manager) Load(ctx context.Context, spec bpfman.LoadSpec, opts LoadOpts)
 	// Use the inferred type from the kernel layer (from ELF section name)
 	// rather than the user-specified type.
 	metadata := bpfman.Program{
-		ProgramName:  spec.ProgramName(),
-		ProgramType:  loaded.Managed.Type,
-		ObjectPath:   spec.ObjectPath(),
-		PinPath:      loaded.Managed.PinPath,
-		MapPinPath:   loaded.Managed.PinDir, // Maps directory for CSI/unload
-		GlobalData:   spec.GlobalData(),
-		ImageSource:  spec.ImageSource(),
-		AttachFunc:   spec.AttachFunc(),
-		MapOwnerID:   spec.MapOwnerID(),
-		UserMetadata: opts.UserMetadata,
-		Tags:         nil,
-		Owner:        opts.Owner,
-		CreatedAt:    now,
+		ProgramName:   spec.ProgramName(),
+		ProgramType:   loaded.Managed.Type,
+		ObjectPath:    spec.ObjectPath(),
+		PinPath:       loaded.Managed.PinPath,
+		MapPinPath:    loaded.Managed.PinDir, // Maps directory for CSI/unload
+		GlobalData:    spec.GlobalData(),
+		ImageSource:   spec.ImageSource(),
+		AttachFunc:    spec.AttachFunc(),
+		MapOwnerID:    spec.MapOwnerID(),
+		GPLCompatible: bpfman.ExtractGPLCompatible(loaded.Kernel),
+		UserMetadata:  opts.UserMetadata,
+		Tags:          nil,
+		Owner:         opts.Owner,
+		CreatedAt:     now,
 	}
 
 	// Save atomically persists program metadata. RunInTransaction ensures

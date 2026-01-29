@@ -213,7 +213,7 @@ func (s *Server) Load(ctx context.Context, req *pb.LoadRequest) (*pb.LoadRespons
 				ProgramType:   uint32(loaded.Managed.Type),
 				LoadedAt:      loadedAt,
 				Tag:           loaded.Kernel.Tag(),
-				GplCompatible: loaded.Kernel.GPLCompatible(),
+				GplCompatible: bpfman.ExtractGPLCompatible(loaded.Kernel),
 				Jited:         loaded.Kernel.BytesJited() > 0,
 				MapIds:        loaded.Kernel.MapIDs(),
 				BtfId:         loaded.Kernel.BTFId(),

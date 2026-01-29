@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS managed_programs (
     image_source TEXT,           -- JSON ImageSource struct, NULL if file-loaded
     owner TEXT,
     description TEXT,
+    gpl_compatible INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
 

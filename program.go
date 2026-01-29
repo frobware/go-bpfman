@@ -117,11 +117,12 @@ type Program struct {
 	PinPath     string      `json:"pin_path"`
 
 	// Load-time configuration (stored for reference/potential reload)
-	GlobalData  map[string][]byte `json:"global_data,omitempty"`
-	ImageSource *ImageSource      `json:"image_source,omitempty"`
-	AttachFunc  string            `json:"attach_func,omitempty"`  // For fentry/fexit
-	MapOwnerID  uint32            `json:"map_owner_id,omitempty"` // Program that owns shared maps (0 = self)
-	MapPinPath  string            `json:"map_pin_path,omitempty"` // Directory where maps are pinned
+	GlobalData    map[string][]byte `json:"global_data,omitempty"`
+	ImageSource   *ImageSource      `json:"image_source,omitempty"`
+	AttachFunc    string            `json:"attach_func,omitempty"`  // For fentry/fexit
+	MapOwnerID    uint32            `json:"map_owner_id,omitempty"` // Program that owns shared maps (0 = self)
+	MapPinPath    string            `json:"map_pin_path,omitempty"` // Directory where maps are pinned
+	GPLCompatible bool              `json:"gpl_compatible"`         // Whether program has GPL-compatible license
 
 	// Management metadata
 	Tags         []string          `json:"tags,omitempty"`
@@ -177,6 +178,9 @@ type ManagedProgram struct {
 }
 
 // KernelProgramInfo describes what the kernel reports about a loaded program.
+// Note: GPL compatibility is not exposed here because the kernel doesn't report
+// it after load. It's captured from the ELF at load time and stored in
+// bpfman.Program.GPLCompatible.
 type KernelProgramInfo interface {
 	ID() uint32
 	Name() string
@@ -189,7 +193,22 @@ type KernelProgramInfo interface {
 	VerifiedInstructions() uint32
 	LoadedAt() time.Time
 	MemoryLocked() uint64
+}
+
+// GPLCompatibleProvider is optionally implemented by KernelProgramInfo
+// implementations that capture GPL compatibility at load time from the
+// ELF license section. Use ExtractGPLCompatible to safely extract this.
+type GPLCompatibleProvider interface {
 	GPLCompatible() bool
+}
+
+// ExtractGPLCompatible extracts GPL compatibility from a KernelProgramInfo
+// if it implements GPLCompatibleProvider. Returns false if not available.
+func ExtractGPLCompatible(info KernelProgramInfo) bool {
+	if gpl, ok := info.(GPLCompatibleProvider); ok {
+		return gpl.GPLCompatible()
+	}
+	return false
 }
 
 // MarshalJSON implements json.Marshaler for ManagedProgram.
@@ -219,7 +238,6 @@ func (v kernelProgramView) MarshalJSON() ([]byte, error) {
 		Name                 string      `json:"name"`
 		Type                 ProgramType `json:"type"`
 		Tag                  string      `json:"tag,omitempty"`
-		GPLCompatible        bool        `json:"gpl_compatible"`
 		LoadedAt             string      `json:"loaded_at,omitempty"`
 		MapIDs               []uint32    `json:"map_ids,omitempty"`
 		BTFId                uint32      `json:"btf_id,omitempty"`
@@ -232,7 +250,6 @@ func (v kernelProgramView) MarshalJSON() ([]byte, error) {
 		Name:                 v.info.Name(),
 		Type:                 v.info.Type(),
 		Tag:                  v.info.Tag(),
-		GPLCompatible:        v.info.GPLCompatible(),
 		LoadedAt:             loadedAt,
 		MapIDs:               v.info.MapIDs(),
 		BTFId:                v.info.BTFId(),

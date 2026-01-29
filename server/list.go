@@ -129,18 +129,24 @@ func (s *Server) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, 
 		info.MapOwnerId = &metadata.MapOwnerID
 	}
 
+	// Note: GplCompatible is stored in the database at load time (from the
+	// ELF license section) and retrieved here from metadata, not from the
+	// kernel. The kernel doesn't expose GPL compatibility after load. The
+	// field is in KernelProgramInfo because the protobuf schema is a stable
+	// API that we cannot modify.
 	return &pb.GetResponse{
 		Info: info,
 		KernelInfo: &pb.KernelProgramInfo{
-			Id:          req.Id,
-			Name:        kp.Name,
-			ProgramType: uint32(metadata.ProgramType),
-			Tag:         kp.Tag,
-			LoadedAt:    kp.LoadedAt.Format(time.RFC3339),
-			MapIds:      kp.MapIDs,
-			BtfId:       kp.BTFId,
-			BytesXlated: kp.XlatedSize,
-			BytesJited:  kp.JitedSize,
+			Id:            req.Id,
+			Name:          kp.Name,
+			ProgramType:   uint32(metadata.ProgramType),
+			Tag:           kp.Tag,
+			LoadedAt:      kp.LoadedAt.Format(time.RFC3339),
+			GplCompatible: metadata.GPLCompatible,
+			MapIds:        kp.MapIDs,
+			BtfId:         kp.BTFId,
+			BytesXlated:   kp.XlatedSize,
+			BytesJited:    kp.JitedSize,
 		},
 	}, nil
 }

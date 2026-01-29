@@ -47,6 +47,7 @@ func (s *sqliteStore) scanProgram(row *sql.Row) (bpfman.Program, error) {
 	var programName, programTypeStr, objectPath, pinPath string
 	var attachFunc, globalDataJSON, mapPinPath, imageSourceJSON, owner, description, tagsStr sql.NullString
 	var mapOwnerID sql.NullInt64
+	var gplCompatible int
 	var createdAtStr, updatedAtStr string
 
 	err := row.Scan(
@@ -61,6 +62,7 @@ func (s *sqliteStore) scanProgram(row *sql.Row) (bpfman.Program, error) {
 		&imageSourceJSON,
 		&owner,
 		&description,
+		&gplCompatible,
 		&createdAtStr,
 		&updatedAtStr,
 		&tagsStr,
@@ -115,17 +117,18 @@ func (s *sqliteStore) scanProgram(row *sql.Row) (bpfman.Program, error) {
 
 	// Build the Program directly from the stored fields
 	prog := bpfman.Program{
-		ProgramName: programName,
-		ProgramType: programType,
-		ObjectPath:  objectPath,
-		PinPath:     pinPath,
-		GlobalData:  globalData,
-		ImageSource: imageSource,
-		AttachFunc:  attachFuncVal,
-		MapOwnerID:  mapOwnerIDVal,
-		MapPinPath:  mapPinPathVal,
-		CreatedAt:   createdAt,
-		UpdatedAt:   updatedAt,
+		ProgramName:   programName,
+		ProgramType:   programType,
+		ObjectPath:    objectPath,
+		PinPath:       pinPath,
+		GlobalData:    globalData,
+		ImageSource:   imageSource,
+		AttachFunc:    attachFuncVal,
+		MapOwnerID:    mapOwnerIDVal,
+		MapPinPath:    mapPinPathVal,
+		GPLCompatible: gplCompatible != 0,
+		CreatedAt:     createdAt,
+		UpdatedAt:     updatedAt,
 	}
 	if owner.Valid {
 		prog.Owner = owner.String
@@ -216,6 +219,12 @@ func (s *sqliteStore) Save(ctx context.Context, kernelID uint32, metadata bpfman
 
 	now := time.Now().UTC().Format(time.RFC3339)
 
+	// Convert bool to int for SQLite
+	var gplCompatibleInt int
+	if metadata.GPLCompatible {
+		gplCompatibleInt = 1
+	}
+
 	start := time.Now()
 	result, err := s.stmtSaveProgram.ExecContext(ctx,
 		kernelID,
@@ -230,6 +239,7 @@ func (s *sqliteStore) Save(ctx context.Context, kernelID uint32, metadata bpfman
 		imageSourceJSON,
 		owner,
 		description,
+		gplCompatibleInt,
 		metadata.CreatedAt.Format(time.RFC3339),
 		now,
 	)
@@ -477,6 +487,7 @@ func (s *sqliteStore) scanProgramFromRows(rows *sql.Rows) (uint32, bpfman.Progra
 	var programName, programTypeStr, objectPath, pinPath string
 	var attachFunc, globalDataJSON, mapPinPath, imageSourceJSON, owner, description, tagsStr sql.NullString
 	var mapOwnerID sql.NullInt64
+	var gplCompatible int
 	var createdAtStr, updatedAtStr string
 
 	err := rows.Scan(
@@ -492,6 +503,7 @@ func (s *sqliteStore) scanProgramFromRows(rows *sql.Rows) (uint32, bpfman.Progra
 		&imageSourceJSON,
 		&owner,
 		&description,
+		&gplCompatible,
 		&createdAtStr,
 		&updatedAtStr,
 		&tagsStr,
@@ -546,17 +558,18 @@ func (s *sqliteStore) scanProgramFromRows(rows *sql.Rows) (uint32, bpfman.Progra
 
 	// Build the Program directly from the stored fields
 	prog := bpfman.Program{
-		ProgramName: programName,
-		ProgramType: programType,
-		ObjectPath:  objectPath,
-		PinPath:     pinPath,
-		GlobalData:  globalData,
-		ImageSource: imageSource,
-		AttachFunc:  attachFuncVal,
-		MapOwnerID:  mapOwnerIDVal,
-		MapPinPath:  mapPinPathVal,
-		CreatedAt:   createdAt,
-		UpdatedAt:   updatedAt,
+		ProgramName:   programName,
+		ProgramType:   programType,
+		ObjectPath:    objectPath,
+		PinPath:       pinPath,
+		GlobalData:    globalData,
+		ImageSource:   imageSource,
+		AttachFunc:    attachFuncVal,
+		MapOwnerID:    mapOwnerIDVal,
+		MapPinPath:    mapPinPathVal,
+		GPLCompatible: gplCompatible != 0,
+		CreatedAt:     createdAt,
+		UpdatedAt:     updatedAt,
 	}
 	if owner.Valid {
 		prog.Owner = owner.String

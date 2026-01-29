@@ -209,6 +209,7 @@ func formatProgramInfoTable(info manager.ProgramInfo) string {
 		} else {
 			fmt.Fprintf(bw, " Links:\tNone\n")
 		}
+		fmt.Fprintf(bw, " GPL Compatible:\t%t\n", p.GPLCompatible)
 		bw.Flush()
 		b.WriteString("\n")
 	}
@@ -229,22 +230,6 @@ func formatProgramInfoTable(info manager.ProgramInfo) string {
 			fmt.Fprintf(kw, " Loaded At:\t%s\n", p.LoadedAt.Format(time.RFC3339))
 		}
 		fmt.Fprintf(kw, " Tag:\t%s\n", p.Tag)
-		// FIXME: This code path uses manager.ProgramInfo.Kernel.Program which is
-		// *kernel.Program struct - it doesn't have GPL info. The kernel.Program
-		// struct is populated by querying the kernel directly, but the kernel
-		// doesn't expose GPL compatibility after a program is loaded (it's only
-		// checked at load time).
-		//
-		// In contrast, formatLoadedProgramsTable uses bpfman.ManagedProgram.Kernel
-		// which is the KernelProgramInfo interface that HAS GPLCompatible() because
-		// it's populated at load time from the ELF license section.
-		//
-		// To properly fix this would require:
-		// 1. Adding GPLCompatible to bpfman.Program (database model)
-		// 2. Storing it at load time
-		// 3. Schema migration
-		// 4. Retrieving it in manager.Get()
-		fmt.Fprintf(kw, " GPL Compatible:\tFIXME\n")
 		if len(p.MapIDs) > 0 {
 			fmt.Fprintf(kw, " Map IDs:\t%v\n", p.MapIDs)
 		}
@@ -752,6 +737,7 @@ func formatLoadedProgramsTable(programs []bpfman.ManagedProgram) string {
 			fmt.Fprintf(bw, " Owned Maps:\t%s\n", "None")
 		}
 		fmt.Fprintf(bw, " Links:\t%s\n", "TODO / FIX ME")
+		fmt.Fprintf(bw, " GPL Compatible:\t%t\n", bpfman.ExtractGPLCompatible(p.Kernel))
 		bw.Flush()
 
 		b.WriteString("\n")
@@ -766,7 +752,6 @@ func formatLoadedProgramsTable(programs []bpfman.ManagedProgram) string {
 			fmt.Fprintf(kw, " Loaded At:\t%s\n", p.Kernel.LoadedAt().Format(time.RFC3339))
 		}
 		fmt.Fprintf(kw, " Tag:\t%s\n", p.Kernel.Tag())
-		fmt.Fprintf(kw, " GPL Compatible:\t%t\n", p.Kernel.GPLCompatible())
 		if mapIDs := p.Kernel.MapIDs(); len(mapIDs) > 0 {
 			fmt.Fprintf(kw, " Map IDs:\t%v\n", mapIDs)
 		}
