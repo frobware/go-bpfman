@@ -44,6 +44,7 @@ func (s Severity) String() string {
 type Finding struct {
 	Severity    Severity
 	Category    string
+	RuleName    string
 	Description string
 }
 
@@ -137,6 +138,7 @@ type Operation struct {
 type Violation struct {
 	Severity    Severity
 	Category    string
+	RuleName    string
 	Description string
 	Op          *Operation // nil = report only
 }
@@ -146,6 +148,7 @@ func (v Violation) Finding() Finding {
 	return Finding{
 		Severity:    v.Severity,
 		Category:    v.Category,
+		RuleName:    v.RuleName,
 		Description: v.Description,
 	}
 }
@@ -153,8 +156,9 @@ func (v Violation) Finding() Finding {
 // Rule is a declarative coherency check evaluated over an
 // ObservedState snapshot.
 type Rule struct {
-	Name string
-	Eval func(s *ObservedState) []Violation
+	Name        string
+	Description string // detailed explanation for 'doctor explain'
+	Eval        func(s *ObservedState) []Violation
 }
 
 // --------------------------------------------------------------------
@@ -163,45 +167,78 @@ type Rule struct {
 
 // ObservedState is a point-in-time snapshot of all three state
 // sources with pre-built correlated views. Rules consume this;
-// they never reach back into raw maps.
+// they never reach back into raw maps. All I/O happens during
+// GatherState; view builders and rules are pure joins over facts.
 type ObservedState struct {
-	// Raw facts (private to view builders).
+	// DB facts.
 	dbPrograms    map[uint32]bpfman.Program
 	dbLinks       []bpfman.LinkSummary
 	dbDispatchers []dispatcher.State
-	kernelProgs   map[uint32]bool
-	kernelLinks   map[uint32]bool
 
-	// Indexes.
+	// Kernel facts.
+	kernelProgs          map[uint32]bool
+	kernelLinks          map[uint32]bool
+	kernelProgEnumErrors int
+	kernelLinkEnumErrors int
+
+	// Filesystem facts: pin existence by path.
+	fsPinExists map[string]bool
+
+	// Filesystem facts: directory scans.
+	// These are built during gather from bpffs directory listings.
+	orphans []FsOrphan
+
+	// Filesystem facts: dispatcher revision directory link counts.
+	// Key is dispatcherKey(type, nsid, ifindex).
+	fsDispatcherLinkCount map[string]int
+
+	// Store-derived facts: dispatcher extension link counts.
+	// Key is dispatcher kernel program ID.
+	dbDispatcherExtCount map[uint32]int
+
+	// Netlink-derived facts: TC filter existence.
+	// Key is dispatcherKey(type, nsid, ifindex).
+	tcFilterOK map[string]bool
+
+	// Indexes for join operations.
 	dbProgPins       map[string]bool
 	dbProgIDs        map[uint32]bool
 	dbDispatcherKeys map[string]bool
 
-	// Runtime deps.
-	dirs             config.RuntimeDirs
-	countLinks       func(kernelID uint32) (int, error)
-	findTCFilter     func(ifindex int, parent uint32, priority uint16) (uint32, error)
+	// Runtime context (immutable after gather).
+	dirs config.RuntimeDirs
+
+	// Mutation capability for GC operations only.
+	// Not used during rule evaluation.
 	deleteDispatcher func(dispType string, nsid uint64, ifindex uint32) error
 
-	// Cached views (built lazily on first access).
+	// Cached views (built lazily on first access, pure joins).
 	programs    []ProgramState
 	links       []LinkState
 	dispatchers []DispatcherState
-	orphans     []FsOrphan
 }
 
 // GatherState builds an ObservedState by scanning all three sources.
+// All I/O happens here; the returned state is a pure fact store.
 func GatherState(ctx context.Context, store interpreter.Store, kernel interpreter.KernelOperations, dirs config.RuntimeDirs) (*ObservedState, error) {
 	s := &ObservedState{
-		kernelProgs:      make(map[uint32]bool),
-		kernelLinks:      make(map[uint32]bool),
-		dbProgPins:       make(map[string]bool),
-		dbProgIDs:        make(map[uint32]bool),
-		dbDispatcherKeys: make(map[string]bool),
-		dirs:             dirs,
+		kernelProgs:           make(map[uint32]bool),
+		kernelLinks:           make(map[uint32]bool),
+		fsPinExists:           make(map[string]bool),
+		fsDispatcherLinkCount: make(map[string]int),
+		dbDispatcherExtCount:  make(map[uint32]int),
+		tcFilterOK:            make(map[string]bool),
+		dbProgPins:            make(map[string]bool),
+		dbProgIDs:             make(map[uint32]bool),
+		dbDispatcherKeys:      make(map[string]bool),
+		dirs:                  dirs,
 	}
 
 	var err error
+
+	// ----------------------------------------------------------------
+	// Phase 1: DB facts
+	// ----------------------------------------------------------------
 
 	s.dbPrograms, err = store.List(ctx)
 	if err != nil {
@@ -218,21 +255,7 @@ func GatherState(ctx context.Context, store interpreter.Store, kernel interprete
 		return nil, fmt.Errorf("list dispatchers: %w", err)
 	}
 
-	for kp, err := range kernel.Programs(ctx) {
-		if err != nil {
-			continue
-		}
-		s.kernelProgs[kp.ID] = true
-	}
-
-	for kl, err := range kernel.Links(ctx) {
-		if err != nil {
-			continue
-		}
-		s.kernelLinks[kl.ID] = true
-	}
-
-	// Build indexes.
+	// Build DB indexes.
 	for kernelID, prog := range s.dbPrograms {
 		s.dbProgIDs[kernelID] = true
 		if prog.PinPath != "" {
@@ -243,146 +266,111 @@ func GatherState(ctx context.Context, store interpreter.Store, kernel interprete
 		s.dbDispatcherKeys[dispatcherKey(d.Type, d.Nsid, d.Ifindex)] = true
 	}
 
-	// Wire up query functions.
-	s.countLinks = func(kernelID uint32) (int, error) {
-		return store.CountDispatcherLinks(ctx, kernelID)
-	}
-	s.findTCFilter = func(ifindex int, parent uint32, priority uint16) (uint32, error) {
-		return kernel.FindTCFilterHandle(ctx, ifindex, parent, priority)
-	}
-	s.deleteDispatcher = func(dispType string, nsid uint64, ifindex uint32) error {
-		return store.DeleteDispatcher(ctx, dispType, nsid, ifindex)
-	}
+	// ----------------------------------------------------------------
+	// Phase 2: Kernel facts
+	// ----------------------------------------------------------------
 
-	return s, nil
-}
-
-// --------------------------------------------------------------------
-// View builders: construct correlated tuples from raw facts.
-// All joins happen here. Rules never touch raw maps.
-// --------------------------------------------------------------------
-
-// Programs returns one ProgramState per DB program, correlated with
-// kernel and filesystem state.
-func (s *ObservedState) Programs() []ProgramState {
-	if s.programs != nil {
-		return s.programs
-	}
-	for id, prog := range s.dbPrograms {
-		ps := ProgramState{
-			KernelID: id,
-			DB:       &prog,
-			Kernel:   s.kernelProgs[id],
-			PinPath:  prog.PinPath,
+	for kp, err := range kernel.Programs(ctx) {
+		if err != nil {
+			s.kernelProgEnumErrors++
+			continue
 		}
+		s.kernelProgs[kp.ID] = true
+	}
+
+	for kl, err := range kernel.Links(ctx) {
+		if err != nil {
+			s.kernelLinkEnumErrors++
+			continue
+		}
+		s.kernelLinks[kl.ID] = true
+	}
+
+	// ----------------------------------------------------------------
+	// Phase 3: Store-derived facts (dispatcher extension counts)
+	// ----------------------------------------------------------------
+
+	for _, d := range s.dbDispatchers {
+		if count, err := store.CountDispatcherLinks(ctx, d.KernelID); err == nil {
+			s.dbDispatcherExtCount[d.KernelID] = count
+		}
+	}
+
+	// ----------------------------------------------------------------
+	// Phase 4: Netlink facts (TC filter checks)
+	// ----------------------------------------------------------------
+
+	for _, d := range s.dbDispatchers {
+		if d.Type != dispatcher.DispatcherTypeTCIngress && d.Type != dispatcher.DispatcherTypeTCEgress {
+			continue
+		}
+		if d.Priority == 0 {
+			continue
+		}
+		key := dispatcherKey(d.Type, d.Nsid, d.Ifindex)
+		parent := tcParent(d.Type)
+		_, err := kernel.FindTCFilterHandle(ctx, int(d.Ifindex), parent, d.Priority)
+		s.tcFilterOK[key] = (err == nil)
+	}
+
+	// ----------------------------------------------------------------
+	// Phase 5: Filesystem facts - collect paths to stat
+	// ----------------------------------------------------------------
+
+	pathsToStat := make(map[string]struct{})
+
+	// Program pin paths from DB.
+	for _, prog := range s.dbPrograms {
 		if prog.PinPath != "" {
-			_, err := os.Stat(prog.PinPath)
-			if err == nil || os.IsNotExist(err) {
-				exists := err == nil
-				ps.PinExist = &exists
-			}
-			// Other errors (EPERM, EIO): leave PinExist nil.
+			pathsToStat[prog.PinPath] = struct{}{}
 		}
-		s.programs = append(s.programs, ps)
 	}
-	return s.programs
-}
 
-// Links returns one LinkState per DB link, correlated with kernel
-// state and filesystem.
-func (s *ObservedState) Links() []LinkState {
-	if s.links != nil {
-		return s.links
-	}
+	// Link pin paths from DB (non-synthetic only).
 	for i := range s.dbLinks {
 		link := &s.dbLinks[i]
-		ls := LinkState{
-			DB:        link,
-			Synthetic: bpfman.IsSyntheticLinkID(link.KernelLinkID),
-			Kernel:    s.kernelLinks[link.KernelLinkID],
+		if link.PinPath != "" && !bpfman.IsSyntheticLinkID(link.KernelLinkID) {
+			pathsToStat[link.PinPath] = struct{}{}
 		}
-		if link.PinPath != "" && !ls.Synthetic {
-			_, err := os.Stat(link.PinPath)
-			if err == nil || os.IsNotExist(err) {
-				exists := err == nil
-				ls.PinExist = &exists
-			}
-		}
-		s.links = append(s.links, ls)
 	}
-	return s.links
-}
 
-// Dispatchers returns one DispatcherState per DB dispatcher,
-// correlated with kernel, filesystem, and extension link counts.
-func (s *ObservedState) Dispatchers() []DispatcherState {
-	if s.dispatchers != nil {
-		return s.dispatchers
-	}
+	// Dispatcher prog pins and XDP link pins.
 	for _, d := range s.dbDispatchers {
-		revDir := dispatcher.DispatcherRevisionDir(s.dirs.FS, d.Type, d.Nsid, d.Ifindex, d.Revision)
+		revDir := dispatcher.DispatcherRevisionDir(dirs.FS, d.Type, d.Nsid, d.Ifindex, d.Revision)
 		progPin := dispatcher.DispatcherProgPath(revDir)
+		pathsToStat[progPin] = struct{}{}
 
-		ds := DispatcherState{
-			DB:         &d,
-			KernelProg: s.kernelProgs[d.KernelID],
-			RevDir:     revDir,
-			ProgPin:    progPin,
-			LinkCount:  -1,
-		}
-
-		// Prog pin existence.
-		if _, err := os.Stat(progPin); err == nil || os.IsNotExist(err) {
-			ppExists := err == nil
-			ds.ProgPinExist = &ppExists
-		}
-
-		// XDP link checks.
 		if d.Type == dispatcher.DispatcherTypeXDP {
-			ds.KernelLink = d.LinkID != 0 && s.kernelLinks[d.LinkID]
-			linkPin := dispatcher.DispatcherLinkPath(s.dirs.FS, d.Type, d.Nsid, d.Ifindex)
-			if _, err := os.Stat(linkPin); err == nil || os.IsNotExist(err) {
-				lpExists := err == nil
-				ds.LinkPinExist = &lpExists
-			}
+			linkPin := dispatcher.DispatcherLinkPath(dirs.FS, d.Type, d.Nsid, d.Ifindex)
+			pathsToStat[linkPin] = struct{}{}
 		}
-
-		// TC filter check.
-		if d.Type == dispatcher.DispatcherTypeTCIngress || d.Type == dispatcher.DispatcherTypeTCEgress {
-			if d.Priority > 0 {
-				parent := tcParent(d.Type)
-				_, err := s.findTCFilter(int(d.Ifindex), parent, d.Priority)
-				ok := err == nil
-				ds.TCFilterOK = &ok
-			}
-		}
-
-		// Extension link count.
-		if count, err := s.countLinks(d.KernelID); err == nil {
-			ds.LinkCount = count
-		}
-
-		s.dispatchers = append(s.dispatchers, ds)
 	}
-	return s.dispatchers
-}
 
-// OrphanFsEntries returns filesystem entries under the bpffs tree
-// that have no corresponding DB record.
-func (s *ObservedState) OrphanFsEntries() []FsOrphan {
-	if s.orphans != nil {
-		return s.orphans
+	// Stat all collected paths.
+	for path := range pathsToStat {
+		_, err := os.Stat(path)
+		if err == nil {
+			s.fsPinExists[path] = true
+		} else if os.IsNotExist(err) {
+			s.fsPinExists[path] = false
+		}
+		// Other errors (EPERM, EIO): path not in map = unknown.
 	}
+
+	// ----------------------------------------------------------------
+	// Phase 6: Filesystem facts - directory scans for orphans
+	// ----------------------------------------------------------------
+
 	s.orphans = make([]FsOrphan, 0)
 
-	// Orphan prog_* pins.
-	if entries, err := os.ReadDir(s.dirs.FS); err == nil {
+	// Scan dirs.FS for orphan prog_* pins.
+	if entries, err := os.ReadDir(dirs.FS); err == nil {
 		for _, entry := range entries {
 			name := entry.Name()
 			if !strings.HasPrefix(name, "prog_") {
 				continue
 			}
-			pinPath := filepath.Join(s.dirs.FS, name)
+			pinPath := filepath.Join(dirs.FS, name)
 			if s.dbProgPins[pinPath] {
 				continue
 			}
@@ -393,8 +381,8 @@ func (s *ObservedState) OrphanFsEntries() []FsOrphan {
 		}
 	}
 
-	// Orphan link pin directories.
-	if entries, err := os.ReadDir(s.dirs.FS_LINKS); err == nil {
+	// Scan dirs.FS_LINKS for orphan link directories.
+	if entries, err := os.ReadDir(dirs.FS_LINKS); err == nil {
 		for _, entry := range entries {
 			var progID uint32
 			if n, _ := fmt.Sscanf(entry.Name(), "%d", &progID); n != 1 {
@@ -404,15 +392,15 @@ func (s *ObservedState) OrphanFsEntries() []FsOrphan {
 				continue
 			}
 			s.orphans = append(s.orphans, FsOrphan{
-				Path:     filepath.Join(s.dirs.FS_LINKS, entry.Name()),
+				Path:     filepath.Join(dirs.FS_LINKS, entry.Name()),
 				KernelID: progID,
 				Kind:     "link-dir",
 			})
 		}
 	}
 
-	// Orphan map pin directories.
-	if entries, err := os.ReadDir(s.dirs.FS_MAPS); err == nil {
+	// Scan dirs.FS_MAPS for orphan map directories.
+	if entries, err := os.ReadDir(dirs.FS_MAPS); err == nil {
 		for _, entry := range entries {
 			if !entry.IsDir() {
 				continue
@@ -425,21 +413,22 @@ func (s *ObservedState) OrphanFsEntries() []FsOrphan {
 				continue
 			}
 			s.orphans = append(s.orphans, FsOrphan{
-				Path:     filepath.Join(s.dirs.FS_MAPS, entry.Name()),
+				Path:     filepath.Join(dirs.FS_MAPS, entry.Name()),
 				KernelID: progID,
 				Kind:     "map-dir",
 			})
 		}
 	}
 
-	// Orphan dispatcher directories and link pins.
+	// Scan dispatcher type directories for orphan dispatchers and
+	// count link_* files in non-orphan dispatcher revision dirs.
 	dispTypes := []dispatcher.DispatcherType{
 		dispatcher.DispatcherTypeXDP,
 		dispatcher.DispatcherTypeTCIngress,
 		dispatcher.DispatcherTypeTCEgress,
 	}
 	for _, dt := range dispTypes {
-		typeDir := dispatcher.TypeDir(s.dirs.FS, dt)
+		typeDir := dispatcher.TypeDir(dirs.FS, dt)
 		entries, err := os.ReadDir(typeDir)
 		if err != nil {
 			continue
@@ -455,52 +444,196 @@ func (s *ObservedState) OrphanFsEntries() []FsOrphan {
 				if n, _ := fmt.Sscanf(name, "dispatcher_%d_%d_%d", &nsid, &ifindex, &revision); n != 3 {
 					continue
 				}
-				if s.dbDispatcherKeys[dispatcherKey(dt, nsid, ifindex)] {
-					continue
+				key := dispatcherKey(dt, nsid, ifindex)
+				if !s.dbDispatcherKeys[key] {
+					// Orphan dispatcher directory.
+					s.orphans = append(s.orphans, FsOrphan{
+						Path: filepath.Join(typeDir, name),
+						Kind: "dispatcher-dir",
+					})
+				} else {
+					// Non-orphan: count link_* files for consistency check.
+					revDir := filepath.Join(typeDir, name)
+					if revEntries, err := os.ReadDir(revDir); err == nil {
+						count := 0
+						for _, re := range revEntries {
+							if strings.HasPrefix(re.Name(), "link_") {
+								count++
+							}
+						}
+						s.fsDispatcherLinkCount[key] = count
+					}
 				}
-				s.orphans = append(s.orphans, FsOrphan{
-					Path: filepath.Join(typeDir, name),
-					Kind: "dispatcher-dir",
-				})
 			} else if strings.HasSuffix(name, "_link") {
 				var nsid uint64
 				var ifindex uint32
 				if n, _ := fmt.Sscanf(name, "dispatcher_%d_%d_link", &nsid, &ifindex); n != 2 {
 					continue
 				}
-				if s.dbDispatcherKeys[dispatcherKey(dt, nsid, ifindex)] {
-					continue
+				if !s.dbDispatcherKeys[dispatcherKey(dt, nsid, ifindex)] {
+					// Orphan dispatcher link pin.
+					s.orphans = append(s.orphans, FsOrphan{
+						Path: filepath.Join(typeDir, name),
+						Kind: "dispatcher-link",
+					})
 				}
-				s.orphans = append(s.orphans, FsOrphan{
-					Path: filepath.Join(typeDir, name),
-					Kind: "dispatcher-link",
-				})
 			}
 		}
 	}
 
+	// ----------------------------------------------------------------
+	// Wire up mutation capability for GC operations only.
+	// ----------------------------------------------------------------
+
+	s.deleteDispatcher = func(dispType string, nsid uint64, ifindex uint32) error {
+		return store.DeleteDispatcher(ctx, dispType, nsid, ifindex)
+	}
+
+	return s, nil
+}
+
+// --------------------------------------------------------------------
+// View builders: construct correlated tuples from raw facts.
+// All joins happen here. Rules never touch raw maps.
+// --------------------------------------------------------------------
+
+// Programs returns one ProgramState per DB program, correlated with
+// kernel and filesystem state. This is a pure join over gathered facts.
+func (s *ObservedState) Programs() []ProgramState {
+	if s.programs != nil {
+		return s.programs
+	}
+	for id, prog := range s.dbPrograms {
+		ps := ProgramState{
+			KernelID: id,
+			DB:       &prog,
+			Kernel:   s.kernelProgs[id],
+			PinPath:  prog.PinPath,
+		}
+		if prog.PinPath != "" {
+			if exists, ok := s.fsPinExists[prog.PinPath]; ok {
+				ps.PinExist = &exists
+			}
+			// Path not in map = stat failed with unknown error.
+		}
+		s.programs = append(s.programs, ps)
+	}
+	return s.programs
+}
+
+// Links returns one LinkState per DB link, correlated with kernel
+// state and filesystem. This is a pure join over gathered facts.
+func (s *ObservedState) Links() []LinkState {
+	if s.links != nil {
+		return s.links
+	}
+	for i := range s.dbLinks {
+		link := &s.dbLinks[i]
+		ls := LinkState{
+			DB:        link,
+			Synthetic: bpfman.IsSyntheticLinkID(link.KernelLinkID),
+			Kernel:    s.kernelLinks[link.KernelLinkID],
+		}
+		if link.PinPath != "" && !ls.Synthetic {
+			if exists, ok := s.fsPinExists[link.PinPath]; ok {
+				ls.PinExist = &exists
+			}
+		}
+		s.links = append(s.links, ls)
+	}
+	return s.links
+}
+
+// Dispatchers returns one DispatcherState per DB dispatcher,
+// correlated with kernel, filesystem, and extension link counts.
+// This is a pure join over gathered facts.
+func (s *ObservedState) Dispatchers() []DispatcherState {
+	if s.dispatchers != nil {
+		return s.dispatchers
+	}
+	for _, d := range s.dbDispatchers {
+		key := dispatcherKey(d.Type, d.Nsid, d.Ifindex)
+		revDir := dispatcher.DispatcherRevisionDir(s.dirs.FS, d.Type, d.Nsid, d.Ifindex, d.Revision)
+		progPin := dispatcher.DispatcherProgPath(revDir)
+
+		ds := DispatcherState{
+			DB:         &d,
+			KernelProg: s.kernelProgs[d.KernelID],
+			RevDir:     revDir,
+			ProgPin:    progPin,
+			LinkCount:  -1,
+		}
+
+		// Prog pin existence from gathered facts.
+		if exists, ok := s.fsPinExists[progPin]; ok {
+			ds.ProgPinExist = &exists
+		}
+
+		// XDP link checks from gathered facts.
+		if d.Type == dispatcher.DispatcherTypeXDP {
+			ds.KernelLink = d.LinkID != 0 && s.kernelLinks[d.LinkID]
+			linkPin := dispatcher.DispatcherLinkPath(s.dirs.FS, d.Type, d.Nsid, d.Ifindex)
+			if exists, ok := s.fsPinExists[linkPin]; ok {
+				ds.LinkPinExist = &exists
+			}
+		}
+
+		// TC filter check from gathered facts.
+		if d.Type == dispatcher.DispatcherTypeTCIngress || d.Type == dispatcher.DispatcherTypeTCEgress {
+			if d.Priority > 0 {
+				if ok, found := s.tcFilterOK[key]; found {
+					ds.TCFilterOK = &ok
+				}
+			}
+		}
+
+		// Extension link count from gathered facts.
+		if count, found := s.dbDispatcherExtCount[d.KernelID]; found {
+			ds.LinkCount = count
+		}
+
+		s.dispatchers = append(s.dispatchers, ds)
+	}
+	return s.dispatchers
+}
+
+// OrphanFsEntries returns filesystem entries under the bpffs tree
+// that have no corresponding DB record. The list is pre-built during
+// GatherState; this method is a pure accessor.
+func (s *ObservedState) OrphanFsEntries() []FsOrphan {
 	return s.orphans
 }
 
-// DispatcherFsLinkCount counts link_* files in the dispatcher's
-// revision directory. Returns -1 on error.
+// DispatcherFsLinkCount returns the count of link_* files in the
+// dispatcher's revision directory. The count is pre-computed during
+// GatherState; this method is a pure lookup. Returns -1 if unknown.
 func (s *ObservedState) DispatcherFsLinkCount(ds DispatcherState) int {
-	entries, err := os.ReadDir(ds.RevDir)
-	if err != nil {
+	if ds.DB == nil {
 		return -1
 	}
-	count := 0
-	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), "link_") {
-			count++
-		}
+	key := dispatcherKey(ds.DB.Type, ds.DB.Nsid, ds.DB.Ifindex)
+	if count, ok := s.fsDispatcherLinkCount[key]; ok {
+		return count
 	}
-	return count
+	return -1
 }
 
 // KernelAlive reports whether a kernel program ID is alive.
 func (s *ObservedState) KernelAlive(kernelID uint32) bool {
 	return s.kernelProgs[kernelID]
+}
+
+// LiveOrphans returns the count of orphan program pins where the
+// kernel program is still alive. These are left untouched by GC
+// because removing the pin would unload a running program.
+func (s *ObservedState) LiveOrphans() int {
+	count := 0
+	for _, o := range s.orphans {
+		if o.Kind == "prog-pin" && o.KernelID != 0 && s.kernelProgs[o.KernelID] {
+			count++
+		}
+	}
+	return count
 }
 
 // DeleteDispatcher delegates to the store to remove a dispatcher.
@@ -517,13 +650,17 @@ func dispatcherKey(dt dispatcher.DispatcherType, nsid uint64, ifindex uint32) st
 // --------------------------------------------------------------------
 
 // Evaluate runs all rules against the observed state and returns
-// violations found.
+// violations found. Each violation is stamped with the rule's name.
 func Evaluate(state *ObservedState, rules []Rule) []Violation {
-	var violations []Violation
+	var out []Violation
 	for _, rule := range rules {
-		violations = append(violations, rule.Eval(state)...)
+		vs := rule.Eval(state)
+		for i := range vs {
+			vs[i].RuleName = rule.Name
+		}
+		out = append(out, vs...)
 	}
-	return violations
+	return out
 }
 
 // --------------------------------------------------------------------
@@ -531,12 +668,70 @@ func Evaluate(state *ObservedState, rules []Rule) []Violation {
 // Rules consume tuples. No raw map lookups. No joins.
 // --------------------------------------------------------------------
 
+// AllRules returns all rules (doctor + GC) for introspection.
+func AllRules() []Rule {
+	return append(CoherencyRules(), GCRules()...)
+}
+
+// FindRule returns the rule with the given name, or nil if not found.
+func FindRule(name string) *Rule {
+	for _, r := range AllRules() {
+		if r.Name == name {
+			return &r
+		}
+	}
+	return nil
+}
+
+// RuleNames returns the names of all rules.
+func RuleNames() []string {
+	rules := AllRules()
+	names := make([]string, len(rules))
+	for i, r := range rules {
+		names[i] = r.Name
+	}
+	return names
+}
+
 // CoherencyRules returns all doctor rules.
 func CoherencyRules() []Rule {
 	return []Rule{
+		// Warn if kernel enumeration was incomplete.
+		{
+			Name: "kernel-enumeration-incomplete",
+			Description: `Reports when bpfman failed to enumerate all kernel BPF programs
+or links. This can happen due to permission errors or kernel bugs.
+When enumeration is incomplete, other coherency checks may miss
+violations because they lack full visibility into kernel state.
+
+Severity: WARNING
+Category: enumeration`,
+			Eval: func(s *ObservedState) []Violation {
+				var out []Violation
+				total := s.kernelProgEnumErrors + s.kernelLinkEnumErrors
+				if total > 0 {
+					out = append(out, Violation{
+						Severity:    SeverityWarning,
+						Category:    "enumeration",
+						Description: fmt.Sprintf("Kernel enumeration incomplete (%d program errors, %d link errors); results may be partial", s.kernelProgEnumErrors, s.kernelLinkEnumErrors),
+					})
+				}
+				return out
+			},
+		},
 		// Each DB program must have a corresponding kernel program.
 		{
 			Name: "program-in-kernel",
+			Description: `Checks that every program recorded in the database has a
+corresponding kernel BPF program. A mismatch means the database
+references a program that no longer exists in the kernel - it was
+unloaded externally or the kernel reclaimed it.
+
+This is an error because the database is out of sync with reality.
+Operations referencing this program will fail.
+
+Severity: ERROR
+Category: db-vs-kernel`,
 			Eval: func(s *ObservedState) []Violation {
 				var out []Violation
 				for _, p := range s.Programs() {
@@ -554,6 +749,16 @@ func CoherencyRules() []Rule {
 		// Each DB link must have a corresponding kernel link.
 		{
 			Name: "link-in-kernel",
+			Description: `Checks that every BPF link recorded in the database has a
+corresponding kernel link. A mismatch means the link was detached
+externally. Synthetic link IDs (used for perf_event attachments) are
+skipped since they are not enumerable via the kernel iterator.
+
+This is an error because the database believes a link exists that
+the kernel has already removed.
+
+Severity: ERROR
+Category: db-vs-kernel`,
 			Eval: func(s *ObservedState) []Violation {
 				var out []Violation
 				for _, l := range s.Links() {
@@ -574,6 +779,15 @@ func CoherencyRules() []Rule {
 		// Each DB dispatcher must have a corresponding kernel program.
 		{
 			Name: "dispatcher-prog-in-kernel",
+			Description: `Checks that every dispatcher recorded in the database has its
+kernel program still loaded. A dispatcher is a BPF program that
+multiplexes multiple user programs through tail calls.
+
+If the dispatcher program is gone, the entire dispatch chain is
+broken and no attached programs can run.
+
+Severity: ERROR
+Category: db-vs-kernel`,
 			Eval: func(s *ObservedState) []Violation {
 				var out []Violation
 				for _, d := range s.Dispatchers() {
@@ -591,6 +805,15 @@ func CoherencyRules() []Rule {
 		// Each XDP dispatcher with a link ID must have a corresponding kernel link.
 		{
 			Name: "xdp-link-in-kernel",
+			Description: `Checks that every XDP dispatcher has its BPF link still active in
+the kernel. XDP dispatchers use BPF links to attach to network
+interfaces.
+
+If the link is gone, the dispatcher program is loaded but not
+attached - packets bypass it entirely.
+
+Severity: ERROR
+Category: db-vs-kernel`,
 			Eval: func(s *ObservedState) []Violation {
 				var out []Violation
 				for _, d := range s.Dispatchers() {
@@ -613,6 +836,17 @@ func CoherencyRules() []Rule {
 		// state eligible for GC, not a correctness failure).
 		{
 			Name: "tc-filter-exists",
+			Description: `Checks that every TC dispatcher has its netlink filter installed.
+TC dispatchers (ingress/egress) use netlink filters rather than BPF
+links to attach to network interfaces.
+
+If the filter is missing and the dispatcher has active extensions,
+this is an ERROR - traffic should be routed through the dispatcher
+but cannot be. If there are no extensions, it is a WARNING indicating
+stale state eligible for garbage collection.
+
+Severity: ERROR (with extensions) or WARNING (without)
+Category: db-vs-kernel`,
 			Eval: func(s *ObservedState) []Violation {
 				var out []Violation
 				for _, d := range s.Dispatchers() {
@@ -634,6 +868,16 @@ func CoherencyRules() []Rule {
 		// Each DB program with a pin path must have the pin on the filesystem.
 		{
 			Name: "program-pin-exists",
+			Description: `Checks that every program in the database has its pin file on the
+bpffs filesystem. Pin files keep BPF programs alive and addressable
+by path.
+
+A missing pin means the program may be unloaded by the kernel when
+its reference count drops to zero. This is a warning because the
+program might still be running (held by other references).
+
+Severity: WARNING
+Category: db-vs-fs`,
 			Eval: func(s *ObservedState) []Violation {
 				var out []Violation
 				for _, p := range s.Programs() {
@@ -651,6 +895,15 @@ func CoherencyRules() []Rule {
 		// Each DB link with a pin path must have the pin on the filesystem.
 		{
 			Name: "link-pin-exists",
+			Description: `Checks that every BPF link in the database has its pin file on the
+bpffs filesystem. Pin files keep links alive and prevent automatic
+detachment.
+
+A missing pin means the link may be detached when its reference count
+drops. Synthetic link IDs (for perf_event attachments) are skipped.
+
+Severity: WARNING
+Category: db-vs-fs`,
 			Eval: func(s *ObservedState) []Violation {
 				var out []Violation
 				for _, l := range s.Links() {
@@ -671,6 +924,15 @@ func CoherencyRules() []Rule {
 		// Each DB dispatcher must have its prog pin on the filesystem.
 		{
 			Name: "dispatcher-prog-pin-exists",
+			Description: `Checks that every dispatcher has its program pin file on the bpffs.
+The dispatcher program pin is located at:
+  {bpffs}/{type}/dispatcher_{nsid}_{ifindex}_{revision}/dispatcher
+
+A missing pin indicates the dispatcher may be unloaded, breaking the
+entire dispatch chain for that interface.
+
+Severity: WARNING
+Category: db-vs-fs`,
 			Eval: func(s *ObservedState) []Violation {
 				var out []Violation
 				for _, d := range s.Dispatchers() {
@@ -688,6 +950,15 @@ func CoherencyRules() []Rule {
 		// Each XDP dispatcher must have its link pin on the filesystem.
 		{
 			Name: "xdp-link-pin-exists",
+			Description: `Checks that every XDP dispatcher has its link pin file on the bpffs.
+The link pin is located at:
+  {bpffs}/xdp/dispatcher_{nsid}_{ifindex}_link
+
+A missing link pin means the XDP attachment may be released, causing
+the dispatcher to detach from the interface.
+
+Severity: WARNING
+Category: db-vs-fs`,
 			Eval: func(s *ObservedState) []Violation {
 				var out []Violation
 				for _, d := range s.Dispatchers() {
@@ -703,11 +974,33 @@ func CoherencyRules() []Rule {
 			},
 		},
 		// Filesystem entries with no corresponding DB record are orphans.
+		// Skip live prog-pins here; they're reported by the more specific
+		// kernel-program-pinned-but-not-in-db rule with EBUSY context.
 		{
 			Name: "orphan-fs-entries",
+			Description: `Reports filesystem entries under the bpffs tree that have no
+corresponding database record. These include:
+  - prog-pin: orphan program pin files (dead programs only)
+  - link-dir: orphan link directories
+  - map-dir: orphan map directories
+  - dispatcher-dir: orphan dispatcher revision directories
+  - dispatcher-link: orphan dispatcher link pins
+
+Orphans waste filesystem space and may indicate incomplete cleanup
+from a previous crash or failed operation.
+
+Live program pins are reported separately by the
+kernel-program-pinned-but-not-in-db rule with EBUSY risk context.
+
+Severity: WARNING
+Category: fs-vs-db`,
 			Eval: func(s *ObservedState) []Violation {
 				var out []Violation
 				for _, o := range s.OrphanFsEntries() {
+					// Skip live prog-pins - reported by kernel-program-pinned-but-not-in-db.
+					if o.Kind == "prog-pin" && o.KernelID != 0 && s.KernelAlive(o.KernelID) {
+						continue
+					}
 					out = append(out, Violation{
 						Severity:    SeverityWarning,
 						Category:    "fs-vs-db",
@@ -717,9 +1010,61 @@ func CoherencyRules() []Rule {
 				return out
 			},
 		},
+		// Kernel program pinned under bpfman root but not tracked in DB.
+		// This is a distinct check from orphan-fs-entries: it specifically
+		// identifies cases where a live kernel program is pinned under
+		// our root but has no DB record. This can cause EBUSY when
+		// attempting to attach to the same interface.
+		{
+			Name: "kernel-program-pinned-but-not-in-db",
+			Description: `Reports kernel BPF programs that are:
+  1. Pinned under bpfman's bpffs root (e.g., /run/bpfman/fs/prog_*)
+  2. Still alive in the kernel
+  3. Not tracked in bpfman's database
+
+These are "live orphans" - programs that bpfman likely created but
+has lost track of (e.g., after database deletion or corruption).
+
+EBUSY RISK: If such a program is a dispatcher occupying a hook point
+(XDP, TC), attempting to attach a new program to the same interface
+will fail with EBUSY because the hook is already occupied.
+
+GC will not remove these because removing the pin would unload a
+running program. Manual cleanup: rm /run/bpfman/fs/prog_XXXXX
+
+Severity: WARNING
+Category: kernel-vs-db`,
+			Eval: func(s *ObservedState) []Violation {
+				var out []Violation
+				for _, o := range s.OrphanFsEntries() {
+					if o.Kind != "prog-pin" || o.KernelID == 0 {
+						continue
+					}
+					if !s.KernelAlive(o.KernelID) {
+						continue // not a live EBUSY risk
+					}
+					out = append(out, Violation{
+						Severity:    SeverityWarning,
+						Category:    "kernel-vs-db",
+						Description: fmt.Sprintf("Kernel program %d is pinned under %s but not tracked in DB; may cause EBUSY", o.KernelID, o.Path),
+					})
+				}
+				return out
+			},
+		},
 		// DB dispatcher link count must match the filesystem link count.
 		{
 			Name: "dispatcher-link-count",
+			Description: `Checks that the number of extension links recorded in the database
+matches the number of link_* files in the dispatcher's revision
+directory on the filesystem.
+
+A mismatch indicates inconsistent state - either a link was added
+without updating the filesystem, or a filesystem entry was removed
+without updating the database.
+
+Severity: WARNING
+Category: consistency`,
 			Eval: func(s *ObservedState) []Violation {
 				var out []Violation
 				for _, d := range s.Dispatchers() {
@@ -756,6 +1101,18 @@ func GCRules() []Rule {
 		// mechanism (prog pin or TC filter) are functionally dead.
 		{
 			Name: "stale-dispatcher",
+			Description: `Detects dispatchers that are functionally dead and can be removed.
+A dispatcher is stale when:
+  1. It has zero extension links (no programs attached), AND
+  2. Its attachment mechanism is missing (prog pin gone, or TC filter
+     not installed)
+
+Such dispatchers serve no purpose - they have no programs to dispatch
+and cannot receive traffic anyway. GC removes the database record and
+cleans up any remaining filesystem artefacts.
+
+Severity: WARNING
+Category: gc-dispatcher`,
 			Eval: func(s *ObservedState) []Violation {
 				var out []Violation
 				for _, d := range s.Dispatchers() {
@@ -797,6 +1154,20 @@ func GCRules() []Rule {
 		// with no DB record and no live kernel object.
 		{
 			Name: "orphan-program-artefacts",
+			Description: `Removes orphan filesystem artefacts for programs that are no longer
+alive in the kernel. This includes:
+  - prog_* pin files (when the kernel program is dead)
+  - link directories under fs/links/
+  - map directories under fs/maps/
+
+These artefacts have no database record and no live kernel object,
+so they serve no purpose and waste filesystem space.
+
+Note: Live program pins (kernel program still running) are NOT
+removed - doing so would unload the program.
+
+Severity: WARNING
+Category: gc-orphan-pin`,
 			Eval: func(s *ObservedState) []Violation {
 				var out []Violation
 				for _, o := range s.OrphanFsEntries() {
@@ -830,6 +1201,17 @@ func GCRules() []Rule {
 		// corresponding DB dispatcher.
 		{
 			Name: "orphan-dispatcher-artefacts",
+			Description: `Removes orphan dispatcher filesystem artefacts that have no
+corresponding database record. This includes:
+  - dispatcher_* revision directories
+  - dispatcher_*_link pin files
+
+These artefacts indicate a dispatcher that was partially cleaned up
+or created by a different bpfman instance. They waste filesystem
+space and can cause confusion.
+
+Severity: WARNING
+Category: gc-orphan-pin`,
 			Eval: func(s *ObservedState) []Violation {
 				var out []Violation
 				for _, o := range s.OrphanFsEntries() {
@@ -881,8 +1263,9 @@ func (m *Manager) Doctor(ctx context.Context) (DoctorReport, error) {
 
 // CoherencyGC gathers state, evaluates GC rules, and executes
 // planned operations. Returns the number of operations applied.
-// This covers rules G5-G12 (post-store GC). Store-level GC
-// (G1-G4) is handled by store.GC() called from Manager.GC().
+// This handles stale dispatchers and orphan filesystem artefacts.
+// Store-level GC (structural cleanup) is handled separately by
+// store.GC() called from Manager.GC().
 func (m *Manager) CoherencyGC(ctx context.Context) (int, error) {
 	state, err := GatherState(ctx, m.store, m.kernel, m.dirs)
 	if err != nil {

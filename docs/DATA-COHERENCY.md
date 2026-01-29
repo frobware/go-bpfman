@@ -31,6 +31,63 @@ Consequences: the daemon tries to create a new dispatcher on the same
 interface and gets `EBUSY`. Programs and links accumulate in the
 kernel with no owner.
 
+#### Why EBUSY occurs
+
+BPF hook points (XDP, TC ingress/egress) are exclusive resources. Only
+one program can be attached to a given hook point at a time (without
+using multi-prog mechanisms like freplace or the dispatcher pattern).
+
+When bpfman attaches a program to an interface, it creates a
+**dispatcher** — a small BPF program that multiplexes multiple user
+programs through tail calls. The dispatcher occupies the hook point.
+
+The EBUSY sequence:
+
+1. bpfman loads a program and attaches a dispatcher to eth0 (XDP)
+2. The dispatcher is recorded in the database
+3. Something goes wrong: DB deleted, daemon crash, manual DB edit
+4. The kernel still has the dispatcher attached to eth0
+5. The pin file (`/run/bpfman/fs/xdp/dispatcher_*`) keeps it alive
+6. bpfman's database has no record of this dispatcher
+7. User runs: `bpfman attach xdp --iface eth0 ...`
+8. bpfman checks the DB, sees no dispatcher for eth0
+9. bpfman tries to create a new dispatcher and attach it
+10. Kernel returns `EBUSY` — the hook point is already occupied
+
+The `kernel-program-pinned-but-not-in-db` doctor rule detects this
+scenario by finding programs pinned under bpfman's bpffs root that
+have no corresponding database record but are still alive in the
+kernel.
+
+#### Resolution
+
+GC will not automatically remove these programs because they are still
+loaded in the kernel — removing the pin would unload a running
+program, which could break whatever relies on it.
+
+When `bpfman gc` encounters these programs, it reports them as "live
+orphans" and leaves them untouched:
+
+```
+Nothing to clean up. 8 live orphan(s) skipped (run 'bpfman doctor' for details).
+```
+
+The term "orphan" is used deliberately: these programs are pinned
+under bpfman's bpffs root using its naming convention, but bpfman has
+no database record of them. Without a DB record, bpfman cannot prove
+it created them — they could be from a previous bpfman instance whose
+database was deleted, or (unlikely) created manually using bpfman's
+pin path convention.
+
+Options:
+
+- **Manual cleanup**: `rm /run/bpfman/fs/prog_XXXXX` (unpins and
+  unloads the program)
+- **Inspect first**: `bpftool prog show id XXXXX` to see what the
+  program is before removing it
+- **Future**: a `bpfman adopt` command to claim ownership of
+  untracked programs (not yet implemented)
+
 ### Database has state the kernel does not
 
 This happens when a BPF program is removed from the kernel externally
@@ -91,6 +148,12 @@ appear in one but not the other.
 | Orphan program pin | A program pin file exists under the bpffs programs directory but no DB row references it. |
 | Orphan link pin | A link pin file exists under the bpffs links directory but no DB row references it. |
 | Orphan dispatcher directory | A dispatcher revision directory exists on the filesystem but no matching dispatcher row exists in the DB. |
+
+### Kernel vs database
+
+| Check | Description |
+|-------|-------------|
+| Kernel program pinned but not in DB | A program is pinned under bpfman's bpffs root and still loaded in the kernel, but no DB row references it. This is the EBUSY risk scenario — the program occupies a hook point that bpfman believes is free. |
 
 ### Derived state consistency
 

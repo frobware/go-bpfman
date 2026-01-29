@@ -1,10 +1,11 @@
 # Coherency Rules
 
-All coherency rules are comparisons between sources; no rule
-inspects a single source in isolation. This document enumerates
-every coherency rule enforced by `bpfman doctor` and `bpfman gc`.
-Each rule cross-references two of the three state sources (database,
-kernel, filesystem) and specifies what constitutes a violation.
+All coherency rules are comparisons between sources. This document
+enumerates every coherency rule enforced by `bpfman doctor` and
+`bpfman gc`. Each rule cross-references two of the three state
+sources (database, kernel, filesystem) and specifies what
+constitutes a violation. One exception is enumeration quality
+checks, which report when fact gathering was incomplete.
 
 Rule names match the `Name` field in the `Rule` struct in
 `manager/coherency.go`. Rules are grouped by source comparison, not
@@ -39,6 +40,15 @@ A dispatcher with zero extension links and no active attachment
 mechanism is functionally dead and eligible for GC, even if its
 kernel program is still loaded.
 
+## Enumeration Quality
+
+These rules check whether fact gathering completed successfully.
+Incomplete enumeration means subsequent rules may miss violations.
+
+| Rule | Scope | Predicate | Severity | Exceptions |
+|------|-------|-----------|----------|------------|
+| kernel-enumeration-incomplete | Snapshot | Kernel program and link enumeration completed without errors | WARNING | None |
+
 ## Doctor Rules (read-only checks)
 
 ### DB vs Kernel
@@ -68,6 +78,30 @@ kernel program is still loaded.
 | orphan-fs-entries | Each program ID directory in `fs/links/` | Matching DB program exists (by kernel ID) | WARNING | None |
 | orphan-fs-entries | Each numeric directory in `fs/maps/` | Matching DB program exists (by kernel ID) | WARNING | None |
 | orphan-fs-entries | Each `dispatcher_{nsid}_{ifindex}_{rev}` directory | Matching DB dispatcher exists (by type, nsid, ifindex) | WARNING | None |
+
+### Kernel vs DB
+
+These rules detect kernel objects that bpfman should be managing but
+has no record of. This is the inverse of the DB vs Kernel checks and
+explains user-visible EBUSY failures when attaching to an interface
+that already has a bpfman-managed program.
+
+| Rule | Scope | Predicate | Severity | Exceptions |
+|------|-------|-----------|----------|------------|
+| kernel-program-pinned-but-not-in-db | Each `prog_*` pin in bpffs root with no DB record | Kernel program is not alive, OR DB has matching record | WARNING | Only checks pins under bpfman's bpffs root |
+
+The ownership heuristic is pin path prefix: if a program is pinned
+under the bpfman bpffs root (`/run/bpfman/fs/prog_*`), it is assumed
+to be bpfman-managed. Programs pinned elsewhere are ignored.
+
+This rule intentionally does not trigger GC deletion. A live kernel
+program with no DB record is a "live orphan": it is reported as a
+warning but left alone until it dies naturally or is manually cleaned
+up. The term "orphan" is used because without a DB record, bpfman
+cannot prove ownership — the program could be from a previous
+instance whose database was deleted. GC reports these as "live
+orphan(s) skipped" and directs the user to `bpfman doctor` for
+details.
 
 ### Derived State Consistency
 
@@ -105,16 +139,21 @@ kernel program still exists, and orphan filesystem artefacts.
 
 ## Known Gaps
 
+### Partially addressed
+
+- **Kernel to DB**: the `kernel-program-pinned-but-not-in-db` rule
+  now detects kernel programs pinned under bpfman's bpffs root that
+  have no corresponding DB record. This catches the common case of
+  DB corruption or manual DB editing where the pin file survives.
+
 ### Not yet checked by doctor
 
-- **Kernel to DB**: kernel programs or links that exist but are not
-  tracked in the DB. This would detect programs loaded by bpfman
-  that lost their DB record (e.g., DB corruption or manual DB
-  editing). Distinguishing bpfman-managed programs from unrelated
-  kernel programs is the challenge — we would need to filter by pin
-  path prefix or program name convention. Kernel objects not tracked
-  in the DB are considered leaked or unmanaged, but not correctness
-  failures (WARNING severity, not ERROR).
+- **Unpinned kernel objects**: kernel programs or links loaded by
+  bpfman that crashed before pinning. These have no filesystem
+  artefact to identify them as bpfman-managed, so they cannot be
+  distinguished from programs loaded by other tools. This is a
+  transient state; such programs are garbage-collected by the kernel
+  when their refcount drops to zero.
 
 ## Design Notes
 

@@ -113,7 +113,15 @@ type GCResult = interpreter.GCResult
 // A DB program is only preserved if both the kernel ID is live and our
 // bpffs pin path exists. This prevents stale DB rows from surviving
 // when the kernel reuses an ID that now belongs to a different program.
+// GC runs garbage collection with all rules.
 func (m *Manager) GC(ctx context.Context) (GCResult, error) {
+	return m.GCWithRules(ctx, nil)
+}
+
+// GCWithRules runs garbage collection. If rules is non-empty, only the
+// specified GC rules are run; otherwise all rules are run. Store-level
+// GC always runs regardless of the rules filter.
+func (m *Manager) GCWithRules(ctx context.Context, rules []string) (GCResult, error) {
 	start := time.Now()
 
 	// Gather kernel state
@@ -163,13 +171,30 @@ func (m *Manager) GC(ctx context.Context) (GCResult, error) {
 
 	// Post-store GC: use the coherency rule engine to detect and
 	// remove stale dispatchers and orphan filesystem artefacts.
-	// The store GC (above) handles G1-G4; the rule engine handles
-	// G5-G12.
+	// Store GC handles structural cleanup (programs, dispatchers,
+	// links by kernel ID); the rule engine handles stale dispatchers
+	// and orphan filesystem artefacts.
 	state, err := GatherState(ctx, m.store, m.kernel, m.dirs)
 	if err != nil {
 		m.logger.WarnContext(ctx, "failed to gather state for post-store GC", "error", err)
 	} else {
-		violations := Evaluate(state, GCRules())
+		// Filter rules if specified.
+		gcRules := GCRules()
+		if len(rules) > 0 {
+			ruleSet := make(map[string]bool)
+			for _, r := range rules {
+				ruleSet[r] = true
+			}
+			filtered := gcRules[:0]
+			for _, r := range gcRules {
+				if ruleSet[r.Name] {
+					filtered = append(filtered, r)
+				}
+			}
+			gcRules = filtered
+		}
+
+		violations := Evaluate(state, gcRules)
 		for _, v := range violations {
 			if v.Op == nil {
 				continue
@@ -186,6 +211,11 @@ func (m *Manager) GC(ctx context.Context) (GCResult, error) {
 				result.OrphanPinsRemoved++
 			}
 		}
+
+		// Count live orphans: orphan pins where kernel is alive. These
+		// are not removed by GC because doing so would unload running
+		// programs.
+		result.LiveOrphans = state.LiveOrphans()
 	}
 
 	elapsed := time.Since(start)
@@ -195,7 +225,12 @@ func (m *Manager) GC(ctx context.Context) (GCResult, error) {
 			"programs_removed", result.ProgramsRemoved,
 			"dispatchers_removed", result.DispatchersRemoved,
 			"links_removed", result.LinksRemoved,
-			"orphan_pins_removed", result.OrphanPinsRemoved)
+			"orphan_pins_removed", result.OrphanPinsRemoved,
+			"live_orphans", result.LiveOrphans)
+	} else if result.LiveOrphans > 0 {
+		m.logger.InfoContext(ctx, "gc complete",
+			"duration", elapsed,
+			"live_orphans", result.LiveOrphans)
 	} else {
 		m.logger.DebugContext(ctx, "gc complete", "duration", elapsed)
 	}

@@ -80,6 +80,11 @@ type GCResult struct {
 	DispatchersRemoved int
 	LinksRemoved       int
 	OrphanPinsRemoved  int
+	// LiveOrphans counts programs pinned under bpfman's bpffs root
+	// that are still alive in the kernel but have no DB record. GC
+	// leaves these untouched because removing the pin would unload
+	// a running program. Use 'bpfman doctor' for details.
+	LiveOrphans int
 }
 
 // GarbageCollector removes stale entries from the store.

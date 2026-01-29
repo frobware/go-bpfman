@@ -240,6 +240,11 @@ func (e *ephemeralClient) GC(ctx context.Context) (manager.GCResult, error) {
 	return e.env.Manager.GC(ctx)
 }
 
+// GCWithRules removes stale database entries, optionally filtering by rule names.
+func (e *ephemeralClient) GCWithRules(ctx context.Context, rules []string) (manager.GCResult, error) {
+	return e.env.Manager.GCWithRules(ctx, rules)
+}
+
 // Doctor performs a read-only coherency check via direct manager access.
 func (e *ephemeralClient) Doctor(ctx context.Context) (manager.DoctorReport, error) {
 	return e.env.Manager.Doctor(ctx)

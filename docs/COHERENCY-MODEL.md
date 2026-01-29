@@ -8,8 +8,9 @@
 - **Manager GC**: handles cases store GC cannot see
 - **Invariant**: DB intent must be satisfiable by kernel + filesystem
 
-All coherency rules are comparisons between sources; no rule
-inspects a single source in isolation.
+All coherency rules are comparisons between sources, with the
+exception of enumeration quality checks that report when fact
+gathering was incomplete.
 
 ## The Three Sources of State
 
@@ -34,21 +35,21 @@ disagreeing.
 
 ## Current Architecture
 
-The current doctor and GC implementations are hand-written
-imperative phases that cross-reference pairs of sources:
+The doctor and GC implementations use a rule engine that
+cross-references pairs of sources:
 
 - DB vs kernel: does every DB record have a corresponding kernel
   object?
 - DB vs filesystem: does every DB record have its expected pins?
 - Filesystem vs DB: are there orphan pins with no DB record?
-- Kernel vs DB: are there kernel objects we don't track?
+- Kernel vs DB: are there kernel objects pinned under our root that
+  we don't track? (explains EBUSY failures)
 - Internal consistency: do derived counts (e.g., dispatcher link
   count) match filesystem state?
 
-Each check is a bespoke loop with ad-hoc conditions. Adding a new
-check means writing another nested if block. The checks for doctor
-(read-only reporting), GC (deletion), and reconciliation (repair)
-share the same predicates but differ only in their response.
+Each rule has a scope, predicate, severity, and category. Rules are
+evaluated over a gathered fact set; doctor reports violations while
+GC executes remediation operations.
 
 ## Observation: This Is a Constraint System
 
@@ -73,10 +74,14 @@ Each constraint has:
 - A **severity**: what it means when the predicate fails
 - A **category**: for grouping in output
 
-Doctor, GC, and reconciliation are the same engine with different
-action sets. Doctor emits findings. GC emits deletions.
-Reconciliation emits repairs. The rules are identical; only the
-response differs.
+Doctor and manager-layer GC are the same engine with different
+action sets. Doctor emits findings. Manager GC emits deletions.
+The rules are identical; only the response differs.
+
+Store-layer GC remains imperative because it requires transactional
+ordering constraints (delete dependents before owners) that do not
+fit the rule engine model. See COHERENCY-RULES.md for the full
+breakdown of which rules run where.
 
 ## The Database as Intent Store
 

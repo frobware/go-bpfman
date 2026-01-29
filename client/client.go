@@ -124,6 +124,7 @@ type Client interface {
 
 	// Host-only operations (local execution required)
 	GC(ctx context.Context) (manager.GCResult, error)
+	GCWithRules(ctx context.Context, rules []string) (manager.GCResult, error)
 	Doctor(ctx context.Context) (manager.DoctorReport, error)
 
 	// Image operations

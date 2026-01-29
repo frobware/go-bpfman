@@ -395,6 +395,11 @@ func (c *remoteClient) GC(ctx context.Context) (manager.GCResult, error) {
 	return manager.GCResult{}, fmt.Errorf("GC: %w", ErrNotSupported)
 }
 
+// GCWithRules is a local-only operation.
+func (c *remoteClient) GCWithRules(ctx context.Context, rules []string) (manager.GCResult, error) {
+	return manager.GCResult{}, fmt.Errorf("GCWithRules: %w", ErrNotSupported)
+}
+
 // Doctor is a local-only operation.
 func (c *remoteClient) Doctor(ctx context.Context) (manager.DoctorReport, error) {
 	return manager.DoctorReport{}, fmt.Errorf("Doctor: %w", ErrNotSupported)
