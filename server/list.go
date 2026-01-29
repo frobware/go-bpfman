@@ -181,28 +181,33 @@ func (s *Server) ListLinks(ctx context.Context, req *pb.ListLinksRequest) (*pb.L
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	var links []bpfman.LinkSummary
-	var err error
-
-	if req.ProgramId != nil {
-		links, err = s.store.ListLinksByProgram(ctx, *req.ProgramId)
-	} else {
-		links, err = s.store.ListLinks(ctx)
-	}
+	scanner := bpffs.NewScanner(s.dirs.ScannerDirs())
+	world, err := inspect.Snapshot(ctx, s.store, s.kernel, scanner)
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "failed to list links: %v", err)
+		return nil, status.Errorf(codes.Internal, "failed to snapshot: %v", err)
 	}
 
 	resp := &pb.ListLinksResponse{
-		Links: make([]*pb.LinkInfo, 0, len(links)),
+		Links: make([]*pb.LinkInfo, 0),
 	}
-	for _, link := range links {
+
+	for _, row := range world.ManagedLinks() {
+		// Filter by program ID if specified
+		if req.ProgramId != nil && row.KernelProgramID != *req.ProgramId {
+			continue
+		}
+
 		resp.Links = append(resp.Links, &pb.LinkInfo{
-			Summary: linkSummaryToProto(link),
+			Summary: &pb.LinkSummary{
+				KernelLinkId:    row.KernelLinkID,
+				LinkType:        linkTypeStringToProto(row.LinkType),
+				KernelProgramId: row.KernelProgramID,
+				PinPath:         row.PinPath,
+			},
 		})
 	}
 
-	s.logger.InfoContext(ctx, "ListLinks", "links", len(links))
+	s.logger.InfoContext(ctx, "ListLinks", "links", len(resp.Links))
 
 	return resp, nil
 }
@@ -216,7 +221,11 @@ func (s *Server) GetLink(ctx context.Context, req *pb.GetLinkRequest) (*pb.GetLi
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	summary, details, err := s.store.GetLink(ctx, req.KernelLinkId)
+	scanner := bpffs.NewScanner(s.dirs.ScannerDirs())
+	info, err := inspect.GetLink(ctx, s.store, s.kernel, scanner, req.KernelLinkId)
+	if errors.Is(err, inspect.ErrNotFound) {
+		return nil, status.Errorf(codes.NotFound, "link with ID %d not found", req.KernelLinkId)
+	}
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, status.Errorf(codes.NotFound, "link with ID %d not found", req.KernelLinkId)
 	}
@@ -224,12 +233,17 @@ func (s *Server) GetLink(ctx context.Context, req *pb.GetLinkRequest) (*pb.GetLi
 		return nil, status.Errorf(codes.Internal, "failed to get link: %v", err)
 	}
 
-	s.logger.InfoContext(ctx, "GetLink", "link_id", req.KernelLinkId, "type", summary.LinkType, "program_id", summary.KernelProgramID)
+	// Require link to be managed (in store)
+	if !info.Presence.InStore {
+		return nil, status.Errorf(codes.NotFound, "link %d not managed by bpfman", req.KernelLinkId)
+	}
+
+	s.logger.InfoContext(ctx, "GetLink", "link_id", req.KernelLinkId, "type", info.Summary.LinkType, "program_id", info.Summary.KernelProgramID)
 
 	return &pb.GetLinkResponse{
 		Link: &pb.LinkInfo{
-			Summary: linkSummaryToProto(summary),
-			Details: linkDetailsToProto(details),
+			Summary: linkSummaryToProto(info.Summary),
+			Details: linkDetailsToProto(info.Details),
 		},
 	}, nil
 }
@@ -271,6 +285,12 @@ func linkTypeToProto(t bpfman.LinkType) pb.BpfmanLinkType {
 	default:
 		return pb.BpfmanLinkType_LINK_TYPE_UNSPECIFIED
 	}
+}
+
+// linkTypeStringToProto converts a link type string to protobuf.
+// Used when working with inspect.LinkRow which stores type as string.
+func linkTypeStringToProto(t string) pb.BpfmanLinkType {
+	return linkTypeToProto(bpfman.LinkType(t))
 }
 
 // linkDetailsToProto converts bpfman.LinkDetails to protobuf.

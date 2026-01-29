@@ -22,6 +22,7 @@ import (
 type fakeStore struct {
 	programs    map[uint32]bpfman.Program
 	links       []bpfman.LinkSummary
+	linkDetails map[uint32]bpfman.LinkDetails // kernelLinkID -> details
 	dispatchers []dispatcher.State
 }
 
@@ -38,6 +39,16 @@ func (s *fakeStore) Get(ctx context.Context, kernelID uint32) (bpfman.Program, e
 
 func (s *fakeStore) ListLinks(ctx context.Context) ([]bpfman.LinkSummary, error) {
 	return s.links, nil
+}
+
+func (s *fakeStore) GetLink(ctx context.Context, kernelLinkID uint32) (bpfman.LinkSummary, bpfman.LinkDetails, error) {
+	for _, l := range s.links {
+		if l.KernelLinkID == kernelLinkID {
+			details := s.linkDetails[kernelLinkID]
+			return l, details, nil
+		}
+	}
+	return bpfman.LinkSummary{}, nil, store.ErrNotFound
 }
 
 func (s *fakeStore) ListDispatchers(ctx context.Context) ([]dispatcher.State, error) {
@@ -77,6 +88,15 @@ func (k *fakeKernelSource) Links(ctx context.Context) iter.Seq2[kernel.Link, err
 			}
 		}
 	}
+}
+
+func (k *fakeKernelSource) GetLinkByID(ctx context.Context, id uint32) (kernel.Link, error) {
+	for _, l := range k.links {
+		if l.ID == id {
+			return l, nil
+		}
+	}
+	return kernel.Link{}, errors.New("link not found")
 }
 
 func testScannerDirs(t *testing.T) bpffs.ScannerDirs {
@@ -435,6 +455,91 @@ func TestGetProgram_NotFound(t *testing.T) {
 	kern := &fakeKernelSource{}
 
 	_, err := GetProgram(context.Background(), store, kern, scanner, 12345)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrNotFound)
+}
+
+func TestGetLink_FullyPresent(t *testing.T) {
+	dirs := testScannerDirs(t)
+
+	// Create a pin file on FS
+	pinPath := filepath.Join(dirs.Links, "100", "link_10")
+	require.NoError(t, os.MkdirAll(filepath.Dir(pinPath), 0755))
+	require.NoError(t, os.WriteFile(pinPath, nil, 0644))
+
+	scanner := bpffs.NewScanner(dirs)
+
+	store := &fakeStore{
+		links: []bpfman.LinkSummary{
+			{KernelLinkID: 10, KernelProgramID: 100, LinkType: "kprobe", PinPath: pinPath},
+		},
+		linkDetails: map[uint32]bpfman.LinkDetails{
+			10: bpfman.KprobeDetails{FnName: "do_sys_open"},
+		},
+	}
+
+	kern := &fakeKernelSource{
+		links: []kernel.Link{{ID: 10}},
+	}
+
+	info, err := GetLink(context.Background(), store, kern, scanner, 10)
+	require.NoError(t, err)
+
+	assert.Equal(t, uint32(10), info.Summary.KernelLinkID)
+	assert.Equal(t, uint32(100), info.Summary.KernelProgramID)
+	assert.True(t, info.Presence.InStore)
+	assert.True(t, info.Presence.InKernel)
+	assert.True(t, info.Presence.InFS)
+	assert.NotNil(t, info.Details)
+}
+
+func TestGetLink_StoreOnly(t *testing.T) {
+	dirs := testScannerDirs(t)
+	scanner := bpffs.NewScanner(dirs)
+
+	store := &fakeStore{
+		links: []bpfman.LinkSummary{
+			{KernelLinkID: 20, KernelProgramID: 200, LinkType: "tracepoint"},
+		},
+	}
+
+	kern := &fakeKernelSource{} // Link not in kernel
+
+	info, err := GetLink(context.Background(), store, kern, scanner, 20)
+	require.NoError(t, err)
+
+	assert.Equal(t, uint32(20), info.Summary.KernelLinkID)
+	assert.True(t, info.Presence.InStore)
+	assert.False(t, info.Presence.InKernel)
+	assert.False(t, info.Presence.InFS)
+}
+
+func TestGetLink_KernelOnly(t *testing.T) {
+	dirs := testScannerDirs(t)
+	scanner := bpffs.NewScanner(dirs)
+
+	store := &fakeStore{} // Not in store
+
+	kern := &fakeKernelSource{
+		links: []kernel.Link{{ID: 999}},
+	}
+
+	info, err := GetLink(context.Background(), store, kern, scanner, 999)
+	require.NoError(t, err)
+
+	assert.False(t, info.Presence.InStore)
+	assert.True(t, info.Presence.InKernel)
+	assert.False(t, info.Presence.InFS)
+}
+
+func TestGetLink_NotFound(t *testing.T) {
+	dirs := testScannerDirs(t)
+	scanner := bpffs.NewScanner(dirs)
+
+	store := &fakeStore{}
+	kern := &fakeKernelSource{}
+
+	_, err := GetLink(context.Background(), store, kern, scanner, 12345)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrNotFound)
 }

@@ -41,6 +41,23 @@ type KernelGetter interface {
 	GetProgramByID(ctx context.Context, id uint32) (kernel.Program, error)
 }
 
+// LinkGetter is the subset of interpreter.Store needed by GetLink.
+type LinkGetter interface {
+	GetLink(ctx context.Context, kernelLinkID uint32) (bpfman.LinkSummary, bpfman.LinkDetails, error)
+}
+
+// KernelLinkGetter is the subset of interpreter.KernelSource needed by GetLink.
+type KernelLinkGetter interface {
+	GetLinkByID(ctx context.Context, id uint32) (kernel.Link, error)
+}
+
+// LinkInfo is the result of GetLink, containing summary, details, and presence.
+type LinkInfo struct {
+	Summary  bpfman.LinkSummary
+	Details  bpfman.LinkDetails // may be nil if not in store
+	Presence Presence
+}
+
 // Presence indicates where an object exists across the three sources.
 type Presence struct {
 	InStore  bool
@@ -500,6 +517,56 @@ func GetProgram(
 	}
 
 	return row, nil
+}
+
+// GetLink retrieves a single link by kernel link ID, correlating state
+// from store, kernel, and filesystem. This is more efficient than Snapshot
+// for single-link lookups as it performs targeted queries rather than
+// enumerating everything.
+//
+// Returns ErrNotFound if the link does not exist in any source.
+func GetLink(
+	ctx context.Context,
+	linkGetter LinkGetter,
+	kern KernelLinkGetter,
+	scanner *bpffs.Scanner,
+	kernelLinkID uint32,
+) (LinkInfo, error) {
+	info := LinkInfo{}
+
+	// Try store - this returns both summary and details
+	summary, details, err := linkGetter.GetLink(ctx, kernelLinkID)
+	if err == nil {
+		info.Summary = summary
+		info.Details = details
+		info.Presence.InStore = true
+	} else if !errors.Is(err, store.ErrNotFound) {
+		// Real error (not just "not found")
+		return LinkInfo{}, err
+	}
+
+	// Try kernel (skip for synthetic link IDs which don't exist in kernel)
+	if !bpfman.IsSyntheticLinkID(kernelLinkID) {
+		_, err := kern.GetLinkByID(ctx, kernelLinkID)
+		if err == nil {
+			info.Presence.InKernel = true
+		}
+		// Kernel errors (link not found) are not fatal - just means not in kernel
+	}
+
+	// Try filesystem - check if pin path exists
+	if info.Presence.InStore && info.Summary.PinPath != "" {
+		if scanner.PathExists(info.Summary.PinPath) {
+			info.Presence.InFS = true
+		}
+	}
+
+	// If not found in any source, return error
+	if !info.Presence.InStore && !info.Presence.InKernel && !info.Presence.InFS {
+		return LinkInfo{}, ErrNotFound
+	}
+
+	return info, nil
 }
 
 func dispatcherKey(dispType string, nsid uint64, ifindex uint32) string {
