@@ -44,7 +44,8 @@ Coherency does not own these abstractions; it consumes them.
 **Terminology:** "Snapshot" in this document means observed state exposed
 via iterators; it is not transactional across sources. Each source is
 enumerated independently, reflecting a best-effort view at enumeration
-time.
+time. A snapshot is not cached or reused across operations; each consumer
+triggers its own enumeration.
 
 ## Design Principles
 
