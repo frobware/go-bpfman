@@ -5,13 +5,18 @@ package inspect
 
 import (
 	"context"
+	"errors"
 	"iter"
 
 	"github.com/frobware/go-bpfman"
 	"github.com/frobware/go-bpfman/bpffs"
 	"github.com/frobware/go-bpfman/dispatcher"
+	"github.com/frobware/go-bpfman/interpreter/store"
 	"github.com/frobware/go-bpfman/kernel"
 )
+
+// ErrNotFound is returned when a program is not found in any source.
+var ErrNotFound = errors.New("not found")
 
 // StoreLister is the subset of interpreter.Store needed by Snapshot.
 type StoreLister interface {
@@ -20,10 +25,20 @@ type StoreLister interface {
 	ListDispatchers(ctx context.Context) ([]dispatcher.State, error)
 }
 
+// StoreGetter is the subset of interpreter.Store needed by GetProgram.
+type StoreGetter interface {
+	Get(ctx context.Context, kernelID uint32) (bpfman.Program, error)
+}
+
 // KernelLister is the subset of interpreter.KernelSource needed by Snapshot.
 type KernelLister interface {
 	Programs(ctx context.Context) iter.Seq2[kernel.Program, error]
 	Links(ctx context.Context) iter.Seq2[kernel.Link, error]
+}
+
+// KernelGetter is the subset of interpreter.KernelSource needed by GetProgram.
+type KernelGetter interface {
+	GetProgramByID(ctx context.Context, id uint32) (kernel.Program, error)
 }
 
 // Presence indicates where an object exists across the three sources.
@@ -435,6 +450,56 @@ func Snapshot(
 	}
 
 	return w, nil
+}
+
+// GetProgram retrieves a single program by kernel ID, correlating state
+// from store, kernel, and filesystem. This is more efficient than Snapshot
+// for single-program lookups as it performs targeted queries rather than
+// enumerating everything.
+//
+// Returns ErrNotFound if the program does not exist in any source.
+func GetProgram(
+	ctx context.Context,
+	storeGetter StoreGetter,
+	kern KernelGetter,
+	scanner *bpffs.Scanner,
+	kernelID uint32,
+) (ProgramRow, error) {
+	row := ProgramRow{KernelID: kernelID}
+
+	// Try store
+	prog, err := storeGetter.Get(ctx, kernelID)
+	if err == nil {
+		row.StoreProgram = &prog
+		row.Presence.InStore = true
+	} else if !errors.Is(err, store.ErrNotFound) {
+		// Real error (not just "not found")
+		return ProgramRow{}, err
+	}
+
+	// Try kernel
+	kp, err := kern.GetProgramByID(ctx, kernelID)
+	if err == nil {
+		row.KernelProgram = &kp
+		row.Presence.InKernel = true
+	}
+	// Kernel errors (program not found) are not fatal - just means not in kernel
+
+	// Try filesystem
+	// If we have store metadata with a pin path, check that specific path
+	if row.StoreProgram != nil && row.StoreProgram.PinPath != "" {
+		if scanner.PathExists(row.StoreProgram.PinPath) {
+			row.FSPinPath = row.StoreProgram.PinPath
+			row.Presence.InFS = true
+		}
+	}
+
+	// If not found in any source, return error
+	if !row.Presence.InStore && !row.Presence.InKernel && !row.Presence.InFS {
+		return ProgramRow{}, ErrNotFound
+	}
+
+	return row, nil
 }
 
 func dispatcherKey(dispType string, nsid uint64, ifindex uint32) string {

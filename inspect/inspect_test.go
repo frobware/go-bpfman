@@ -2,6 +2,7 @@ package inspect
 
 import (
 	"context"
+	"errors"
 	"iter"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"github.com/frobware/go-bpfman"
 	"github.com/frobware/go-bpfman/bpffs"
 	"github.com/frobware/go-bpfman/dispatcher"
+	"github.com/frobware/go-bpfman/interpreter/store"
 	"github.com/frobware/go-bpfman/kernel"
 )
 
@@ -25,6 +27,13 @@ type fakeStore struct {
 
 func (s *fakeStore) List(ctx context.Context) (map[uint32]bpfman.Program, error) {
 	return s.programs, nil
+}
+
+func (s *fakeStore) Get(ctx context.Context, kernelID uint32) (bpfman.Program, error) {
+	if p, ok := s.programs[kernelID]; ok {
+		return p, nil
+	}
+	return bpfman.Program{}, store.ErrNotFound
 }
 
 func (s *fakeStore) ListLinks(ctx context.Context) ([]bpfman.LinkSummary, error) {
@@ -49,6 +58,15 @@ func (k *fakeKernelSource) Programs(ctx context.Context) iter.Seq2[kernel.Progra
 			}
 		}
 	}
+}
+
+func (k *fakeKernelSource) GetProgramByID(ctx context.Context, id uint32) (kernel.Program, error) {
+	for _, p := range k.programs {
+		if p.ID == id {
+			return p, nil
+		}
+	}
+	return kernel.Program{}, errors.New("program not found")
 }
 
 func (k *fakeKernelSource) Links(ctx context.Context) iter.Seq2[kernel.Link, error] {
@@ -330,4 +348,93 @@ func TestPresence_Methods(t *testing.T) {
 			assert.Equal(t, tt.kernelOnly, tt.p.KernelOnly())
 		})
 	}
+}
+
+func TestGetProgram_FullyPresent(t *testing.T) {
+	dirs := testScannerDirs(t)
+
+	// Create a pin file on FS
+	pinPath := filepath.Join(dirs.FS, "prog_100")
+	require.NoError(t, os.WriteFile(pinPath, nil, 0644))
+
+	scanner := bpffs.NewScanner(dirs)
+
+	store := &fakeStore{
+		programs: map[uint32]bpfman.Program{
+			100: {ProgramName: "xdp_pass", ProgramType: bpfman.ProgramTypeXDP, PinPath: pinPath},
+		},
+	}
+
+	kern := &fakeKernelSource{
+		programs: []kernel.Program{{ID: 100, Name: "xdp_pass"}},
+	}
+
+	row, err := GetProgram(context.Background(), store, kern, scanner, 100)
+	require.NoError(t, err)
+
+	assert.Equal(t, uint32(100), row.KernelID)
+	assert.True(t, row.Presence.InStore)
+	assert.True(t, row.Presence.InKernel)
+	assert.True(t, row.Presence.InFS)
+	assert.NotNil(t, row.StoreProgram)
+	assert.NotNil(t, row.KernelProgram)
+	assert.Equal(t, "xdp_pass", row.StoreProgram.ProgramName)
+	assert.Equal(t, "xdp_pass", row.KernelProgram.Name)
+}
+
+func TestGetProgram_StoreOnly(t *testing.T) {
+	dirs := testScannerDirs(t)
+	scanner := bpffs.NewScanner(dirs)
+
+	store := &fakeStore{
+		programs: map[uint32]bpfman.Program{
+			100: {ProgramName: "stale_prog", ProgramType: bpfman.ProgramTypeXDP},
+		},
+	}
+
+	kern := &fakeKernelSource{} // Program not in kernel
+
+	row, err := GetProgram(context.Background(), store, kern, scanner, 100)
+	require.NoError(t, err)
+
+	assert.Equal(t, uint32(100), row.KernelID)
+	assert.True(t, row.Presence.InStore)
+	assert.False(t, row.Presence.InKernel)
+	assert.False(t, row.Presence.InFS)
+	assert.NotNil(t, row.StoreProgram)
+	assert.Nil(t, row.KernelProgram)
+}
+
+func TestGetProgram_KernelOnly(t *testing.T) {
+	dirs := testScannerDirs(t)
+	scanner := bpffs.NewScanner(dirs)
+
+	store := &fakeStore{programs: map[uint32]bpfman.Program{}} // Not in store
+
+	kern := &fakeKernelSource{
+		programs: []kernel.Program{{ID: 999, Name: "unmanaged"}},
+	}
+
+	row, err := GetProgram(context.Background(), store, kern, scanner, 999)
+	require.NoError(t, err)
+
+	assert.Equal(t, uint32(999), row.KernelID)
+	assert.False(t, row.Presence.InStore)
+	assert.True(t, row.Presence.InKernel)
+	assert.False(t, row.Presence.InFS)
+	assert.Nil(t, row.StoreProgram)
+	assert.NotNil(t, row.KernelProgram)
+	assert.Equal(t, "unmanaged", row.KernelProgram.Name)
+}
+
+func TestGetProgram_NotFound(t *testing.T) {
+	dirs := testScannerDirs(t)
+	scanner := bpffs.NewScanner(dirs)
+
+	store := &fakeStore{programs: map[uint32]bpfman.Program{}}
+	kern := &fakeKernelSource{}
+
+	_, err := GetProgram(context.Background(), store, kern, scanner, 12345)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrNotFound)
 }

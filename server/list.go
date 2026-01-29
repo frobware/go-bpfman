@@ -101,7 +101,11 @@ func (s *Server) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	metadata, err := s.store.Get(ctx, req.Id)
+	scanner := bpffs.NewScanner(s.dirs.ScannerDirs())
+	row, err := inspect.GetProgram(ctx, s.store, s.kernel, scanner, req.Id)
+	if errors.Is(err, inspect.ErrNotFound) {
+		return nil, status.Errorf(codes.NotFound, "program with ID %d not found", req.Id)
+	}
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, status.Errorf(codes.NotFound, "program with ID %d not found", req.Id)
 	}
@@ -109,11 +113,18 @@ func (s *Server) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, 
 		return nil, status.Errorf(codes.Internal, "failed to get program: %v", err)
 	}
 
-	// Query kernel for actual program info
-	kp, err := s.kernel.GetProgramByID(ctx, req.Id)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "program %d exists in store but not in kernel: %v", req.Id, err)
+	// Require program to be managed (in store)
+	if !row.Presence.InStore {
+		return nil, status.Errorf(codes.NotFound, "program %d not managed by bpfman", req.Id)
 	}
+
+	// Require program to be alive in kernel
+	if !row.Presence.InKernel {
+		return nil, status.Errorf(codes.Internal, "program %d exists in store but not in kernel (requires reconciliation)", req.Id)
+	}
+
+	prog := row.StoreProgram
+	kp := row.KernelProgram
 
 	// Query store for links associated with this program
 	links, err := s.store.ListLinksByProgram(ctx, req.Id)
@@ -125,18 +136,18 @@ func (s *Server) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, 
 		linkIDs = append(linkIDs, link.KernelLinkID)
 	}
 
-	s.logger.InfoContext(ctx, "Get", "program_id", req.Id, "program_name", metadata.ProgramName, "links", len(linkIDs))
+	s.logger.InfoContext(ctx, "Get", "program_id", req.Id, "program_name", prog.ProgramName, "links", len(linkIDs))
 
 	info := &pb.ProgramInfo{
-		Name:       metadata.ProgramName,
-		Bytecode:   &pb.BytecodeLocation{Location: &pb.BytecodeLocation_File{File: metadata.ObjectPath}},
-		Metadata:   metadata.UserMetadata,
-		GlobalData: metadata.GlobalData,
-		MapPinPath: metadata.MapPinPath,
+		Name:       prog.ProgramName,
+		Bytecode:   &pb.BytecodeLocation{Location: &pb.BytecodeLocation_File{File: prog.ObjectPath}},
+		Metadata:   prog.UserMetadata,
+		GlobalData: prog.GlobalData,
+		MapPinPath: prog.MapPinPath,
 		Links:      linkIDs,
 	}
-	if metadata.MapOwnerID != 0 {
-		info.MapOwnerId = &metadata.MapOwnerID
+	if prog.MapOwnerID != 0 {
+		info.MapOwnerId = &prog.MapOwnerID
 	}
 
 	// Note: GplCompatible is stored in the database at load time (from the
@@ -149,10 +160,10 @@ func (s *Server) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, 
 		KernelInfo: &pb.KernelProgramInfo{
 			Id:            req.Id,
 			Name:          kp.Name,
-			ProgramType:   uint32(metadata.ProgramType),
+			ProgramType:   uint32(prog.ProgramType),
 			Tag:           kp.Tag,
 			LoadedAt:      kp.LoadedAt.Format(time.RFC3339),
-			GplCompatible: metadata.GPLCompatible,
+			GplCompatible: prog.GPLCompatible,
 			MapIds:        kp.MapIDs,
 			BtfId:         kp.BTFId,
 			BytesXlated:   kp.XlatedSize,
