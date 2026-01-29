@@ -10,6 +10,7 @@ import (
 	"github.com/frobware/go-bpfman"
 	"github.com/frobware/go-bpfman/dispatcher"
 	"github.com/frobware/go-bpfman/kernel"
+	"github.com/frobware/go-bpfman/lock"
 )
 
 // LinkWriter writes link metadata to the store.
@@ -187,12 +188,18 @@ type ProgramAttacher interface {
 	// AttachKprobe attaches a pinned program to a kernel function.
 	// If retprobe is true, attaches as a kretprobe instead of kprobe.
 	AttachKprobe(ctx context.Context, progPinPath, fnName string, offset uint64, retprobe bool, linkPinPath string) (bpfman.ManagedLink, error)
-	// AttachUprobe attaches a pinned program to a user-space function.
+	// AttachUprobeLocal attaches a pinned program to a user-space function
+	// in the current namespace. Does not spawn a helper, so no lock scope needed.
 	// target is the path to the binary or library (e.g., /usr/lib/libc.so.6).
 	// If retprobe is true, attaches as a uretprobe instead of uprobe.
-	// If containerPid > 0, the target path is resolved in that container's
-	// mount namespace, allowing attachment to binaries in other containers.
-	AttachUprobe(ctx context.Context, progPinPath, target, fnName string, offset uint64, retprobe bool, linkPinPath string, containerPid int32) (bpfman.ManagedLink, error)
+	AttachUprobeLocal(ctx context.Context, progPinPath, target, fnName string, offset uint64, retprobe bool, linkPinPath string) (bpfman.ManagedLink, error)
+	// AttachUprobeContainer attaches a pinned program to a user-space function
+	// in a container's mount namespace. Spawns bpfman-ns helper, so requires
+	// lock scope to pass fd.
+	// target is the path to the binary or library (resolved in the container's namespace).
+	// If retprobe is true, attaches as a uretprobe instead of uprobe.
+	// containerPid identifies the target container.
+	AttachUprobeContainer(ctx context.Context, scope lock.WriterScope, progPinPath, target, fnName string, offset uint64, retprobe bool, linkPinPath string, containerPid int32) (bpfman.ManagedLink, error)
 	// AttachFentry attaches a pinned program to a kernel function entry point.
 	// The fnName was specified at load time and stored with the program.
 	AttachFentry(ctx context.Context, progPinPath, fnName, linkPinPath string) (bpfman.ManagedLink, error)

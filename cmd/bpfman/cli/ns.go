@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
 	"syscall"
 
 	"github.com/alecthomas/kong"
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
 
+	"github.com/frobware/go-bpfman/lock"
 	"github.com/frobware/go-bpfman/nsenter"
 )
 
@@ -27,6 +29,8 @@ type NSCmd struct {
 
 // File descriptor numbers for inherited fds from parent.
 // The parent uses Cmd.ExtraFiles which maps to fd 3, 4, 5, etc.
+// WriterLockFD is passed via environment variable since its position
+// in ExtraFiles may vary.
 const (
 	ProgramFD = 3 // BPF program fd
 	SocketFD  = 4 // Unix socket for passing link fd back to parent
@@ -66,12 +70,45 @@ func getMntNsInode(path string) uint64 {
 // (the CGO constructor called setns before Go started).
 //
 // The BPF program is passed via fd 3, and a Unix socket via fd 4.
+// The writer lock fd is passed via the BPFMAN_WRITER_LOCK_FD environment variable.
 // After attaching, we send the link fd back to the parent over the socket.
 func (cmd *NSUprobeCmd) Run() error {
 	// Create a logger that writes to stderr (stdout is reserved for status)
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelDebug,
 	}))
+
+	// Verify writer lock - helper cannot proceed without it.
+	// The lock fd is passed via environment variable since its position
+	// in ExtraFiles may vary.
+	fdStr := os.Getenv(lock.WriterLockFDEnvVar)
+	if fdStr == "" {
+		logger.Error("writer lock fd not set",
+			"env_var", lock.WriterLockFDEnvVar,
+			"hint", "bpfman-ns must be spawned with lock fd")
+		return fmt.Errorf("%s not set: bpfman-ns must be spawned with lock fd", lock.WriterLockFDEnvVar)
+	}
+	fd, err := strconv.Atoi(fdStr)
+	if err != nil {
+		logger.Error("invalid writer lock fd",
+			"env_var", lock.WriterLockFDEnvVar,
+			"value", fdStr,
+			"error", err)
+		return fmt.Errorf("invalid %s=%q: %w", lock.WriterLockFDEnvVar, fdStr, err)
+	}
+
+	scope, err := lock.InheritedLockFromFD(fd)
+	if err != nil {
+		logger.Error("lock verification failed",
+			"fd", fd,
+			"error", err,
+			"hint", "parent must hold exclusive lock before spawning helper")
+		return fmt.Errorf("lock verification failed: %w", err)
+	}
+	defer scope.Close()
+
+	logger.Debug("writer lock verified",
+		"fd", fd)
 
 	// Log our current state
 	currentMntNs := getMntNsInode("/proc/self/ns/mnt")

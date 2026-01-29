@@ -19,18 +19,19 @@ See [LOCKING.md](LOCKING.md) for the full global writer lock design.
 
    * `ExtraFiles[0]` → program fd (child sees it as fd 3)
    * `ExtraFiles[1]` → socket fd (child sees it as fd 4)
-   * `ExtraFiles[2]` → writer-lock fd (fd 5)
+   * `ExtraFiles[2]` → writer-lock fd (proof of active WriterScope)
    * `BPFMAN_MODE=bpfman-ns` (tells child it is in helper mode)
    * `BPFMAN_WRITER_LOCK_FD=5` (tells child which fd holds the lock)
 
 6. **Child starts**. Before Go runtime, the CGO constructor does
    `setns()` into the target mount namespace.
-7. **Child verifies lock**. Reads `BPFMAN_WRITER_LOCK_FD`, confirms the
-   fd holds the exclusive lock via `flock(LOCK_EX|LOCK_NB)`. If
-   verification fails, exits immediately with error. (Note: this
-   verifies that the helper *holds* the lock, not that the parent
-   acquired it earlier; parent-side locking is enforced by the type
-   system.)
+7. **Child verifies lock**. Reads `BPFMAN_WRITER_LOCK_FD`, constructs an
+   `InheritedLock`, and confirms the fd holds the exclusive lock via
+   `flock(LOCK_EX|LOCK_NB)`. If verification fails, exits immediately
+   with error. (Note: this verifies that the helper *holds* the lock,
+   not that the parent acquired it earlier; parent-side locking is
+   enforced by the type system. If the parent passed an unlocked fd and
+   the lock is uncontended, the helper will acquire it - still correct.)
 8. Child uses the inherited **program fd** to attach the uprobe in that
    namespace (so the target binary path resolves correctly).
 9. Child sends the resulting **link/perf_event fd back** to the parent
@@ -70,7 +71,10 @@ the CLI caller and would need the new process to handle database writes.
 ## Locking Requirements for bpfman-ns
 
 The helper **inherits and verifies** the global writer lock. It never
-acquires the lock itself.
+acquires the lock itself. The helper never receives a pointer or handle
+to the lock; it receives only a duplicated file descriptor that proves
+the lock is already held. It verifies this fd before performing any
+operation.
 
 **Mandatory**: If `BPFMAN_WRITER_LOCK_FD` is missing or the fd does not
 hold the lock, the helper must exit immediately with an error. There is

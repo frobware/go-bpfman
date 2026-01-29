@@ -38,101 +38,103 @@ func (c *LoadImageCmd) Run(cli *CLI, ctx context.Context) error {
 		"pull_policy", c.PullPolicy.Value,
 	)
 
-	// Parse pull policy
+	// Parse pull policy (before acquiring lock)
 	pullPolicy, ok := bpfman.ParseImagePullPolicy(c.PullPolicy.Value)
 	if !ok {
 		return fmt.Errorf("invalid pull policy %q", c.PullPolicy.Value)
 	}
 
-	// Get client
-	b, err := cli.Client(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to create client: %w", err)
-	}
-	defer b.Close()
-
-	// Build auth config from base64-encoded registry-auth
-	var authConfig *interpreter.ImageAuth
-	if c.RegistryAuth != "" {
-		username, password, err := parseRegistryAuth(c.RegistryAuth)
+	return cli.RunWithLock(ctx, func(ctx context.Context) error {
+		// Get client
+		b, err := cli.Client(ctx)
 		if err != nil {
-			return fmt.Errorf("invalid registry-auth: %w", err)
+			return fmt.Errorf("failed to create client: %w", err)
 		}
-		logger.Debug("using registry auth", "username", username)
-		authConfig = &interpreter.ImageAuth{
-			Username: username,
-			Password: password,
-		}
-	}
+		defer b.Close()
 
-	// Build image reference
-	ref := interpreter.ImageRef{
-		URL:        c.ImageURL,
-		PullPolicy: pullPolicy,
-		Auth:       authConfig,
-	}
+		// Build auth config from base64-encoded registry-auth
+		var authConfig *interpreter.ImageAuth
+		if c.RegistryAuth != "" {
+			username, password, err := parseRegistryAuth(c.RegistryAuth)
+			if err != nil {
+				return fmt.Errorf("invalid registry-auth: %w", err)
+			}
+			logger.Debug("using registry auth", "username", username)
+			authConfig = &interpreter.ImageAuth{
+				Username: username,
+				Password: password,
+			}
+		}
 
-	// Convert global data
-	var globalData map[string][]byte
-	if len(c.GlobalData) > 0 {
-		globalData = GlobalDataMap(c.GlobalData)
-	}
+		// Build image reference
+		ref := interpreter.ImageRef{
+			URL:        c.ImageURL,
+			PullPolicy: pullPolicy,
+			Auth:       authConfig,
+		}
 
-	// Build metadata map, adding application if specified
-	metadata := MetadataMap(c.Metadata)
-	if c.Application != "" {
-		if metadata == nil {
-			metadata = make(map[string]string)
+		// Convert global data
+		var globalData map[string][]byte
+		if len(c.GlobalData) > 0 {
+			globalData = GlobalDataMap(c.GlobalData)
 		}
-		metadata["bpfman.io/application"] = c.Application
-	}
 
-	// Build ImageProgramSpecs for each program
-	programs := make([]client.ImageProgramSpec, 0, len(c.Programs))
-	for _, spec := range c.Programs {
-		var progSpec client.ImageProgramSpec
-		var specErr error
-		if spec.Type.RequiresAttachFunc() {
-			progSpec, specErr = client.NewImageProgramSpecWithAttach(spec.Name, spec.Type, spec.AttachFunc)
-		} else {
-			progSpec, specErr = client.NewImageProgramSpec(spec.Name, spec.Type)
+		// Build metadata map, adding application if specified
+		metadata := MetadataMap(c.Metadata)
+		if c.Application != "" {
+			if metadata == nil {
+				metadata = make(map[string]string)
+			}
+			metadata["bpfman.io/application"] = c.Application
 		}
-		if specErr != nil {
-			return fmt.Errorf("invalid program spec for %q: %w", spec.Name, specErr)
-		}
-		if globalData != nil {
-			progSpec = progSpec.WithGlobalData(globalData)
-		}
-		if c.MapOwnerID != 0 {
-			progSpec = progSpec.WithMapOwnerID(c.MapOwnerID)
-		}
-		programs = append(programs, progSpec)
-	}
 
-	// Load via gRPC - server handles image pulling
-	results, err := b.LoadImage(ctx, ref, programs, client.LoadImageOpts{
-		UserMetadata: metadata,
+		// Build ImageProgramSpecs for each program
+		programs := make([]client.ImageProgramSpec, 0, len(c.Programs))
+		for _, spec := range c.Programs {
+			var progSpec client.ImageProgramSpec
+			var specErr error
+			if spec.Type.RequiresAttachFunc() {
+				progSpec, specErr = client.NewImageProgramSpecWithAttach(spec.Name, spec.Type, spec.AttachFunc)
+			} else {
+				progSpec, specErr = client.NewImageProgramSpec(spec.Name, spec.Type)
+			}
+			if specErr != nil {
+				return fmt.Errorf("invalid program spec for %q: %w", spec.Name, specErr)
+			}
+			if globalData != nil {
+				progSpec = progSpec.WithGlobalData(globalData)
+			}
+			if c.MapOwnerID != 0 {
+				progSpec = progSpec.WithMapOwnerID(c.MapOwnerID)
+			}
+			programs = append(programs, progSpec)
+		}
+
+		// Load via gRPC - server handles image pulling
+		results, err := b.LoadImage(ctx, ref, programs, client.LoadImageOpts{
+			UserMetadata: metadata,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to load from image: %w", err)
+		}
+
+		for _, loaded := range results {
+			logger.Info("program loaded successfully",
+				"name", loaded.Kernel.Name(),
+				"kernel_id", loaded.Kernel.ID(),
+				"pin_path", loaded.Managed.PinPath,
+			)
+		}
+
+		// Output results
+		output, err := FormatLoadedPrograms(results, &c.OutputFlags)
+		if err != nil {
+			return err
+		}
+
+		fmt.Print(output)
+		return nil
 	})
-	if err != nil {
-		return fmt.Errorf("failed to load from image: %w", err)
-	}
-
-	for _, loaded := range results {
-		logger.Info("program loaded successfully",
-			"name", loaded.Kernel.Name(),
-			"kernel_id", loaded.Kernel.ID(),
-			"pin_path", loaded.Managed.PinPath,
-		)
-	}
-
-	// Output results
-	output, err := FormatLoadedPrograms(results, &c.OutputFlags)
-	if err != nil {
-		return err
-	}
-
-	fmt.Print(output)
-	return nil
 }
 
 // parseRegistryAuth parses a base64-encoded "username:password" string.

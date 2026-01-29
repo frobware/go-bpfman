@@ -29,6 +29,7 @@ func TestNewRuntimeDirs(t *testing.T) {
 				CSI:           "/run/bpfman/csi",
 				CSI_FS:        "/run/bpfman/csi/fs",
 				Sock:          "/run/bpfman-sock",
+				Lock:          "/run/bpfman/.lock",
 			},
 		},
 		{
@@ -46,6 +47,7 @@ func TestNewRuntimeDirs(t *testing.T) {
 				CSI:           "/run/bpfman-go/csi",
 				CSI_FS:        "/run/bpfman-go/csi/fs",
 				Sock:          "/run/bpfman-go-sock",
+				Lock:          "/run/bpfman-go/.lock",
 			},
 		},
 		{
@@ -63,6 +65,7 @@ func TestNewRuntimeDirs(t *testing.T) {
 				CSI:           "/tmp/bpfman-test-12345/csi",
 				CSI_FS:        "/tmp/bpfman-test-12345/csi/fs",
 				Sock:          "/tmp/bpfman-test-12345-sock",
+				Lock:          "/tmp/bpfman-test-12345/.lock",
 			},
 		},
 	}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/frobware/go-bpfman"
 	"github.com/frobware/go-bpfman/action"
+	"github.com/frobware/go-bpfman/lock"
 )
 
 // AttachTracepoint attaches a pinned program to a tracepoint.
@@ -183,8 +184,12 @@ func computeAttachKprobeAction(programKernelID, kernelLinkID uint32, pinPath, fn
 // AttachUprobe attaches a pinned program to a user-space function.
 // retprobe is derived from the program type stored in the database.
 //
+// The scope parameter is required for container uprobes (containerPid > 0)
+// to pass the lock fd to the helper subprocess. For local uprobes, scope
+// is not used but accepted for API uniformity.
+//
 // Pattern: FETCH -> KERNEL I/O -> COMPUTE -> EXECUTE
-func (m *Manager) AttachUprobe(ctx context.Context, spec bpfman.UprobeAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error) {
+func (m *Manager) AttachUprobe(ctx context.Context, scope lock.WriterScope, spec bpfman.UprobeAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error) {
 	programKernelID := spec.ProgramID()
 	target := spec.Target()
 	fnName := spec.FnName()
@@ -214,8 +219,18 @@ func (m *Manager) AttachUprobe(ctx context.Context, spec bpfman.UprobeAttachSpec
 		linkPinPath = filepath.Join(linksDir, linkName)
 	}
 
-	// KERNEL I/O: Attach to the kernel (returns ManagedLink with full info)
-	link, err := m.kernel.AttachUprobe(ctx, progPinPath, target, fnName, offset, retprobe, linkPinPath, containerPid)
+	// KERNEL I/O: Choose local vs container method based on spec
+	var link bpfman.ManagedLink
+	if containerPid > 0 {
+		// Container uprobe - scope required
+		if scope == nil {
+			return bpfman.LinkSummary{}, fmt.Errorf("container uprobe requires lock scope (containerPid=%d)", containerPid)
+		}
+		link, err = m.kernel.AttachUprobeContainer(ctx, scope, progPinPath, target, fnName, offset, retprobe, linkPinPath, containerPid)
+	} else {
+		// Local uprobe - no scope needed
+		link, err = m.kernel.AttachUprobeLocal(ctx, progPinPath, target, fnName, offset, retprobe, linkPinPath)
+	}
 	if err != nil {
 		return bpfman.LinkSummary{}, fmt.Errorf("attach uprobe %s to %s: %w", fnName, target, err)
 	}

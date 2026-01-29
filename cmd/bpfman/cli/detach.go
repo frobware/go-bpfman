@@ -15,19 +15,21 @@ type DetachCmd struct {
 
 // Run executes the detach command.
 func (c *DetachCmd) Run(cli *CLI, ctx context.Context) error {
-	b, err := cli.Client(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to create client: %w", err)
-	}
-	defer b.Close()
-
-	if err := b.Detach(ctx, c.LinkID.Value); err != nil {
-		if errors.Is(err, client.ErrNotSupported) {
-			return fmt.Errorf("detach is only available in local mode")
+	return cli.RunWithLock(ctx, func(ctx context.Context) error {
+		b, err := cli.Client(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to create client: %w", err)
 		}
-		return err
-	}
+		defer b.Close()
 
-	fmt.Printf("Detached link %d\n", c.LinkID.Value)
-	return nil
+		if err := b.Detach(ctx, c.LinkID.Value); err != nil {
+			if errors.Is(err, client.ErrNotSupported) {
+				return fmt.Errorf("detach is only available in local mode")
+			}
+			return err
+		}
+
+		fmt.Printf("Detached link %d\n", c.LinkID.Value)
+		return nil
+	})
 }

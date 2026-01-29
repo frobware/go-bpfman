@@ -47,6 +47,9 @@ type RuntimeDirs struct {
 
 	// Sock is the gRPC socket directory.
 	Sock string
+
+	// Lock is the path to the global writer lock file.
+	Lock string
 }
 
 // DefaultRuntimeDirs returns RuntimeDirs with production defaults.
@@ -77,6 +80,8 @@ func NewRuntimeDirs(base string) RuntimeDirs {
 		CSI_FS: filepath.Join(base, "csi", "fs"),
 
 		Sock: base + "-sock",
+
+		Lock: filepath.Join(base, ".lock"),
 	}
 }
 

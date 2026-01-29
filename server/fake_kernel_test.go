@@ -12,6 +12,7 @@ import (
 	"github.com/frobware/go-bpfman"
 	"github.com/frobware/go-bpfman/interpreter"
 	"github.com/frobware/go-bpfman/kernel"
+	"github.com/frobware/go-bpfman/lock"
 )
 
 // kernelOp records an operation performed on the fake kernel.
@@ -476,7 +477,34 @@ func (f *fakeKernel) AttachKprobe(_ context.Context, progPinPath, fnName string,
 	}, nil
 }
 
-func (f *fakeKernel) AttachUprobe(_ context.Context, progPinPath, target, fnName string, offset uint64, retprobe bool, linkPinPath string, containerPid int32) (bpfman.ManagedLink, error) {
+func (f *fakeKernel) AttachUprobeLocal(_ context.Context, progPinPath, target, fnName string, offset uint64, retprobe bool, linkPinPath string) (bpfman.ManagedLink, error) {
+	id := f.nextID.Add(1)
+	linkType := bpfman.LinkTypeUprobe
+	kernelLinkType := "uprobe"
+	if retprobe {
+		linkType = bpfman.LinkTypeUretprobe
+		kernelLinkType = "uretprobe"
+	}
+	// Store for DetachLink lookup
+	f.links[id] = &bpfman.AttachedLink{
+		ID:      id,
+		PinPath: linkPinPath,
+		Type:    bpfman.AttachUprobe,
+	}
+	return bpfman.ManagedLink{
+		Managed: &bpfman.LinkInfo{
+			KernelLinkID:    id,
+			KernelProgramID: 0,
+			Type:            linkType,
+			PinPath:         linkPinPath,
+			CreatedAt:       time.Now(),
+			Details:         bpfman.UprobeDetails{Target: target, FnName: fnName, Offset: offset, Retprobe: retprobe, ContainerPid: 0},
+		},
+		Kernel: &fakeKernelLinkInfo{id: id, programID: 0, linkType: kernelLinkType},
+	}, nil
+}
+
+func (f *fakeKernel) AttachUprobeContainer(_ context.Context, _ lock.WriterScope, progPinPath, target, fnName string, offset uint64, retprobe bool, linkPinPath string, containerPid int32) (bpfman.ManagedLink, error) {
 	id := f.nextID.Add(1)
 	linkType := bpfman.LinkTypeUprobe
 	kernelLinkType := "uprobe"

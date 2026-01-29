@@ -28,75 +28,78 @@ type LoadFileCmd struct {
 
 // Run executes the load file command.
 func (c *LoadFileCmd) Run(cli *CLI, ctx context.Context) error {
-	// Validate object file exists
+	// Validate object file exists (before acquiring lock)
 	objPath, err := ParseObjectPath(c.Path)
 	if err != nil {
 		return err
 	}
 
-	b, err := cli.Client(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to create client: %w", err)
-	}
-	defer b.Close()
-
-	// Convert global data
-	var globalData map[string][]byte
-	if len(c.GlobalData) > 0 {
-		globalData = GlobalDataMap(c.GlobalData)
-	}
-
-	// Build metadata map, adding application if specified
-	metadata := MetadataMap(c.Metadata)
-	if c.Application != "" {
-		if metadata == nil {
-			metadata = make(map[string]string)
-		}
-		metadata["bpfman.io/application"] = c.Application
-	}
-
-	results := make([]bpfman.ManagedProgram, 0, len(c.Programs))
-
-	for _, prog := range c.Programs {
-		// Build load spec using the appropriate constructor
-		var spec bpfman.LoadSpec
-		var err error
-		if prog.Type.RequiresAttachFunc() {
-			spec, err = bpfman.NewAttachLoadSpec(objPath.Path, prog.Name, prog.Type, prog.AttachFunc)
-		} else {
-			spec, err = bpfman.NewLoadSpec(objPath.Path, prog.Name, prog.Type)
-		}
+	return cli.RunWithLock(ctx, func(ctx context.Context) error {
+		dirs := cli.RuntimeDirs()
+		b, err := cli.Client(ctx)
 		if err != nil {
-			return fmt.Errorf("invalid load spec for %q: %w", prog.Name, err)
+			return fmt.Errorf("failed to create client: %w", err)
+		}
+		defer b.Close()
+
+		// Convert global data
+		var globalData map[string][]byte
+		if len(c.GlobalData) > 0 {
+			globalData = GlobalDataMap(c.GlobalData)
 		}
 
-		// Apply optional fields
-		// PinPath is the bpffs root; actual paths are computed from kernel ID
-		spec = spec.WithPinPath(cli.RuntimeDirs().FS)
-		if globalData != nil {
-			spec = spec.WithGlobalData(globalData)
-		}
-		if c.MapOwnerID != 0 {
-			spec = spec.WithMapOwnerID(c.MapOwnerID)
-		}
-
-		opts := manager.LoadOpts{
-			UserMetadata: metadata,
+		// Build metadata map, adding application if specified
+		metadata := MetadataMap(c.Metadata)
+		if c.Application != "" {
+			if metadata == nil {
+				metadata = make(map[string]string)
+			}
+			metadata["bpfman.io/application"] = c.Application
 		}
 
-		// Load through client
-		loaded, err := b.Load(ctx, spec, opts)
+		results := make([]bpfman.ManagedProgram, 0, len(c.Programs))
+
+		for _, prog := range c.Programs {
+			// Build load spec using the appropriate constructor
+			var spec bpfman.LoadSpec
+			var err error
+			if prog.Type.RequiresAttachFunc() {
+				spec, err = bpfman.NewAttachLoadSpec(objPath.Path, prog.Name, prog.Type, prog.AttachFunc)
+			} else {
+				spec, err = bpfman.NewLoadSpec(objPath.Path, prog.Name, prog.Type)
+			}
+			if err != nil {
+				return fmt.Errorf("invalid load spec for %q: %w", prog.Name, err)
+			}
+
+			// Apply optional fields
+			// PinPath is the bpffs root; actual paths are computed from kernel ID
+			spec = spec.WithPinPath(dirs.FS)
+			if globalData != nil {
+				spec = spec.WithGlobalData(globalData)
+			}
+			if c.MapOwnerID != 0 {
+				spec = spec.WithMapOwnerID(c.MapOwnerID)
+			}
+
+			opts := manager.LoadOpts{
+				UserMetadata: metadata,
+			}
+
+			// Load through client
+			loaded, err := b.Load(ctx, spec, opts)
+			if err != nil {
+				return fmt.Errorf("failed to load program %q: %w", prog.Name, err)
+			}
+			results = append(results, loaded)
+		}
+
+		output, err := FormatLoadedPrograms(results, &c.OutputFlags)
 		if err != nil {
-			return fmt.Errorf("failed to load program %q: %w", prog.Name, err)
+			return err
 		}
-		results = append(results, loaded)
-	}
 
-	output, err := FormatLoadedPrograms(results, &c.OutputFlags)
-	if err != nil {
-		return err
-	}
-
-	fmt.Print(output)
-	return nil
+		fmt.Print(output)
+		return nil
+	})
 }

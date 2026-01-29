@@ -1,4 +1,4 @@
-# Global Writer Lock for bpfman State
+# Global Writer Lock for bpfman State (BGL)
 
 ## Background
 
@@ -102,6 +102,41 @@ making misuse difficult.
 
 ---
 
+## Lock Scope as Capability
+
+Mutating operations require a non-forgeable `lock.WriterScope` capability
+that proves the global writer lock is held for the duration of the
+operation.
+
+`WriterScope` represents *authority*, not ownership: it is evidence that
+the caller is executing within the dynamic region protected by the global
+writer lock.
+
+Callers cannot construct a `WriterScope`, nor can they lock or unlock it.
+A `WriterScope` is only obtained by executing code under `lock.Run(...)`.
+
+This makes "forgot to acquire the lock" a compile-time error rather than
+a runtime bug.
+
+---
+
+## Lock Acquisition Boundary
+
+The global writer lock is acquired as early as possible at mutating
+entrypoints, not lazily at individual mutation sites:
+
+* CLI commands that mutate state acquire the lock at command entry.
+* The gRPC server (while it exists) acquires the lock per mutating RPC
+  via an interceptor.
+
+All code below these boundaries operates under an active `WriterScope`.
+Helpers inherit the scope via fd passing.
+
+This keeps lock acquisition early and obvious while preserving
+structural enforcement.
+
+---
+
 ## Why FD Passing Is Required
 
 A naïve design where helpers "just reacquire the lock" fails:
@@ -187,20 +222,23 @@ Each mutex must document its place in the hierarchy.
 
 ---
 
-## Structural Enforcement (“Illegal States Unrepresentable”)
+## Structural Enforcement ("Illegal States Unrepresentable")
 
-### Rule 1: All mutators require a `*lock.Writer`
+### Rule 1: All mutators require a `lock.WriterScope`
 
-Any function that may mutate `/run/bpfman/...` **must accept a writer
-lock parameter**.
+Any function that may mutate `/run/bpfman/...` **must accept a lock
+scope parameter**.
+
+A `WriterScope` is proof that the global writer lock is held. It cannot be
+constructed manually and is only provided by `lock.Run(...)`.
 
 This includes:
 
-* Manager attach/load/unload/GC methods
-* Kernel adapter attach/detach methods
+* Manager methods that spawn helpers (e.g., container uprobe attachment)
+* Kernel adapter methods that require cross-process coordination
 * Any future helper-invoked filesystem operations
 
-If you don’t have a `*lock.Writer`, you **cannot call** these methods.
+If you don't have a `lock.WriterScope`, you **cannot call** these methods.
 
 ---
 
@@ -227,60 +265,55 @@ lock" path. This makes accidental unlocked execution unrepresentable.
 
 ---
 
+### Note on Context
+
+The writer lock is not stored in `context.Context`. Context is used for
+cancellation, deadlines, and logging only. The lock is represented as
+an explicit capability (`WriterScope`) to avoid hidden dependencies.
+
+The one exception is the gRPC server interceptor, which stores the
+scope in context to bridge gRPC handler signatures. This exception is
+local to the server package and will be removed when the server is
+removed.
+
+---
+
 ## Code Sketches
 
-### Lock acquisition (context-aware)
+### Lock acquisition via `lock.Run`
 
 ```go
-type Writer struct {
-	f *os.File
+// WriterScope is an interface capability - cannot be implemented
+// outside the lock package due to the unexported marker method.
+type WriterScope interface {
+	DupFD() (*os.File, error)  // For passing to helpers
+	FD() int                    // For logging/diagnostics
+	writerScopeMarker()         // Prevents external implementation
 }
 
-// AcquireWriter opens (or creates) the lock file and acquires an
-// exclusive advisory lock. The lock is held until Close() is called.
-//
-// Acquisition respects context cancellation, allowing CLI commands to
-// be interrupted with Ctrl-C rather than hanging indefinitely.
-func AcquireWriter(ctx context.Context, path string) (*Writer, error) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
+// Run acquires the global writer lock, executes fn, then releases.
+// The WriterScope proves to callees that the lock is held.
+// Uses LOCK_EX|LOCK_NB with exponential backoff, respects ctx cancellation.
+func Run(ctx context.Context, lockPath string,
+	fn func(context.Context, WriterScope) error) error {
+	f, err := acquireWriter(ctx, lockPath)
 	if err != nil {
-		return nil, fmt.Errorf("open lock file: %w", err)
+		return err
 	}
+	defer f.Close()
 
-	backoff := 25 * time.Millisecond
-	const maxBackoff = 500 * time.Millisecond
-
-	for {
-		err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
-		if err == nil {
-			return &Writer{f: f}, nil
-		}
-		if err != syscall.EWOULDBLOCK {
-			f.Close()
-			return nil, fmt.Errorf("flock: %w", err)
-		}
-
-		// Another process holds the lock. Wait and retry.
-		select {
-		case <-ctx.Done():
-			f.Close()
-			return nil, ctx.Err()
-		case <-time.After(backoff):
-		}
-
-		if backoff < maxBackoff {
-			backoff *= 2
-		}
-	}
+	return fn(ctx, &writerScope{f: f})
 }
 
-func (w *Writer) FD() uintptr { return w.f.Fd() }
+// Usage at CLI command entry:
+func (cmd *AttachCmd) Run(cli *CLI, ctx context.Context) error {
+	dirs := cli.RuntimeDirs()
 
-func (w *Writer) Close() error {
-	if w == nil || w.f == nil {
-		return nil
-	}
-	return w.f.Close()
+	return lock.Run(ctx, dirs.Lock, func(ctx context.Context, scope lock.WriterScope) error {
+		// All operations here execute with lock held.
+		// scope can be passed to manager/kernel methods that need it.
+		return doAttach(ctx, scope, ...)
+	})
 }
 ```
 
@@ -289,34 +322,24 @@ func (w *Writer) Close() error {
 ### Passing the lock to a helper
 
 ```go
-// Define fd layout explicitly to avoid off-by-one errors.
-const (
-	ChildFDBase       = 3 // ExtraFiles[0] becomes fd 3 in child
-	ChildFDProg       = ChildFDBase + iota
-	ChildFDSocket
-	ChildFDWriterLock
-)
-
-// Duplicate the lock fd for the child.
+// Duplicate the lock fd for the child via scope.DupFD().
 //
-// flock locks are associated with the open file description. Dup()
+// flock locks are associated with the open file description. DupFD()
 // creates a new fd referring to the same open file description, so
 // both parent and child can close independently while the lock
 // remains held until the last fd is closed.
-dup, err := syscall.Dup(int(w.FD()))
+lockFile, err := scope.DupFD()
 if err != nil {
 	return fmt.Errorf("dup writer lock fd: %w", err)
 }
-lockFile := os.NewFile(uintptr(dup), "bpfman-writer-lock")
 defer lockFile.Close() // Close parent's dup after child starts
 
 cmd.ExtraFiles = []*os.File{
-	progFile,   // ChildFDProg (fd 3)
-	socketFile, // ChildFDSocket (fd 4)
-	lockFile,   // ChildFDWriterLock (fd 5)
+	progFile,   // fd 3 in child
+	socketFile, // fd 4 in child
+	lockFile,   // fd 5 in child
 }
-cmd.Env = append(cmd.Env,
-	fmt.Sprintf("BPFMAN_WRITER_LOCK_FD=%d", ChildFDWriterLock))
+cmd.Env = append(cmd.Env, "BPFMAN_WRITER_LOCK_FD=5")
 ```
 
 ---
@@ -324,40 +347,31 @@ cmd.Env = append(cmd.Env,
 ### Helper verification
 
 ```go
-const envVar = "BPFMAN_WRITER_LOCK_FD"
-
-s := os.Getenv(envVar)
-if s == "" {
-	return fmt.Errorf("%s not set: helper must be spawned with lock fd", envVar)
+fdStr := os.Getenv(lock.WriterLockFDEnvVar)
+if fdStr == "" {
+	return fmt.Errorf("%s not set: helper must be spawned with lock fd",
+		lock.WriterLockFDEnvVar)
 }
 
-fd, err := strconv.Atoi(s)
+fd, err := strconv.Atoi(fdStr)
 if err != nil || fd < 0 {
-	return fmt.Errorf("invalid %s=%q", envVar, s)
+	return fmt.Errorf("invalid %s=%q", lock.WriterLockFDEnvVar, fdStr)
 }
 
-f := os.NewFile(uintptr(fd), "bpfman-writer-lock")
-if f == nil {
-	return fmt.Errorf("failed to create file from fd %d", fd)
-}
-
-// Verify we actually hold the lock.
-//
-// A non-blocking exclusive flock on an fd that already holds the lock
-// succeeds immediately. If this fails, the parent passed the wrong fd
-// or did not acquire the lock.
+// InheritedLockFromFD verifies the fd actually holds the exclusive lock
+// via flock(LOCK_EX|LOCK_NB). If verification fails, it returns an error.
 //
 // NOTE: flock cannot distinguish "already held via inherited fd" from
 // "just acquired because uncontended". This is acceptable:
 // - parents MUST acquire before spawning (enforced by type system)
 // - helpers must hold the lock regardless of how they got it
-if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-	f.Close()
-	return fmt.Errorf("fd %d does not hold writer lock: %w", fd, err)
+inherited, err := lock.InheritedLockFromFD(fd)
+if err != nil {
+	return fmt.Errorf("lock verification failed: %w", err)
 }
+defer inherited.Close()
 
-// Keep f open for the lifetime of the helper to maintain the lock.
-defer f.Close()
+// ... helper performs its work ...
 ```
 
 ---
@@ -368,17 +382,17 @@ This illustrates the complete locking flow for a container uprobe, which
 requires a helper subprocess.
 
 1. **CLI acquires lock.** `bpfman attach uprobe ...` calls
-   `lock.AcquireWriter()` before any mutation.
+   `lock.Run()` before any mutation.
 
-2. **CLI invokes manager.** Passes `*lock.Writer` to
+2. **CLI invokes manager.** Passes `lock.WriterScope` to
    `manager.AttachUprobe()`.
 
-3. **Manager invokes kernel adapter.** Passes lock to
-   `kernel.AttachUprobe()`.
+3. **Manager invokes kernel adapter.** Passes scope to
+   `kernel.AttachUprobeContainer()`.
 
 4. **Kernel adapter spawns helper.** For container uprobes:
    * Creates socketpair for fd passing (link fd will come back this way)
-   * Dups the lock fd for the child
+   * Calls `scope.DupFD()` to duplicate the lock fd for the child
    * Sets up `ExtraFiles`: program fd (3), socket fd (4), lock fd (5)
    * Sets `BPFMAN_WRITER_LOCK_FD=5`
    * Execs `bpfman-ns uprobe ...`
@@ -387,8 +401,8 @@ requires a helper subprocess.
    namespace before Go runtime starts.
 
 6. **Helper verifies lock.** Reads `BPFMAN_WRITER_LOCK_FD`, calls
-   `flock(LOCK_EX|LOCK_NB)` to confirm lock is held. If not, exits with
-   error.
+   `lock.InheritedLockFromFD(fd)` which verifies the fd holds the
+   exclusive lock. If not, exits with error.
 
 7. **Helper attaches uprobe.** Uses inherited program fd to attach in
    the container's namespace context.
@@ -401,7 +415,8 @@ requires a helper subprocess.
 
 10. **Parent commits to database.** Writes metadata to SQLite.
 
-11. **Parent releases lock.** `w.Close()` releases the global lock.
+11. **Parent releases lock.** `lock.Run()` closure returns, releasing
+    the global lock.
 
 Throughout this flow:
 

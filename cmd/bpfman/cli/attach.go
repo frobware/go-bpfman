@@ -46,26 +46,28 @@ type AttachCmd struct {
 
 // Run executes the attach command.
 func (c *AttachCmd) Run(cli *CLI, ctx context.Context) error {
-	switch c.Type {
-	case "tracepoint":
-		return c.attachTracepoint(cli, ctx)
-	case "xdp":
-		return c.attachXDP(cli, ctx)
-	case "tc":
-		return c.attachTC(cli, ctx)
-	case "tcx":
-		return c.attachTCX(cli, ctx)
-	case "kprobe":
-		return c.attachKprobe(cli, ctx)
-	case "uprobe":
-		return c.attachUprobe(cli, ctx)
-	case "fentry":
-		return c.attachFentry(cli, ctx)
-	case "fexit":
-		return c.attachFexit(cli, ctx)
-	default:
-		return fmt.Errorf("unknown attach type: %s", c.Type)
-	}
+	return cli.RunWithLock(ctx, func(ctx context.Context) error {
+		switch c.Type {
+		case "tracepoint":
+			return c.attachTracepoint(cli, ctx)
+		case "xdp":
+			return c.attachXDP(cli, ctx)
+		case "tc":
+			return c.attachTC(cli, ctx)
+		case "tcx":
+			return c.attachTCX(cli, ctx)
+		case "kprobe":
+			return c.attachKprobe(cli, ctx)
+		case "uprobe":
+			return c.attachUprobe(cli, ctx)
+		case "fentry":
+			return c.attachFentry(cli, ctx)
+		case "fexit":
+			return c.attachFexit(cli, ctx)
+		default:
+			return fmt.Errorf("unknown attach type: %s", c.Type)
+		}
+	})
 }
 
 func (c *AttachCmd) attachTracepoint(cli *CLI, ctx context.Context) error {

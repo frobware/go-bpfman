@@ -279,8 +279,12 @@ func (s *Server) attachUprobe(ctx context.Context, programID uint32, info *pb.Up
 		spec = spec.WithContainerPid(*info.ContainerPid)
 	}
 
+	// Retrieve lock scope from context (set by lockInterceptor).
+	// Required for container uprobes to pass lock fd to helper.
+	scope := ScopeFromContext(ctx)
+
 	// Call manager with empty linkPinPath to auto-generate
-	summary, err := s.mgr.AttachUprobe(ctx, spec, bpfman.AttachOpts{})
+	summary, err := s.mgr.AttachUprobe(ctx, scope, spec, bpfman.AttachOpts{})
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "attach uprobe: %v", err)
 	}

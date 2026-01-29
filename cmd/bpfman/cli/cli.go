@@ -5,26 +5,30 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
+	"time"
 
 	"github.com/alecthomas/kong"
 
 	"github.com/frobware/go-bpfman/client"
 	"github.com/frobware/go-bpfman/config"
+	"github.com/frobware/go-bpfman/lock"
 	"github.com/frobware/go-bpfman/logging"
 	"github.com/frobware/go-bpfman/nsenter"
 )
 
 // CLI is the root command structure for bpfman.
 type CLI struct {
-	RuntimeDir string `name:"runtime-dir" help:"Runtime directory base path." default:"${default_runtime_dir}"`
-	Config     string `name:"config" help:"Config file path." default:"${default_config_path}"`
-	Log        string `name:"log" help:"Log spec (e.g., 'info,manager=debug')." env:"BPFMAN_LOG"`
-	Remote     string `name:"remote" short:"r" help:"Remote endpoint (unix:///path or host:port). Connects via gRPC instead of local manager."`
+	RuntimeDir  string        `name:"runtime-dir" help:"Runtime directory base path." default:"${default_runtime_dir}"`
+	Config      string        `name:"config" help:"Config file path." default:"${default_config_path}"`
+	Log         string        `name:"log" help:"Log spec (e.g., 'info,manager=debug')." env:"BPFMAN_LOG"`
+	Remote      string        `name:"remote" short:"r" help:"Remote endpoint (unix:///path or host:port). Connects via gRPC instead of local manager."`
+	LockTimeout time.Duration `name:"lock-timeout" help:"Timeout for acquiring the global writer lock (0 for indefinite)." default:"30s"`
 
 	Serve  ServeCmd  `cmd:"" help:"Start the gRPC daemon."`
 	Load   LoadCmd   `cmd:"" help:"Load a BPF program from an object file."`
@@ -181,4 +185,32 @@ func (c *CLI) Client(ctx context.Context) (client.Client, error) {
 		client.WithRuntimeDir(c.RuntimeDir),
 		client.WithConfig(cfg),
 	)
+}
+
+// RunWithLock wraps mutating CLI operations with the global writer lock when
+// running in local (ephemeral) mode. Remote mode relies on the server's lock
+// interceptor, so the client must avoid taking the same lock to prevent
+// deadlock.
+func (c *CLI) RunWithLock(ctx context.Context, fn func(context.Context) error) error {
+	if c.Remote != "" {
+		return fn(ctx)
+	}
+
+	// Apply lock timeout if set (0 means indefinite)
+	if c.LockTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, c.LockTimeout)
+		defer cancel()
+	}
+
+	dirs := c.RuntimeDirs()
+	if err := lock.Run(ctx, dirs.Lock, func(ctx context.Context, _ lock.WriterScope) error {
+		return fn(ctx)
+	}); err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("timed out waiting for lock %s (--lock-timeout=%v)", dirs.Lock, c.LockTimeout)
+		}
+		return err
+	}
+	return nil
 }

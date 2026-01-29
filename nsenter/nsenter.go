@@ -94,6 +94,15 @@ type CommandOptions struct {
 	// ExtraFiles specifies additional open files to be inherited by the
 	// child process. The files will be available as fd 3, 4, 5, etc.
 	ExtraFiles []*os.File
+
+	// WriterLockFD is a duped lock fd to pass to the child.
+	// If non-nil, added to ExtraFiles and WriterLockEnvVar set.
+	WriterLockFD *os.File
+
+	// WriterLockEnvVar is the env var name for the lock fd.
+	// Only used if WriterLockFD is non-nil.
+	// Defaults to "BPFMAN_WRITER_LOCK_FD" if empty.
+	WriterLockEnvVar string
 }
 
 // Command creates an exec.Cmd that will run in the mount namespace of the
@@ -173,6 +182,24 @@ func CommandWithOptions(containerPid int32, name string, opts CommandOptions, ar
 		cmd.ExtraFiles = opts.ExtraFiles
 		logger.Debug("passing extra files to child",
 			"count", len(opts.ExtraFiles))
+	}
+
+	// Pass writer lock fd if provided.
+	// The child sees ExtraFiles[i] as fd 3+i.
+	if opts.WriterLockFD != nil {
+		idx := len(cmd.ExtraFiles)
+		cmd.ExtraFiles = append(cmd.ExtraFiles, opts.WriterLockFD)
+		lockFdInChild := 3 + idx
+
+		envVar := opts.WriterLockEnvVar
+		if envVar == "" {
+			envVar = "BPFMAN_WRITER_LOCK_FD" // fallback default
+		}
+		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%d", envVar, lockFdInChild))
+
+		logger.Debug("passing writer lock fd to child",
+			"env_var", envVar,
+			"fd_in_child", lockFdInChild)
 	}
 
 	logger.Debug("command environment configured",

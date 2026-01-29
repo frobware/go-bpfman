@@ -22,6 +22,7 @@ import (
 	"github.com/frobware/go-bpfman/interpreter/image/oci"
 	"github.com/frobware/go-bpfman/interpreter/image/verify"
 	"github.com/frobware/go-bpfman/interpreter/store/sqlite"
+	"github.com/frobware/go-bpfman/lock"
 	"github.com/frobware/go-bpfman/manager"
 	pb "github.com/frobware/go-bpfman/server/pb"
 )
@@ -290,9 +291,13 @@ func (s *Server) serve(ctx context.Context, socketPath, tcpAddr string) error {
 		return fmt.Errorf("failed to set socket permissions: %w", err)
 	}
 
-	// Create gRPC server with logging interceptor
+	// Create gRPC server with logging and lock interceptors.
+	// Order: logging first (for op_id), then lock (for mutating operations).
 	grpcServer := grpc.NewServer(
-		grpc.UnaryInterceptor(s.loggingInterceptor()),
+		grpc.ChainUnaryInterceptor(
+			s.loggingInterceptor(),
+			s.lockInterceptor(),
+		),
 	)
 	pb.RegisterBpfmanServer(grpcServer, s)
 
@@ -351,4 +356,62 @@ func (s *Server) loggingInterceptor() grpc.UnaryServerInterceptor {
 		}
 		return resp, err
 	}
+}
+
+// lockInterceptor returns a gRPC unary interceptor that acquires the
+// global writer lock for mutating operations. The lock scope is stored
+// in context for handlers to retrieve via ScopeFromContext.
+//
+// This is a server-only exception to the "no context for capabilities" rule.
+// The interceptor acquires the lock at the correct boundary (before handlers),
+// and the exception is local to the server package. This will be removed
+// when the server is removed.
+func (s *Server) lockInterceptor() grpc.UnaryServerInterceptor {
+	mutatingMethods := map[string]bool{
+		"/bpfman.v1.Bpfman/Load":   true,
+		"/bpfman.v1.Bpfman/Unload": true,
+		"/bpfman.v1.Bpfman/Attach": true,
+		"/bpfman.v1.Bpfman/Detach": true,
+	}
+
+	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo,
+		handler grpc.UnaryHandler) (any, error) {
+		if !mutatingMethods[info.FullMethod] {
+			return handler(ctx, req)
+		}
+
+		var resp any
+		var handlerErr error
+
+		runErr := lock.Run(ctx, s.dirs.Lock,
+			func(ctx context.Context, scope lock.WriterScope) error {
+				// Stash scope in ctx so handlers can pass it to manager
+				// methods that need it (e.g., container uprobe).
+				ctx = contextWithScope(ctx, scope)
+				resp, handlerErr = handler(ctx, req)
+				return handlerErr
+			})
+
+		if runErr != nil {
+			return nil, runErr
+		}
+		return resp, handlerErr
+	}
+}
+
+// Server-only context helpers for passing lock scope to handlers.
+// Not for general use - the scope flows explicitly through manager APIs.
+type scopeKey struct{}
+
+func contextWithScope(ctx context.Context, s lock.WriterScope) context.Context {
+	return context.WithValue(ctx, scopeKey{}, s)
+}
+
+// ScopeFromContext retrieves the lock scope from context.
+// Returns nil if no scope is stored (e.g., read-only operations).
+func ScopeFromContext(ctx context.Context) lock.WriterScope {
+	if v := ctx.Value(scopeKey{}); v != nil {
+		return v.(lock.WriterScope)
+	}
+	return nil
 }

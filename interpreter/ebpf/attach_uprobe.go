@@ -15,21 +15,18 @@ import (
 	"github.com/cilium/ebpf/link"
 
 	"github.com/frobware/go-bpfman"
+	"github.com/frobware/go-bpfman/lock"
 	"github.com/frobware/go-bpfman/nsenter"
 )
 
-// AttachUprobe attaches a pinned program to a user-space function.
-// target is the path to the binary or library (e.g., /usr/lib/libc.so.6).
-// If retprobe is true, attaches as a uretprobe instead of uprobe.
-// If containerPid > 0, uses the bpfman-ns helper subprocess to attach
-// in the target container's mount namespace.
-func (k *kernelAdapter) AttachUprobe(ctx context.Context, progPinPath, target, fnName string, offset uint64, retprobe bool, linkPinPath string, containerPid int32) (bpfman.ManagedLink, error) {
-	k.logger.Debug("AttachUprobe called",
+// AttachUprobeLocal attaches a pinned program to a user-space function
+// in the current namespace. Does not spawn a helper, so no lock scope needed.
+func (k *kernelAdapter) AttachUprobeLocal(ctx context.Context, progPinPath, target, fnName string, offset uint64, retprobe bool, linkPinPath string) (bpfman.ManagedLink, error) {
+	k.logger.Debug("AttachUprobeLocal called",
 		"target", target,
 		"fn_name", fnName,
 		"offset", offset,
 		"retprobe", retprobe,
-		"container_pid", containerPid,
 		"prog_pin_path", progPinPath,
 		"link_pin_path", linkPinPath)
 
@@ -46,21 +43,75 @@ func (k *kernelAdapter) AttachUprobe(ctx context.Context, progPinPath, target, f
 	}
 	progID, _ := progInfo.ID()
 
-	var linkID uint32
+	// Regular uprobe - attach directly
+	linkID, err := k.doAttachUprobeLocal(progPinPath, target, fnName, offset, retprobe, linkPinPath)
+	if err != nil {
+		return bpfman.ManagedLink{}, err
+	}
 
-	if containerPid > 0 {
-		// Use bpfman-ns helper for container uprobes
-		// This runs in a subprocess with GOMAXPROCS=1 to allow setns to work
-		linkID, err = k.attachUprobeViaHelper(progPinPath, target, fnName, offset, retprobe, linkPinPath, containerPid)
-		if err != nil {
-			return bpfman.ManagedLink{}, fmt.Errorf("attach uprobe via helper: %w", err)
+	// Determine link type based on retprobe flag
+	linkType := bpfman.LinkTypeUprobe
+	if retprobe {
+		linkType = bpfman.LinkTypeUretprobe
+	}
+
+	// Load pinned link to get full info
+	var kernelLink bpfman.KernelLinkInfo
+	if linkPinPath != "" {
+		pinnedLink, err := link.LoadPinnedLink(linkPinPath, nil)
+		if err == nil {
+			if info, err := pinnedLink.Info(); err == nil {
+				kernelLink = NewLinkInfo(info)
+			}
+			pinnedLink.Close()
 		}
-	} else {
-		// Regular uprobe - attach directly
-		linkID, err = k.attachUprobeLocal(progPinPath, target, fnName, offset, retprobe, linkPinPath)
-		if err != nil {
-			return bpfman.ManagedLink{}, err
-		}
+	}
+
+	return bpfman.ManagedLink{
+		Managed: &bpfman.LinkInfo{
+			KernelLinkID:    linkID,
+			KernelProgramID: uint32(progID),
+			Type:            linkType,
+			PinPath:         linkPinPath,
+			CreatedAt:       time.Now(),
+			Details:         bpfman.UprobeDetails{Target: target, FnName: fnName, Offset: offset, Retprobe: retprobe, ContainerPid: 0},
+		},
+		Kernel: kernelLink,
+	}, nil
+}
+
+// AttachUprobeContainer attaches a pinned program to a user-space function
+// in a container's mount namespace. Spawns bpfman-ns helper, so requires
+// lock scope to pass fd.
+func (k *kernelAdapter) AttachUprobeContainer(ctx context.Context, scope lock.WriterScope, progPinPath, target, fnName string, offset uint64, retprobe bool, linkPinPath string, containerPid int32) (bpfman.ManagedLink, error) {
+	k.logger.Debug("AttachUprobeContainer called",
+		"target", target,
+		"fn_name", fnName,
+		"offset", offset,
+		"retprobe", retprobe,
+		"container_pid", containerPid,
+		"prog_pin_path", progPinPath,
+		"link_pin_path", linkPinPath,
+		"lock_fd", scope.FD())
+
+	prog, err := ebpf.LoadPinnedProgram(progPinPath, nil)
+	if err != nil {
+		return bpfman.ManagedLink{}, fmt.Errorf("load pinned program %s: %w", progPinPath, err)
+	}
+	defer prog.Close()
+
+	// Get program info to find kernel program ID
+	progInfo, err := prog.Info()
+	if err != nil {
+		return bpfman.ManagedLink{}, fmt.Errorf("get program info: %w", err)
+	}
+	progID, _ := progInfo.ID()
+
+	// Use bpfman-ns helper for container uprobes
+	// scope is required - compiler enforces it (not nil)
+	linkID, err := k.attachUprobeViaHelper(scope, progPinPath, target, fnName, offset, retprobe, linkPinPath, containerPid)
+	if err != nil {
+		return bpfman.ManagedLink{}, fmt.Errorf("attach uprobe via helper: %w", err)
 	}
 
 	// Determine link type based on retprobe flag
@@ -94,8 +145,8 @@ func (k *kernelAdapter) AttachUprobe(ctx context.Context, progPinPath, target, f
 	}, nil
 }
 
-// attachUprobeLocal attaches a uprobe directly (no namespace switching).
-func (k *kernelAdapter) attachUprobeLocal(progPinPath, target, fnName string, offset uint64, retprobe bool, linkPinPath string) (uint32, error) {
+// doAttachUprobeLocal attaches a uprobe directly (no namespace switching).
+func (k *kernelAdapter) doAttachUprobeLocal(progPinPath, target, fnName string, offset uint64, retprobe bool, linkPinPath string) (uint32, error) {
 	prog, err := ebpf.LoadPinnedProgram(progPinPath, nil)
 	if err != nil {
 		return 0, fmt.Errorf("load pinned program %s: %w", progPinPath, err)
@@ -150,13 +201,15 @@ func (k *kernelAdapter) attachUprobeLocal(progPinPath, target, fnName string, of
 // 1. Parent creates socketpair for fd passing
 // 2. Parent loads pinned program, passes fd via ExtraFiles (fd 3)
 // 3. Parent passes socket via ExtraFiles (fd 4) for receiving link fd
-// 4. Parent sets _BPFMAN_MNT_NS env var and re-execs itself as "bpfman-ns"
-// 5. Child's C constructor calls setns() before Go runtime starts
-// 6. Child's Go code runs in target mount namespace (target binary visible)
-// 7. Child uses inherited program fd to attach uprobe
-// 8. Child sends link fd back to parent via socket (SCM_RIGHTS)
-// 9. Parent receives link fd, keeps it open to maintain the uprobe
-func (k *kernelAdapter) attachUprobeViaHelper(progPinPath, target, fnName string, offset uint64, retprobe bool, linkPinPath string, containerPid int32) (uint32, error) {
+// 4. Parent passes writer lock fd via ExtraFiles (fd 5) and env var
+// 5. Parent sets _BPFMAN_MNT_NS env var and re-execs itself as "bpfman-ns"
+// 6. Child's C constructor calls setns() before Go runtime starts
+// 7. Child verifies it holds the writer lock
+// 8. Child's Go code runs in target mount namespace (target binary visible)
+// 9. Child uses inherited program fd to attach uprobe
+// 10. Child sends link fd back to parent via socket (SCM_RIGHTS)
+// 11. Parent receives link fd, keeps it open to maintain the uprobe
+func (k *kernelAdapter) attachUprobeViaHelper(scope lock.WriterScope, progPinPath, target, fnName string, offset uint64, retprobe bool, linkPinPath string, containerPid int32) (uint32, error) {
 	// Find the bpfman binary (which also serves as bpfman-ns)
 	bpfmanPath, err := os.Executable()
 	if err != nil {
@@ -245,11 +298,22 @@ func (k *kernelAdapter) attachUprobeViaHelper(progPinPath, target, fnName string
 		childLogLevel = nsenter.LogLevelDebug
 	}
 
-	// Use nsenter.CommandWithOptions with ExtraFiles to pass program fd and socket
+	// Dup the lock fd for the child process.
+	// The child inherits the lock via the duped fd.
+	lockFile, err := scope.DupFD()
+	if err != nil {
+		k.logger.Error("failed to dup lock fd for helper", "error", err)
+		return 0, fmt.Errorf("dup lock fd for helper: %w", err)
+	}
+	defer lockFile.Close() // Close parent's dup after child starts
+
+	// Use nsenter.CommandWithOptions with ExtraFiles to pass program fd, socket, and lock fd
 	cmd := nsenter.CommandWithOptions(containerPid, bpfmanPath, nsenter.CommandOptions{
-		Logger:     k.logger,
-		LogLevel:   childLogLevel,
-		ExtraFiles: []*os.File{progFile, childSocket}, // fd 3, fd 4 in child
+		Logger:           k.logger,
+		LogLevel:         childLogLevel,
+		ExtraFiles:       []*os.File{progFile, childSocket}, // fd 3, fd 4 in child
+		WriterLockFD:     lockFile,
+		WriterLockEnvVar: lock.WriterLockFDEnvVar,
 	}, args...)
 	cmd.Env = append(cmd.Env, nsenter.ModeEnvVar+"=bpfman-ns")
 
