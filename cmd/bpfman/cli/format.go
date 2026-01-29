@@ -28,6 +28,32 @@ func toKernelType(t bpfman.ProgramType) string {
 	}
 }
 
+// executeJSONPath parses and executes a JSONPath expression against the given data.
+// The data is marshalled to JSON and back to ensure consistent field access.
+func executeJSONPath(data any, expr string) (string, error) {
+	jp := jsonpath.New("output")
+	if err := jp.Parse(expr); err != nil {
+		return "", fmt.Errorf("invalid jsonpath expression %q: %w", expr, err)
+	}
+
+	jsonBytes, err := json.Marshal(data)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal: %w", err)
+	}
+
+	var generic any
+	if err := json.Unmarshal(jsonBytes, &generic); err != nil {
+		return "", fmt.Errorf("failed to unmarshal: %w", err)
+	}
+
+	var buf bytes.Buffer
+	if err := jp.Execute(&buf, generic); err != nil {
+		return "", fmt.Errorf("jsonpath execution failed: %w", err)
+	}
+
+	return buf.String() + "\n", nil
+}
+
 // FormatProgramInfo formats a ProgramInfo according to the specified output flags.
 func FormatProgramInfo(info manager.ProgramInfo, flags *OutputFlags) (string, error) {
 	format, err := flags.Format()
@@ -57,30 +83,7 @@ func formatProgramInfoJSON(info manager.ProgramInfo) (string, error) {
 }
 
 func formatProgramInfoJSONPath(info manager.ProgramInfo, expr string) (string, error) {
-	// Parse the JSONPath expression
-	jp := jsonpath.New("output")
-	if err := jp.Parse(expr); err != nil {
-		return "", fmt.Errorf("invalid jsonpath expression %q: %w", expr, err)
-	}
-
-	// Convert to generic interface for jsonpath
-	jsonBytes, err := json.Marshal(info)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal: %w", err)
-	}
-
-	var data interface{}
-	if err := json.Unmarshal(jsonBytes, &data); err != nil {
-		return "", fmt.Errorf("failed to unmarshal: %w", err)
-	}
-
-	// Execute the JSONPath expression
-	var buf bytes.Buffer
-	if err := jp.Execute(&buf, data); err != nil {
-		return "", fmt.Errorf("jsonpath execution failed: %w", err)
-	}
-
-	return buf.String() + "\n", nil
+	return executeJSONPath(info, expr)
 }
 
 func formatProgramInfoTree(info manager.ProgramInfo) string {
@@ -284,27 +287,7 @@ func formatProgramListJSON(programs []manager.ManagedProgram) (string, error) {
 }
 
 func formatProgramListJSONPath(programs []manager.ManagedProgram, expr string) (string, error) {
-	jp := jsonpath.New("output")
-	if err := jp.Parse(expr); err != nil {
-		return "", fmt.Errorf("invalid jsonpath expression %q: %w", expr, err)
-	}
-
-	jsonBytes, err := json.Marshal(programs)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal: %w", err)
-	}
-
-	var data interface{}
-	if err := json.Unmarshal(jsonBytes, &data); err != nil {
-		return "", fmt.Errorf("failed to unmarshal: %w", err)
-	}
-
-	var buf bytes.Buffer
-	if err := jp.Execute(&buf, data); err != nil {
-		return "", fmt.Errorf("jsonpath execution failed: %w", err)
-	}
-
-	return buf.String() + "\n", nil
+	return executeJSONPath(programs, expr)
 }
 
 func formatProgramListTable(programs []manager.ManagedProgram) string {
@@ -361,27 +344,7 @@ func formatLinkListJSON(links []bpfman.LinkSummary) (string, error) {
 }
 
 func formatLinkListJSONPath(links []bpfman.LinkSummary, expr string) (string, error) {
-	jp := jsonpath.New("output")
-	if err := jp.Parse(expr); err != nil {
-		return "", fmt.Errorf("invalid jsonpath expression %q: %w", expr, err)
-	}
-
-	jsonBytes, err := json.Marshal(links)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal: %w", err)
-	}
-
-	var data any
-	if err := json.Unmarshal(jsonBytes, &data); err != nil {
-		return "", fmt.Errorf("failed to unmarshal: %w", err)
-	}
-
-	var buf bytes.Buffer
-	if err := jp.Execute(&buf, data); err != nil {
-		return "", fmt.Errorf("jsonpath execution failed: %w", err)
-	}
-
-	return buf.String() + "\n", nil
+	return executeJSONPath(links, expr)
 }
 
 func formatLinkListTable(links []bpfman.LinkSummary) string {
@@ -443,28 +406,7 @@ func formatLinkResultJSONPath(bpfFunction string, summary bpfman.LinkSummary, de
 		Summary:     summary,
 		Details:     details,
 	}
-
-	jp := jsonpath.New("output")
-	if err := jp.Parse(expr); err != nil {
-		return "", fmt.Errorf("invalid jsonpath expression %q: %w", expr, err)
-	}
-
-	jsonBytes, err := json.Marshal(data)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal: %w", err)
-	}
-
-	var genericData interface{}
-	if err := json.Unmarshal(jsonBytes, &genericData); err != nil {
-		return "", fmt.Errorf("failed to unmarshal: %w", err)
-	}
-
-	var buf bytes.Buffer
-	if err := jp.Execute(&buf, genericData); err != nil {
-		return "", fmt.Errorf("jsonpath execution failed: %w", err)
-	}
-
-	return buf.String() + "\n", nil
+	return executeJSONPath(data, expr)
 }
 
 func formatLinkResultTable(bpfFunction string, summary bpfman.LinkSummary, details bpfman.LinkDetails) string {
@@ -604,28 +546,7 @@ func formatLinkInfoJSONPath(bpfFunction string, summary bpfman.LinkSummary, deta
 		Summary:     summary,
 		Details:     details,
 	}
-
-	jp := jsonpath.New("output")
-	if err := jp.Parse(expr); err != nil {
-		return "", fmt.Errorf("invalid jsonpath expression %q: %w", expr, err)
-	}
-
-	jsonBytes, err := json.Marshal(data)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal: %w", err)
-	}
-
-	var genericData any
-	if err := json.Unmarshal(jsonBytes, &genericData); err != nil {
-		return "", fmt.Errorf("failed to unmarshal: %w", err)
-	}
-
-	var buf bytes.Buffer
-	if err := jp.Execute(&buf, genericData); err != nil {
-		return "", fmt.Errorf("jsonpath execution failed: %w", err)
-	}
-
-	return buf.String() + "\n", nil
+	return executeJSONPath(data, expr)
 }
 
 func formatLinkInfoTable(bpfFunction string, summary bpfman.LinkSummary, details bpfman.LinkDetails) string {
@@ -804,27 +725,7 @@ func formatLoadedProgramsJSON(programs []bpfman.ManagedProgram) (string, error) 
 }
 
 func formatLoadedProgramsJSONPath(programs []bpfman.ManagedProgram, expr string) (string, error) {
-	jp := jsonpath.New("output")
-	if err := jp.Parse(expr); err != nil {
-		return "", fmt.Errorf("invalid jsonpath expression %q: %w", expr, err)
-	}
-
-	jsonBytes, err := json.Marshal(programs)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal: %w", err)
-	}
-
-	var data interface{}
-	if err := json.Unmarshal(jsonBytes, &data); err != nil {
-		return "", fmt.Errorf("failed to unmarshal: %w", err)
-	}
-
-	var buf bytes.Buffer
-	if err := jp.Execute(&buf, data); err != nil {
-		return "", fmt.Errorf("jsonpath execution failed: %w", err)
-	}
-
-	return buf.String() + "\n", nil
+	return executeJSONPath(programs, expr)
 }
 
 func formatLoadedProgramsTable(programs []bpfman.ManagedProgram) string {
