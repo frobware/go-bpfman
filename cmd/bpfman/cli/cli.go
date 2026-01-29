@@ -113,28 +113,37 @@ func (c *CLI) PrintErrf(format string, args ...any) error {
 	return c.PrintErr(fmt.Sprintf(format, args...))
 }
 
-// resolveMode returns the effective mode name by checking the
-// BPFMAN_MODE environment variable first, falling back to argv[0].
-func resolveMode() string {
-	if mode := os.Getenv(nsenter.ModeEnvVar); mode != "" {
-		return mode
-	}
-	return filepath.Base(os.Args[0])
-}
-
 // Run parses command-line arguments and executes the selected command.
-// If invoked as "bpfman-rpc" (via argv[0] or BPFMAN_MODE), automatically
-// runs the serve command for compatibility with the bpfman-operator which
-// expects the Rust daemon's binary layout.
-// If invoked as "bpfman-ns" (via argv[0], argv[1], or BPFMAN_MODE), runs
-// the namespace helper for container uprobes.
+//
+// Mode detection:
+//   - BPFMAN_MODE env var is authoritative when set (handled by helper detection)
+//   - argv[0] basename provides symlink/binary name compatibility
+//
+// Modes:
+//   - "bpfman-ns": namespace helper for container uprobes (early exit)
+//   - "bpfman-rpc": serve command (for bpfman-operator compatibility)
+//   - otherwise: normal CLI parsing
 func Run(ctx context.Context) {
-	// Check for bpfman-ns mode first - needs special early handling
-	if runAsNS() {
+	// Check for namespace helper subprocess mode (used for container uprobes).
+	// This needs early handling before the main CLI is set up because the
+	// subprocess runs in a different mount namespace.
+	// Helper detection owns BPFMAN_MODE interpretation and returns errors for
+	// unknown values.
+	modeEnv := os.Getenv(nsenter.ModeEnvVar)
+	handled, err := HandleNamespaceHelperInvocation(os.Args, modeEnv, runNamespaceHelper)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "bpfman: %v\n", err)
+		os.Exit(1)
+	}
+	if handled {
 		return
 	}
 
-	if resolveMode() == "bpfman-rpc" {
+	// Check for bpfman-rpc mode (daemon compatibility with bpfman-operator).
+	// BPFMAN_MODE takes precedence over argv[0] for explicit configuration.
+	// By this point, if BPFMAN_MODE is set, it's "bpfman-rpc" (helper detection
+	// handles "bpfman-ns" and rejects unknown values).
+	if modeEnv == "bpfman-rpc" || filepath.Base(os.Args[0]) == "bpfman-rpc" {
 		os.Args = append([]string{os.Args[0], "serve"}, os.Args[1:]...)
 	}
 
@@ -285,34 +294,10 @@ func (c *CLI) Client(ctx context.Context) (client.Client, error) {
 // interceptor, so the client must avoid taking the same lock to prevent
 // deadlock.
 func (c *CLI) RunWithLock(ctx context.Context, fn func(context.Context) error) error {
-	if c.Remote != "" {
-		return fn(ctx)
-	}
-
-	// Apply lock timeout if set (0 means indefinite)
-	if c.LockTimeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, c.LockTimeout)
-		defer cancel()
-	}
-
-	dirs := c.RuntimeDirs()
-	logger, err := c.Logger()
-	if err != nil {
-		// Fall back to default logger if config parsing fails.
-		// This allows operations to proceed even with invalid logging config.
-		logger = slog.Default()
-	}
-
-	if err := lock.RunWithTiming(ctx, dirs.Lock, logger, func(ctx context.Context, _ lock.WriterScope) error {
-		return fn(ctx)
-	}); err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			return fmt.Errorf("timed out waiting for lock %s (--lock-timeout=%v)", dirs.Lock, c.LockTimeout)
-		}
-		return err
-	}
-	return nil
+	_, err := RunWithLockValue(ctx, c, func(ctx context.Context) (struct{}, error) {
+		return struct{}{}, fn(ctx)
+	})
+	return err
 }
 
 // RunWithLockValue is like RunWithLock but returns a value from the locked
@@ -348,7 +333,7 @@ func RunWithLockValue[T any](ctx context.Context, c *CLI, fn func(context.Contex
 
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
-			return result, fmt.Errorf("timed out waiting for lock %s (--lock-timeout=%v)", dirs.Lock, c.LockTimeout)
+			return result, fmt.Errorf("timed out waiting for lock %s (local mode, --lock-timeout=%v)", dirs.Lock, c.LockTimeout)
 		}
 		return result, err
 	}

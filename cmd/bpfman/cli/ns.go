@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strconv"
 	"syscall"
 
@@ -73,9 +74,25 @@ func getMntNsInode(path string) uint64 {
 // The writer lock fd is passed via the BPFMAN_WRITER_LOCK_FD environment variable.
 // After attaching, we send the link fd back to the parent over the socket.
 func (cmd *NSUprobeCmd) Run() error {
-	// Create a logger that writes to stderr (stdout is reserved for status)
+	// Create a logger that writes to stderr, respecting BPFMAN_LOG if set.
+	// Defaults to info level for less verbose output in normal operation.
+	logLevel := slog.LevelInfo
+	if spec := os.Getenv("BPFMAN_LOG"); spec != "" {
+		// Simple level extraction: take first word if it looks like a level
+		// (full spec parsing is overkill for the helper subprocess)
+		switch spec {
+		case "trace":
+			logLevel = slog.Level(-8) // LevelTrace
+		case "debug":
+			logLevel = slog.LevelDebug
+		case "warn", "warning":
+			logLevel = slog.LevelWarn
+		case "error":
+			logLevel = slog.LevelError
+		}
+	}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: slog.LevelDebug,
+		Level: logLevel,
 	}))
 
 	// Verify writer lock - helper cannot proceed without it.
@@ -126,6 +143,7 @@ func (cmd *NSUprobeCmd) Run() error {
 
 	// Create program from the inherited file descriptor.
 	// The parent opened the pinned program and passed the fd via ExtraFiles.
+	// The child process owns its copy of the fd after exec.
 	logger.Debug("creating program from inherited fd", "fd", ProgramFD)
 	prog, err := ebpf.NewProgramFromFD(ProgramFD)
 	if err != nil {
@@ -135,7 +153,7 @@ func (cmd *NSUprobeCmd) Run() error {
 			"hint", "bpfman-ns must be invoked by the daemon, not directly")
 		return fmt.Errorf("create program from fd %d (bpfman-ns must be invoked by daemon, not directly): %w", ProgramFD, err)
 	}
-	// Don't close the program - we don't own the fd.
+	defer prog.Close()
 	logger.Debug("program from inherited fd",
 		"fd", ProgramFD,
 		"prog_type", prog.Type())
@@ -246,59 +264,92 @@ func (cmd *NSUprobeCmd) Run() error {
 		"link_fd", linkFd)
 
 	// Close our references. The parent now has the fd via SCM_RIGHTS.
+	// The perf event fd we sent keeps the attachment alive in the parent.
+	// Success is signalled by clean exit (exit 0); parent uses Wait() result.
 	perfFile.Close()
-
-	// Protocol: write "ok" to stdout to signal success to the parent process.
-	// The parent (manager/uprobe.go) reads this to confirm the helper completed.
-	// This is intentionally not using cli.PrintOut as stdout here is part of
-	// the IPC protocol, not user-facing output. A write failure here will cause
-	// the parent to see no output, which it treats as failure.
-	fmt.Println("ok")
+	lnk.Close()
 
 	return nil
 }
 
-// runAsNS checks if we're running as bpfman-ns and handles it specially.
-// Returns true if we handled bpfman-ns mode (caller should exit).
+// NamespaceHelperInvocation captures the details of a namespace helper
+// invocation. This is used when bpfman re-execs itself to attach uprobes
+// inside container mount namespaces.
+type NamespaceHelperInvocation struct {
+	Args []string
+}
+
+// DetectNamespaceHelperInvocation checks if this invocation is for the
+// namespace helper subprocess (used for container uprobe attachment).
 //
-// Detection order:
-//  1. BPFMAN_MODE=bpfman-ns (env var, checked via resolveMode)
-//  2. argv[0] == "bpfman-ns" (symlink, checked via resolveMode)
-//  3. argv[1] == "bpfman-ns" (self-exec with subcommand)
-func runAsNS() bool {
-	isBpfmanNS := false
-	if resolveMode() == "bpfman-ns" {
-		isBpfmanNS = true
-	} else if len(os.Args) > 1 && os.Args[1] == "bpfman-ns" {
-		isBpfmanNS = true
+// Detection logic:
+//  1. If BPFMAN_MODE is set:
+//     - "bpfman-ns" → helper mode
+//     - "bpfman-rpc" → not helper (valid, but different mode)
+//     - anything else → error (unknown mode)
+//  2. If BPFMAN_MODE is not set:
+//     - argv[0] basename is "bpfman-ns" → helper mode (symlink compatibility)
+//     - otherwise → not helper
+//
+// Returns the invocation details (with rewritten args for the helper parser),
+// whether helper mode was detected, and any error for invalid configuration.
+func DetectNamespaceHelperInvocation(argv []string, modeEnv string) (NamespaceHelperInvocation, bool, error) {
+	if len(argv) == 0 {
+		return NamespaceHelperInvocation{}, false, nil
 	}
 
-	if !isBpfmanNS {
-		return false
+	// If BPFMAN_MODE is set, it takes precedence and must be valid
+	if modeEnv != "" {
+		switch modeEnv {
+		case "bpfman-ns":
+			return NamespaceHelperInvocation{Args: argv[1:]}, true, nil
+		case "bpfman-rpc":
+			return NamespaceHelperInvocation{}, false, nil
+		default:
+			return NamespaceHelperInvocation{}, false, fmt.Errorf("unknown BPFMAN_MODE=%q; valid values: bpfman-ns, bpfman-rpc", modeEnv)
+		}
 	}
 
-	// Strip "bpfman-ns" from args if present so kong sees "uprobe"
-	// as the command. This applies whether detected via env var or
-	// argv[1].
-	if len(os.Args) > 1 && os.Args[1] == "bpfman-ns" {
-		os.Args = append(os.Args[:1], os.Args[2:]...)
+	// Fall back to argv[0] check for symlink compatibility
+	if filepath.Base(argv[0]) == "bpfman-ns" {
+		return NamespaceHelperInvocation{Args: argv[1:]}, true, nil
 	}
 
-	// Parse and run the NS command using kong
-	var cmd struct {
-		Uprobe NSUprobeCmd `cmd:"" help:"Attach uprobe in target namespace."`
-	}
+	return NamespaceHelperInvocation{}, false, nil
+}
 
-	ctx := kong.Parse(&cmd,
+// HandleNamespaceHelperInvocation detects namespace helper mode and runs the
+// provided runner if detected. Returns whether the invocation was handled and
+// any error from detection or the runner.
+func HandleNamespaceHelperInvocation(argv []string, modeEnv string, run func(NamespaceHelperInvocation) error) (handled bool, err error) {
+	inv, isHelper, err := DetectNamespaceHelperInvocation(argv, modeEnv)
+	if err != nil {
+		return false, err
+	}
+	if !isHelper {
+		return false, nil
+	}
+	return true, run(inv)
+}
+
+// runNamespaceHelper is the default runner for namespace helper invocations.
+// It parses the helper CLI and executes the command without mutating os.Args.
+func runNamespaceHelper(inv NamespaceHelperInvocation) error {
+	var cmd NSCmd
+
+	parser, err := kong.New(&cmd,
 		kong.Name("bpfman-ns"),
-		kong.Description("BPF namespace helper for container uprobes."),
+		kong.Description("BPF namespace subprocess for container uprobes."),
 		kong.UsageOnError(),
 	)
-
-	if err := ctx.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "bpfman-ns: %v\n", err)
-		os.Exit(1)
+	if err != nil {
+		return fmt.Errorf("create parser: %w", err)
 	}
 
-	return true
+	ctx, err := parser.Parse(inv.Args)
+	if err != nil {
+		return err
+	}
+
+	return ctx.Run()
 }

@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
-	"strings"
 	"syscall"
 	"time"
 
@@ -282,8 +281,9 @@ func (k *kernelAdapter) attachUprobeViaHelper(scope lock.WriterScope, progPinPat
 	// Build arguments for bpfman-ns uprobe command.
 	// Program fd passed via ExtraFiles[0] (fd 3 in child).
 	// Socket fd passed via ExtraFiles[1] (fd 4 in child) for returning link fd.
+	// Note: "bpfman-ns" mode is set via BPFMAN_MODE env var, not argv.
 	args := []string{
-		"bpfman-ns", "uprobe",
+		"uprobe",
 		target,
 		"--fn-name", fnName,
 		"--offset", fmt.Sprintf("%d", offset),
@@ -311,11 +311,12 @@ func (k *kernelAdapter) attachUprobeViaHelper(scope lock.WriterScope, progPinPat
 	cmd := nsenter.CommandWithOptions(containerPid, bpfmanPath, nsenter.CommandOptions{
 		Logger:           k.logger,
 		LogLevel:         childLogLevel,
+		Mode:             "bpfman-ns",
+		NsPath:           nsPath,
 		ExtraFiles:       []*os.File{progFile, childSocket}, // fd 3, fd 4 in child
 		WriterLockFD:     lockFile,
 		WriterLockEnvVar: lock.WriterLockFDEnvVar,
 	}, args...)
-	cmd.Env = append(cmd.Env, nsenter.ModeEnvVar+"=bpfman-ns")
 
 	k.logger.Debug("executing bpfman-ns helper subprocess",
 		"executable", bpfmanPath,
@@ -324,17 +325,8 @@ func (k *kernelAdapter) attachUprobeViaHelper(scope lock.WriterScope, progPinPat
 		"program_fd_passed", true,
 		"socket_fd_passed", true)
 
-	// Close child's socket end before running - child gets it via ExtraFiles
-	// We need to close it in parent so recvmsg doesn't block forever
-	// Actually, we close it AFTER cmd.Start() - let me restructure this
-
 	// Start the child process
-	cmd.Stderr = nil // Let it inherit stderr for logging
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		k.logger.Error("failed to get stdout pipe", "error", err)
-		return 0, fmt.Errorf("get stdout pipe: %w", err)
-	}
+	cmd.Stderr = os.Stderr // Inherit stderr for helper logging
 
 	if err := cmd.Start(); err != nil {
 		k.logger.Error("failed to start bpfman-ns helper",
@@ -362,12 +354,7 @@ func (k *kernelAdapter) attachUprobeViaHelper(scope lock.WriterScope, progPinPat
 		"link_fd", linkFd,
 		"name", name)
 
-	// Read stdout for "ok" confirmation
-	outputBuf := make([]byte, 64)
-	n, _ := stdout.Read(outputBuf)
-	outputStr := strings.TrimSpace(string(outputBuf[:n]))
-
-	// Wait for child to exit
+	// Wait for child to exit - exit 0 signals success
 	if err := cmd.Wait(); err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
@@ -385,14 +372,6 @@ func (k *kernelAdapter) attachUprobeViaHelper(scope lock.WriterScope, progPinPat
 			"container_pid", containerPid)
 		syscall.Close(linkFd)
 		return 0, fmt.Errorf("wait for bpfman-ns: %w", err)
-	}
-
-	if outputStr != "ok" {
-		k.logger.Error("unexpected output from bpfman-ns",
-			"output", outputStr,
-			"expected", "ok")
-		syscall.Close(linkFd)
-		return 0, fmt.Errorf("bpfman-ns returned %q, expected 'ok'", outputStr)
 	}
 
 	// We now have the link fd. For perf_event-based uprobes, we cannot pin them.

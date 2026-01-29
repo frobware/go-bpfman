@@ -27,7 +27,9 @@
 //
 // To attach a uprobe in a container's mount namespace:
 //
-//	cmd := nsenter.CommandWithOptions(containerPid, selfPath, opts, "bpfman-ns", "uprobe", ...)
+//	cmd := nsenter.CommandWithOptions(containerPid, selfPath, nsenter.CommandOptions{
+//	    Mode: "bpfman-ns",
+//	}, "uprobe", target, "--fn-name", fnName)
 //	output, err := cmd.Output()
 //
 // The child process will:
@@ -86,6 +88,10 @@ type CommandOptions struct {
 	// LogLevel sets the C-level logging for the child process.
 	// Default is LogLevelError.
 	LogLevel LogLevel
+
+	// Mode sets BPFMAN_MODE for the child process ("bpfman-ns" or "bpfman-rpc").
+	// Empty means do not set it.
+	Mode string
 
 	// NsPath overrides automatic namespace path detection.
 	// If empty, uses /proc/<pid>/ns/mnt or /host/proc/<pid>/ns/mnt.
@@ -177,6 +183,11 @@ func CommandWithOptions(containerPid int32, name string, opts CommandOptions, ar
 		fmt.Sprintf("%s=%s", LogLevelEnvVar, logLevel),
 	)
 
+	// Set BPFMAN_MODE if specified
+	if opts.Mode != "" {
+		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", ModeEnvVar, opts.Mode))
+	}
+
 	// Pass any extra files (they become fd 3, 4, 5, ...)
 	if len(opts.ExtraFiles) > 0 {
 		cmd.ExtraFiles = opts.ExtraFiles
@@ -250,15 +261,6 @@ func CommandWithNsPathAndLogger(nsPath string, logger *slog.Logger, logLevel Log
 		fmt.Sprintf("%s=%s", LogLevelEnvVar, logLevel),
 	)
 	return cmd
-}
-
-// InNamespace returns true if the current process was started with namespace
-// switching enabled (i.e., _BPFMAN_MNT_NS was set and nsexec switched namespaces).
-//
-// Note: This checks if the env var was originally set. The C code clears it
-// after switching, so this returns false. Use this only for documentation/testing.
-func InNamespace() bool {
-	return os.Getenv(MntNsEnvVar) != ""
 }
 
 // GetCurrentMntNsInode returns the inode of the current mount namespace.
