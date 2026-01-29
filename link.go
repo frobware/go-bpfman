@@ -296,50 +296,18 @@ type LinkInfo struct {
 // ManagedLink combines bpfman-managed state with kernel-reported info for a link.
 type ManagedLink struct {
 	Managed *LinkInfo
-	Kernel  KernelLinkInfo
-}
-
-// KernelLinkInfo describes what the kernel reports about a link.
-type KernelLinkInfo interface {
-	ID() uint32
-	ProgramID() uint32
-	LinkType() string
-	AttachType() string
-	TargetObjID() uint32
-	TargetBTFId() uint32
+	Kernel  *kernel.Link
 }
 
 // MarshalJSON implements json.Marshaler for ManagedLink.
+// The kernel.Link is serialized directly as it has JSON tags.
 func (l ManagedLink) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
-		Managed *LinkInfo      `json:"managed"`
-		Kernel  kernelLinkView `json:"kernel"`
+		Managed *LinkInfo    `json:"managed"`
+		Kernel  *kernel.Link `json:"kernel"`
 	}{
 		Managed: l.Managed,
-		Kernel:  kernelLinkView{l.Kernel},
-	})
-}
-
-// kernelLinkView is a JSON-serializable view of KernelLinkInfo.
-type kernelLinkView struct {
-	info KernelLinkInfo
-}
-
-func (v kernelLinkView) MarshalJSON() ([]byte, error) {
-	return json.Marshal(struct {
-		ID          uint32 `json:"id"`
-		ProgramID   uint32 `json:"program_id"`
-		LinkType    string `json:"link_type"`
-		AttachType  string `json:"attach_type,omitempty"`
-		TargetObjID uint32 `json:"target_obj_id,omitempty"`
-		TargetBTFId uint32 `json:"target_btf_id,omitempty"`
-	}{
-		ID:          v.info.ID(),
-		ProgramID:   v.info.ProgramID(),
-		LinkType:    v.info.LinkType(),
-		AttachType:  v.info.AttachType(),
-		TargetObjID: v.info.TargetObjID(),
-		TargetBTFId: v.info.TargetBTFId(),
+		Kernel:  l.Kernel,
 	})
 }
 

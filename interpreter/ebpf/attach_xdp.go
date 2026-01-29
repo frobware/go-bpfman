@@ -64,7 +64,7 @@ func (k *kernelAdapter) AttachXDP(ctx context.Context, progPinPath string, ifind
 			CreatedAt:       time.Now(),
 			Details:         bpfman.XDPDetails{Ifindex: uint32(ifindex)},
 		},
-		Kernel: NewLinkInfo(linkInfo),
+		Kernel: ToKernelLink(linkInfo),
 	}, nil
 }
 
@@ -411,6 +411,6 @@ func (k *kernelAdapter) AttachXDPExtension(ctx context.Context, dispatcherPinPat
 			CreatedAt:       time.Now(),
 			Details:         bpfman.XDPDetails{Position: int32(position)},
 		},
-		Kernel: NewLinkInfo(linkInfo),
+		Kernel: ToKernelLink(linkInfo),
 	}, nil
 }

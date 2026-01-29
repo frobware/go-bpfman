@@ -170,7 +170,7 @@ func (m *Manager) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts b
 	// COMPUTE: Build save actions from kernel result
 	saveActions := computeAttachTCActions(
 		programKernelID,
-		link.Kernel.ID(),
+		link.Kernel.ID,
 		link.Managed.PinPath,
 		ifname,
 		uint32(ifindex),
@@ -192,7 +192,7 @@ func (m *Manager) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts b
 	}
 
 	m.logger.InfoContext(ctx, "attached TC via dispatcher",
-		"kernel_link_id", link.Kernel.ID(),
+		"kernel_link_id", link.Kernel.ID,
 		"program_id", programKernelID,
 		"interface", ifname,
 		"direction", direction,
@@ -210,7 +210,7 @@ func (m *Manager) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts b
 	}
 	// Shouldn't happen, but return a constructed summary as fallback
 	return bpfman.LinkSummary{
-		KernelLinkID:    link.Kernel.ID(),
+		KernelLinkID:    link.Kernel.ID,
 		LinkType:        bpfman.LinkTypeTC,
 		KernelProgramID: programKernelID,
 		PinPath:         link.Managed.PinPath,
@@ -333,7 +333,7 @@ func (m *Manager) AttachTCX(ctx context.Context, spec bpfman.TCXAttachSpec, opts
 
 	// COMPUTE: Build save action
 	summary := bpfman.LinkSummary{
-		KernelLinkID:    link.Kernel.ID(),
+		KernelLinkID:    link.Kernel.ID,
 		LinkType:        bpfman.LinkTypeTCX,
 		KernelProgramID: programKernelID,
 		PinPath:         link.Managed.PinPath,
@@ -369,7 +369,7 @@ func (m *Manager) AttachTCX(ctx context.Context, spec bpfman.TCXAttachSpec, opts
 	}
 
 	m.logger.InfoContext(ctx, "attached TCX program",
-		"kernel_link_id", link.Kernel.ID(),
+		"kernel_link_id", link.Kernel.ID,
 		"program_id", programKernelID,
 		"interface", ifname,
 		"direction", direction,

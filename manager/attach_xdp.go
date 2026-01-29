@@ -150,7 +150,7 @@ func (m *Manager) AttachXDP(ctx context.Context, spec bpfman.XDPAttachSpec, opts
 	// COMPUTE: Build save actions from kernel result
 	saveActions := computeAttachXDPActions(
 		programKernelID,
-		link.Kernel.ID(),
+		link.Kernel.ID,
 		link.Managed.PinPath,
 		ifname,
 		uint32(ifindex),
@@ -169,7 +169,7 @@ func (m *Manager) AttachXDP(ctx context.Context, spec bpfman.XDPAttachSpec, opts
 	}
 
 	m.logger.InfoContext(ctx, "attached XDP via dispatcher",
-		"kernel_link_id", link.Kernel.ID(),
+		"kernel_link_id", link.Kernel.ID,
 		"program_id", programKernelID,
 		"interface", ifname,
 		"ifindex", ifindex,
@@ -186,7 +186,7 @@ func (m *Manager) AttachXDP(ctx context.Context, spec bpfman.XDPAttachSpec, opts
 	}
 	// Shouldn't happen, but return a constructed summary as fallback
 	return bpfman.LinkSummary{
-		KernelLinkID:    link.Kernel.ID(),
+		KernelLinkID:    link.Kernel.ID,
 		LinkType:        bpfman.LinkTypeXDP,
 		KernelProgramID: programKernelID,
 		PinPath:         link.Managed.PinPath,

@@ -171,8 +171,10 @@ func cloneMap[K comparable, V any](m map[K]V) map[K]V {
 	return result
 }
 
-// ProgramInfo holds what bpfman tracks about a loaded program.
-type ProgramInfo struct {
+// LoadedProgramInfo holds transient information about a just-loaded program.
+// This is returned by the kernel Load operation and contains pin paths
+// that are used to construct the ProgramRecord for persistence.
+type LoadedProgramInfo struct {
 	Name       string      `json:"name"`
 	Type       ProgramType `json:"type"`
 	ObjectPath string      `json:"object_path,omitempty"`
@@ -183,89 +185,27 @@ type ProgramInfo struct {
 // ManagedProgram is the result of loading a BPF program.
 // It combines bpfman-managed state with kernel-reported info.
 type ManagedProgram struct {
-	Managed *ProgramInfo
-	Kernel  KernelProgramInfo
+	Managed *LoadedProgramInfo
+	Kernel  *kernel.Program
 }
 
-// KernelProgramInfo describes what the kernel reports about a loaded program.
-// Note: GPL compatibility is not exposed here because the kernel doesn't report
-// it after load. It's captured from the ELF at load time and stored in
-// bpfman.Program.GPLCompatible.
-type KernelProgramInfo interface {
-	ID() uint32
-	Name() string
-	Type() ProgramType
-	Tag() string
-	MapIDs() []uint32
-	BTFId() uint32
-	BytesXlated() uint32
-	BytesJited() uint32
-	VerifiedInstructions() uint32
-	LoadedAt() time.Time
-	MemoryLocked() uint64
-}
-
-// GPLCompatibleProvider is optionally implemented by KernelProgramInfo
-// implementations that capture GPL compatibility at load time from the
-// ELF license section. Use ExtractGPLCompatible to safely extract this.
-type GPLCompatibleProvider interface {
-	GPLCompatible() bool
-}
-
-// ExtractGPLCompatible extracts GPL compatibility from a KernelProgramInfo
-// if it implements GPLCompatibleProvider. Returns false if not available.
-func ExtractGPLCompatible(info KernelProgramInfo) bool {
-	if gpl, ok := info.(GPLCompatibleProvider); ok {
-		return gpl.GPLCompatible()
+// ExtractGPLCompatible extracts GPL compatibility from a kernel.Program.
+// Returns false if the program is nil or GPLCompatible is not set.
+func ExtractGPLCompatible(prog *kernel.Program) bool {
+	if prog == nil {
+		return false
 	}
-	return false
+	return prog.GPLCompatible
 }
 
 // MarshalJSON implements json.Marshaler for ManagedProgram.
+// The kernel.Program is serialized directly as it has JSON tags.
 func (p ManagedProgram) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
-		Managed *ProgramInfo      `json:"managed"`
-		Kernel  kernelProgramView `json:"kernel"`
+		Managed *LoadedProgramInfo `json:"managed"`
+		Kernel  *kernel.Program    `json:"kernel"`
 	}{
 		Managed: p.Managed,
-		Kernel:  kernelProgramView{p.Kernel},
-	})
-}
-
-// kernelProgramView is a JSON-serializable view of KernelProgramInfo.
-type kernelProgramView struct {
-	info KernelProgramInfo
-}
-
-func (v kernelProgramView) MarshalJSON() ([]byte, error) {
-	var loadedAt string
-	if !v.info.LoadedAt().IsZero() {
-		loadedAt = v.info.LoadedAt().Format(time.RFC3339)
-	}
-
-	return json.Marshal(struct {
-		ID                   uint32      `json:"id"`
-		Name                 string      `json:"name"`
-		Type                 ProgramType `json:"type"`
-		Tag                  string      `json:"tag,omitempty"`
-		LoadedAt             string      `json:"loaded_at,omitempty"`
-		MapIDs               []uint32    `json:"map_ids,omitempty"`
-		BTFId                uint32      `json:"btf_id,omitempty"`
-		BytesXlated          uint32      `json:"bytes_xlated,omitempty"`
-		BytesJited           uint32      `json:"bytes_jited,omitempty"`
-		MemoryLocked         uint64      `json:"memory_locked,omitempty"`
-		VerifiedInstructions uint32      `json:"verified_insns,omitempty"`
-	}{
-		ID:                   v.info.ID(),
-		Name:                 v.info.Name(),
-		Type:                 v.info.Type(),
-		Tag:                  v.info.Tag(),
-		LoadedAt:             loadedAt,
-		MapIDs:               v.info.MapIDs(),
-		BTFId:                v.info.BTFId(),
-		BytesXlated:          v.info.BytesXlated(),
-		BytesJited:           v.info.BytesJited(),
-		MemoryLocked:         v.info.MemoryLocked(),
-		VerifiedInstructions: v.info.VerifiedInstructions(),
+		Kernel:  p.Kernel,
 	})
 }

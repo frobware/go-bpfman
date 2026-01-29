@@ -50,7 +50,7 @@ func (m *Manager) AttachTracepoint(ctx context.Context, spec bpfman.TracepointAt
 	})
 
 	// COMPUTE: Build save action from kernel result
-	saveAction := computeAttachTracepointAction(programKernelID, link.Kernel.ID(), link.Managed.PinPath, group, name)
+	saveAction := computeAttachTracepointAction(programKernelID, link.Kernel.ID, link.Managed.PinPath, group, name)
 
 	// EXECUTE: Save link metadata
 	if err := m.executor.Execute(ctx, saveAction); err != nil {
@@ -62,7 +62,7 @@ func (m *Manager) AttachTracepoint(ctx context.Context, spec bpfman.TracepointAt
 	}
 
 	m.logger.InfoContext(ctx, "attached tracepoint",
-		"kernel_link_id", link.Kernel.ID(),
+		"kernel_link_id", link.Kernel.ID,
 		"program_id", programKernelID,
 		"tracepoint", group+"/"+name,
 		"pin_path", link.Managed.PinPath)
@@ -133,7 +133,7 @@ func (m *Manager) AttachKprobe(ctx context.Context, spec bpfman.KprobeAttachSpec
 	})
 
 	// COMPUTE: Build save action from kernel result
-	saveAction := computeAttachKprobeAction(programKernelID, link.Kernel.ID(), link.Managed.PinPath, fnName, offset, retprobe)
+	saveAction := computeAttachKprobeAction(programKernelID, link.Kernel.ID, link.Managed.PinPath, fnName, offset, retprobe)
 
 	// EXECUTE: Save link metadata
 	if err := m.executor.Execute(ctx, saveAction); err != nil {
@@ -149,7 +149,7 @@ func (m *Manager) AttachKprobe(ctx context.Context, spec bpfman.KprobeAttachSpec
 		probeType = "kretprobe"
 	}
 	m.logger.InfoContext(ctx, "attached "+probeType,
-		"kernel_link_id", link.Kernel.ID(),
+		"kernel_link_id", link.Kernel.ID,
 		"program_id", programKernelID,
 		"fn_name", fnName,
 		"offset", offset,
@@ -238,7 +238,7 @@ func (m *Manager) AttachUprobe(ctx context.Context, scope lock.WriterScope, spec
 	// Get kernel link ID (0 for perf_event-based links which have no kernel link)
 	var kernelLinkID uint32
 	if link.Kernel != nil {
-		kernelLinkID = link.Kernel.ID()
+		kernelLinkID = link.Kernel.ID
 	} else {
 		kernelLinkID = link.Managed.KernelLinkID
 	}
@@ -344,7 +344,7 @@ func (m *Manager) AttachFentry(ctx context.Context, spec bpfman.FentryAttachSpec
 	})
 
 	// COMPUTE: Build save action from kernel result
-	saveAction := computeAttachFentryAction(programKernelID, link.Kernel.ID(), link.Managed.PinPath, fnName)
+	saveAction := computeAttachFentryAction(programKernelID, link.Kernel.ID, link.Managed.PinPath, fnName)
 
 	// EXECUTE: Save link metadata
 	if err := m.executor.Execute(ctx, saveAction); err != nil {
@@ -356,7 +356,7 @@ func (m *Manager) AttachFentry(ctx context.Context, spec bpfman.FentryAttachSpec
 	}
 
 	m.logger.InfoContext(ctx, "attached fentry",
-		"kernel_link_id", link.Kernel.ID(),
+		"kernel_link_id", link.Kernel.ID,
 		"program_id", programKernelID,
 		"fn_name", fnName,
 		"pin_path", link.Managed.PinPath)
@@ -423,7 +423,7 @@ func (m *Manager) AttachFexit(ctx context.Context, spec bpfman.FexitAttachSpec, 
 	})
 
 	// COMPUTE: Build save action from kernel result
-	saveAction := computeAttachFexitAction(programKernelID, link.Kernel.ID(), link.Managed.PinPath, fnName)
+	saveAction := computeAttachFexitAction(programKernelID, link.Kernel.ID, link.Managed.PinPath, fnName)
 
 	// EXECUTE: Save link metadata
 	if err := m.executor.Execute(ctx, saveAction); err != nil {
@@ -435,7 +435,7 @@ func (m *Manager) AttachFexit(ctx context.Context, spec bpfman.FexitAttachSpec, 
 	}
 
 	m.logger.InfoContext(ctx, "attached fexit",
-		"kernel_link_id", link.Kernel.ID(),
+		"kernel_link_id", link.Kernel.ID,
 		"program_id", programKernelID,
 		"fn_name", fnName,
 		"pin_path", link.Managed.PinPath)

@@ -179,17 +179,17 @@ func (s *Server) Load(ctx context.Context, req *pb.LoadRequest) (*pb.LoadRespons
 		}
 
 		// Track for potential rollback
-		loadedKernelIDs = append(loadedKernelIDs, loaded.Kernel.ID())
+		loadedKernelIDs = append(loadedKernelIDs, loaded.Kernel.ID)
 
 		// First program becomes the map owner for subsequent programs in this request
 		if i == 0 {
-			mapOwnerKernelID = loaded.Kernel.ID()
+			mapOwnerKernelID = loaded.Kernel.ID
 		}
 
 		// Format LoadedAt as RFC3339 if available
 		var loadedAt string
-		if !loaded.Kernel.LoadedAt().IsZero() {
-			loadedAt = loaded.Kernel.LoadedAt().Format(time.RFC3339)
+		if !loaded.Kernel.LoadedAt.IsZero() {
+			loadedAt = loaded.Kernel.LoadedAt.Format(time.RFC3339)
 		}
 
 		progInfo := &pb.ProgramInfo{
@@ -208,19 +208,19 @@ func (s *Server) Load(ctx context.Context, req *pb.LoadRequest) (*pb.LoadRespons
 		resp.Programs = append(resp.Programs, &pb.LoadResponseInfo{
 			Info: progInfo,
 			KernelInfo: &pb.KernelProgramInfo{
-				Id:            loaded.Kernel.ID(),
-				Name:          loaded.Kernel.Name(),
+				Id:            loaded.Kernel.ID,
+				Name:          loaded.Kernel.Name,
 				ProgramType:   uint32(loaded.Managed.Type),
 				LoadedAt:      loadedAt,
-				Tag:           loaded.Kernel.Tag(),
+				Tag:           loaded.Kernel.Tag,
 				GplCompatible: bpfman.ExtractGPLCompatible(loaded.Kernel),
-				Jited:         loaded.Kernel.BytesJited() > 0,
-				MapIds:        loaded.Kernel.MapIDs(),
-				BtfId:         loaded.Kernel.BTFId(),
-				BytesXlated:   loaded.Kernel.BytesXlated(),
-				BytesJited:    loaded.Kernel.BytesJited(),
-				BytesMemlock:  uint32(loaded.Kernel.MemoryLocked()),
-				VerifiedInsns: loaded.Kernel.VerifiedInstructions(),
+				Jited:         loaded.Kernel.JitedSize > 0,
+				MapIds:        loaded.Kernel.MapIDs,
+				BtfId:         loaded.Kernel.BTFId,
+				BytesXlated:   loaded.Kernel.XlatedSize,
+				BytesJited:    loaded.Kernel.JitedSize,
+				BytesMemlock:  uint32(loaded.Kernel.Memlock),
+				VerifiedInsns: loaded.Kernel.VerifiedInstructions,
 			},
 		})
 	}

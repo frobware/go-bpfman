@@ -14,6 +14,7 @@ import (
 	"github.com/cilium/ebpf/link"
 
 	"github.com/frobware/go-bpfman"
+	"github.com/frobware/go-bpfman/kernel"
 	"github.com/frobware/go-bpfman/lock"
 	"github.com/frobware/go-bpfman/nsenter"
 )
@@ -55,12 +56,12 @@ func (k *kernelAdapter) AttachUprobeLocal(ctx context.Context, progPinPath, targ
 	}
 
 	// Load pinned link to get full info
-	var kernelLink bpfman.KernelLinkInfo
+	var kernelLink *kernel.Link
 	if linkPinPath != "" {
 		pinnedLink, err := link.LoadPinnedLink(linkPinPath, nil)
 		if err == nil {
 			if info, err := pinnedLink.Info(); err == nil {
-				kernelLink = NewLinkInfo(info)
+				kernelLink = ToKernelLink(info)
 			}
 			pinnedLink.Close()
 		}
@@ -120,12 +121,12 @@ func (k *kernelAdapter) AttachUprobeContainer(ctx context.Context, scope lock.Wr
 	}
 
 	// Load pinned link to get full info
-	var kernelLink bpfman.KernelLinkInfo
+	var kernelLink *kernel.Link
 	if linkPinPath != "" {
 		pinnedLink, err := link.LoadPinnedLink(linkPinPath, nil)
 		if err == nil {
 			if info, err := pinnedLink.Info(); err == nil {
-				kernelLink = NewLinkInfo(info)
+				kernelLink = ToKernelLink(info)
 			}
 			pinnedLink.Close()
 		}

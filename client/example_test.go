@@ -59,7 +59,7 @@ func ExampleClient_Load() {
 		log.Fatal(err)
 	}
 
-	fmt.Printf("Loaded program with kernel ID %d\n", prog.Kernel.ID())
+	fmt.Printf("Loaded program with kernel ID %d\n", prog.Kernel.ID)
 }
 
 func ExampleClient_List() {

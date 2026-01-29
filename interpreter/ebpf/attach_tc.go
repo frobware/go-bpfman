@@ -335,7 +335,7 @@ func (k *kernelAdapter) AttachTCExtension(ctx context.Context, dispatcherPinPath
 			CreatedAt:       time.Now(),
 			Details:         bpfman.TCDetails{Position: int32(position)},
 		},
-		Kernel: NewLinkInfo(linkInfo),
+		Kernel: ToKernelLink(linkInfo),
 	}, nil
 }
 
@@ -425,7 +425,7 @@ func (k *kernelAdapter) AttachTCX(ctx context.Context, ifindex int, direction, p
 				PinPath:         linkPinPath,
 				CreatedAt:       time.Now(),
 			},
-			Kernel: NewLinkInfo(linkInfo),
+			Kernel: ToKernelLink(linkInfo),
 		}
 		return nil
 	})

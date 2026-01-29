@@ -55,7 +55,7 @@ func (k *kernelAdapter) AttachTracepoint(ctx context.Context, progPinPath, group
 			CreatedAt:       time.Now(),
 			Details:         bpfman.TracepointDetails{Group: group, Name: name},
 		},
-		Kernel: NewLinkInfo(linkInfo),
+		Kernel: ToKernelLink(linkInfo),
 	}, nil
 }
 
@@ -121,7 +121,7 @@ func (k *kernelAdapter) AttachKprobe(ctx context.Context, progPinPath, fnName st
 			CreatedAt:       time.Now(),
 			Details:         bpfman.KprobeDetails{FnName: fnName, Offset: offset, Retprobe: retprobe},
 		},
-		Kernel: NewLinkInfo(linkInfo),
+		Kernel: ToKernelLink(linkInfo),
 	}, nil
 }
 
@@ -193,6 +193,6 @@ func (k *kernelAdapter) attachTracing(ctx context.Context, progPinPath, fnName, 
 			CreatedAt:       time.Now(),
 			Details:         details,
 		},
-		Kernel: NewLinkInfo(linkInfo),
+		Kernel: ToKernelLink(linkInfo),
 	}, nil
 }

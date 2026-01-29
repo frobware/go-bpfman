@@ -731,8 +731,8 @@ func formatLoadedProgramsTable(programs []bpfman.ManagedProgram) string {
 		fmt.Fprintf(bw, " Metadata:\t%s\n", "TODO / FIX ME")
 		fmt.Fprintf(bw, " Map Pin Path:\t%s\n", p.Managed.PinDir)
 		fmt.Fprintf(bw, " Map Owner ID:\t%s\n", "TODO / FIX ME")
-		if mapIDs := p.Kernel.MapIDs(); len(mapIDs) > 0 {
-			fmt.Fprintf(bw, " Owned Maps:\t%v\n", mapIDs)
+		if len(p.Kernel.MapIDs) > 0 {
+			fmt.Fprintf(bw, " Owned Maps:\t%v\n", p.Kernel.MapIDs)
 		} else {
 			fmt.Fprintf(bw, " Owned Maps:\t%s\n", "None")
 		}
@@ -745,26 +745,26 @@ func formatLoadedProgramsTable(programs []bpfman.ManagedProgram) string {
 		// Kernel State section
 		b.WriteString(" Kernel State\n")
 		kw := tabwriter.NewWriter(&b, 0, 0, 1, ' ', 0)
-		fmt.Fprintf(kw, " Program ID:\t%d\n", p.Kernel.ID())
-		fmt.Fprintf(kw, " BPF Function:\t%s\n", p.Kernel.Name())
-		fmt.Fprintf(kw, " Kernel Type:\t%s\n", toKernelType(p.Kernel.Type()))
-		if !p.Kernel.LoadedAt().IsZero() {
-			fmt.Fprintf(kw, " Loaded At:\t%s\n", p.Kernel.LoadedAt().Format(time.RFC3339))
+		fmt.Fprintf(kw, " Program ID:\t%d\n", p.Kernel.ID)
+		fmt.Fprintf(kw, " BPF Function:\t%s\n", p.Kernel.Name)
+		fmt.Fprintf(kw, " Kernel Type:\t%s\n", p.Kernel.ProgramType)
+		if !p.Kernel.LoadedAt.IsZero() {
+			fmt.Fprintf(kw, " Loaded At:\t%s\n", p.Kernel.LoadedAt.Format(time.RFC3339))
 		}
-		fmt.Fprintf(kw, " Tag:\t%s\n", p.Kernel.Tag())
-		if mapIDs := p.Kernel.MapIDs(); len(mapIDs) > 0 {
-			fmt.Fprintf(kw, " Map IDs:\t%v\n", mapIDs)
+		fmt.Fprintf(kw, " Tag:\t%s\n", p.Kernel.Tag)
+		if len(p.Kernel.MapIDs) > 0 {
+			fmt.Fprintf(kw, " Map IDs:\t%v\n", p.Kernel.MapIDs)
 		}
-		if btfID := p.Kernel.BTFId(); btfID != 0 {
-			fmt.Fprintf(kw, " BTF ID:\t%d\n", btfID)
+		if p.Kernel.BTFId != 0 {
+			fmt.Fprintf(kw, " BTF ID:\t%d\n", p.Kernel.BTFId)
 		}
-		fmt.Fprintf(kw, " Size Translated (bytes):\t%d\n", p.Kernel.BytesXlated())
-		fmt.Fprintf(kw, " JITted:\t%t\n", p.Kernel.BytesJited() > 0)
-		fmt.Fprintf(kw, " Size JITted:\t%d\n", p.Kernel.BytesJited())
-		if memLocked := p.Kernel.MemoryLocked(); memLocked != 0 {
-			fmt.Fprintf(kw, " Kernel Allocated Memory (bytes):\t%d\n", memLocked)
+		fmt.Fprintf(kw, " Size Translated (bytes):\t%d\n", p.Kernel.XlatedSize)
+		fmt.Fprintf(kw, " JITted:\t%t\n", p.Kernel.JitedSize > 0)
+		fmt.Fprintf(kw, " Size JITted:\t%d\n", p.Kernel.JitedSize)
+		if p.Kernel.Memlock != 0 {
+			fmt.Fprintf(kw, " Kernel Allocated Memory (bytes):\t%d\n", p.Kernel.Memlock)
 		}
-		fmt.Fprintf(kw, " Verified Instruction Count:\t%d\n", p.Kernel.VerifiedInstructions())
+		fmt.Fprintf(kw, " Verified Instruction Count:\t%d\n", p.Kernel.VerifiedInstructions)
 		kw.Flush()
 	}
 

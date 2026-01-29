@@ -119,8 +119,8 @@ func (c *LoadImageCmd) Run(cli *CLI, ctx context.Context) error {
 
 		for _, loaded := range results {
 			logger.Info("program loaded successfully",
-				"name", loaded.Kernel.Name(),
-				"kernel_id", loaded.Kernel.ID(),
+				"name", loaded.Kernel.Name,
+				"kernel_id", loaded.Kernel.ID,
 				"pin_path", loaded.Managed.PinPath,
 			)
 		}

@@ -176,8 +176,8 @@ func TestProtoLoadResponseConversion_WithValidTypes(t *testing.T) {
 			if mp.Managed.Type != tt.expectedType {
 				t.Errorf("Managed.Type = %v, want %v", mp.Managed.Type, tt.expectedType)
 			}
-			if mp.Kernel.Type() != tt.expectedType {
-				t.Errorf("Kernel.Type() = %v, want %v", mp.Kernel.Type(), tt.expectedType)
+			if mp.Kernel.ProgramType != tt.expectedType.String() {
+				t.Errorf("Kernel.ProgramType = %v, want %v", mp.Kernel.ProgramType, tt.expectedType.String())
 			}
 		})
 	}

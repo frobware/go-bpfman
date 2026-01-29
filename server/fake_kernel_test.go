@@ -68,40 +68,6 @@ type fakeProgram struct {
 	pinDir      string
 }
 
-// fakeKernelInfo implements bpfman.KernelProgramInfo for testing.
-type fakeKernelInfo struct {
-	id          uint32
-	name        string
-	programType bpfman.ProgramType
-}
-
-func (f *fakeKernelInfo) ID() uint32                   { return f.id }
-func (f *fakeKernelInfo) Name() string                 { return f.name }
-func (f *fakeKernelInfo) Type() bpfman.ProgramType     { return f.programType }
-func (f *fakeKernelInfo) Tag() string                  { return "" }
-func (f *fakeKernelInfo) MapIDs() []uint32             { return nil }
-func (f *fakeKernelInfo) BTFId() uint32                { return 0 }
-func (f *fakeKernelInfo) BytesXlated() uint32          { return 0 }
-func (f *fakeKernelInfo) BytesJited() uint32           { return 0 }
-func (f *fakeKernelInfo) VerifiedInstructions() uint32 { return 0 }
-func (f *fakeKernelInfo) LoadedAt() time.Time          { return time.Time{} }
-func (f *fakeKernelInfo) MemoryLocked() uint64         { return 0 }
-func (f *fakeKernelInfo) GPLCompatible() bool          { return true }
-
-// fakeKernelLinkInfo implements bpfman.KernelLinkInfo for testing.
-type fakeKernelLinkInfo struct {
-	id        uint32
-	programID uint32
-	linkType  string
-}
-
-func (f *fakeKernelLinkInfo) ID() uint32          { return f.id }
-func (f *fakeKernelLinkInfo) ProgramID() uint32   { return f.programID }
-func (f *fakeKernelLinkInfo) LinkType() string    { return f.linkType }
-func (f *fakeKernelLinkInfo) AttachType() string  { return "" }
-func (f *fakeKernelLinkInfo) TargetObjID() uint32 { return 0 }
-func (f *fakeKernelLinkInfo) TargetBTFId() uint32 { return 0 }
-
 func newFakeKernel() *fakeKernel {
 	fk := &fakeKernel{
 		programs:      make(map[uint32]fakeProgram),
@@ -280,16 +246,17 @@ func (f *fakeKernel) Load(_ context.Context, spec bpfman.LoadSpec) (bpfman.Manag
 	f.programs[id] = fp
 	f.recordOp("load", spec.ProgramName(), id, nil)
 	return bpfman.ManagedProgram{
-		Managed: &bpfman.ProgramInfo{
+		Managed: &bpfman.LoadedProgramInfo{
 			Name:    fp.name,
 			Type:    fp.programType,
 			PinPath: fp.pinPath,
 			PinDir:  fp.pinDir,
 		},
-		Kernel: &fakeKernelInfo{
-			id:          fp.id,
-			name:        fp.name,
-			programType: fp.programType,
+		Kernel: &kernel.Program{
+			ID:            fp.id,
+			Name:          fp.name,
+			ProgramType:   fp.programType.String(),
+			GPLCompatible: true,
 		},
 	}, nil
 }
@@ -425,7 +392,7 @@ func (f *fakeKernel) AttachTracepoint(_ context.Context, progPinPath, group, nam
 			CreatedAt:       time.Now(),
 			Details:         bpfman.TracepointDetails{Group: group, Name: name},
 		},
-		Kernel: &fakeKernelLinkInfo{id: id, programID: 0, linkType: "tracepoint"},
+		Kernel: &kernel.Link{ID: id, ProgramID: 0, LinkType: "tracepoint"},
 	}, nil
 }
 
@@ -446,7 +413,7 @@ func (f *fakeKernel) AttachXDP(_ context.Context, progPinPath string, ifindex in
 			CreatedAt:       time.Now(),
 			Details:         bpfman.XDPDetails{Ifindex: uint32(ifindex)},
 		},
-		Kernel: &fakeKernelLinkInfo{id: id, programID: 0, linkType: "xdp"},
+		Kernel: &kernel.Link{ID: id, ProgramID: 0, LinkType: "xdp"},
 	}, nil
 }
 
@@ -473,7 +440,7 @@ func (f *fakeKernel) AttachKprobe(_ context.Context, progPinPath, fnName string,
 			CreatedAt:       time.Now(),
 			Details:         bpfman.KprobeDetails{FnName: fnName, Offset: offset, Retprobe: retprobe},
 		},
-		Kernel: &fakeKernelLinkInfo{id: id, programID: 0, linkType: kernelLinkType},
+		Kernel: &kernel.Link{ID: id, ProgramID: 0, LinkType: kernelLinkType},
 	}, nil
 }
 
@@ -500,7 +467,7 @@ func (f *fakeKernel) AttachUprobeLocal(_ context.Context, progPinPath, target, f
 			CreatedAt:       time.Now(),
 			Details:         bpfman.UprobeDetails{Target: target, FnName: fnName, Offset: offset, Retprobe: retprobe, ContainerPid: 0},
 		},
-		Kernel: &fakeKernelLinkInfo{id: id, programID: 0, linkType: kernelLinkType},
+		Kernel: &kernel.Link{ID: id, ProgramID: 0, LinkType: kernelLinkType},
 	}, nil
 }
 
@@ -527,7 +494,7 @@ func (f *fakeKernel) AttachUprobeContainer(_ context.Context, _ lock.WriterScope
 			CreatedAt:       time.Now(),
 			Details:         bpfman.UprobeDetails{Target: target, FnName: fnName, Offset: offset, Retprobe: retprobe, ContainerPid: containerPid},
 		},
-		Kernel: &fakeKernelLinkInfo{id: id, programID: 0, linkType: kernelLinkType},
+		Kernel: &kernel.Link{ID: id, ProgramID: 0, LinkType: kernelLinkType},
 	}, nil
 }
 
@@ -548,7 +515,7 @@ func (f *fakeKernel) AttachFentry(_ context.Context, progPinPath, fnName, linkPi
 			CreatedAt:       time.Now(),
 			Details:         bpfman.FentryDetails{FnName: fnName},
 		},
-		Kernel: &fakeKernelLinkInfo{id: id, programID: 0, linkType: "fentry"},
+		Kernel: &kernel.Link{ID: id, ProgramID: 0, LinkType: "fentry"},
 	}, nil
 }
 
@@ -569,7 +536,7 @@ func (f *fakeKernel) AttachFexit(_ context.Context, progPinPath, fnName, linkPin
 			CreatedAt:       time.Now(),
 			Details:         bpfman.FexitDetails{FnName: fnName},
 		},
-		Kernel: &fakeKernelLinkInfo{id: id, programID: 0, linkType: "fexit"},
+		Kernel: &kernel.Link{ID: id, ProgramID: 0, LinkType: "fexit"},
 	}, nil
 }
 
@@ -642,7 +609,7 @@ func (f *fakeKernel) AttachXDPExtension(_ context.Context, dispatcherPinPath, ob
 			CreatedAt:       time.Now(),
 			Details:         bpfman.XDPDetails{Position: int32(position)},
 		},
-		Kernel: &fakeKernelLinkInfo{id: id, programID: 0, linkType: "xdp"},
+		Kernel: &kernel.Link{ID: id, ProgramID: 0, LinkType: "xdp"},
 	}, nil
 }
 
@@ -718,7 +685,7 @@ func (f *fakeKernel) AttachTCExtension(_ context.Context, dispatcherPinPath, obj
 			CreatedAt:       time.Now(),
 			Details:         bpfman.TCDetails{Position: int32(position)},
 		},
-		Kernel: &fakeKernelLinkInfo{id: id, programID: 0, linkType: "tc"},
+		Kernel: &kernel.Link{ID: id, ProgramID: 0, LinkType: "tc"},
 	}, nil
 }
 
@@ -739,7 +706,7 @@ func (f *fakeKernel) AttachTCX(_ context.Context, ifindex int, direction, progra
 			PinPath:         linkPinPath,
 			CreatedAt:       time.Now(),
 		},
-		Kernel: &fakeKernelLinkInfo{id: id, programID: 0, linkType: "tcx"},
+		Kernel: &kernel.Link{ID: id, ProgramID: 0, LinkType: "tcx"},
 	}, nil
 }
 

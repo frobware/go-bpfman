@@ -97,35 +97,6 @@ func validateProgramType(raw uint32) (bpfman.ProgramType, error) {
 	}
 }
 
-// remoteKernelInfo implements bpfman.KernelProgramInfo for remote responses.
-type remoteKernelInfo struct {
-	id                   uint32
-	name                 string
-	programType          bpfman.ProgramType
-	tag                  string
-	mapIDs               []uint32
-	btfID                uint32
-	bytesXlated          uint32
-	bytesJited           uint32
-	verifiedInstructions uint32
-	loadedAt             time.Time
-	memoryLocked         uint64
-	gplCompatible        bool
-}
-
-func (r *remoteKernelInfo) ID() uint32                   { return r.id }
-func (r *remoteKernelInfo) Name() string                 { return r.name }
-func (r *remoteKernelInfo) Type() bpfman.ProgramType     { return r.programType }
-func (r *remoteKernelInfo) Tag() string                  { return r.tag }
-func (r *remoteKernelInfo) MapIDs() []uint32             { return r.mapIDs }
-func (r *remoteKernelInfo) BTFId() uint32                { return r.btfID }
-func (r *remoteKernelInfo) BytesXlated() uint32          { return r.bytesXlated }
-func (r *remoteKernelInfo) BytesJited() uint32           { return r.bytesJited }
-func (r *remoteKernelInfo) VerifiedInstructions() uint32 { return r.verifiedInstructions }
-func (r *remoteKernelInfo) LoadedAt() time.Time          { return r.loadedAt }
-func (r *remoteKernelInfo) MemoryLocked() uint64         { return r.memoryLocked }
-func (r *remoteKernelInfo) GPLCompatible() bool          { return r.gplCompatible }
-
 // protoLoadResponseToManagedProgram converts a LoadResponseInfo to bpfman.ManagedProgram.
 func protoLoadResponseToManagedProgram(resp *pb.LoadResponseInfo) (bpfman.ManagedProgram, error) {
 	var progType bpfman.ProgramType
@@ -153,7 +124,7 @@ func protoLoadResponseToManagedProgram(resp *pb.LoadResponseInfo) (bpfman.Manage
 		}
 	}
 
-	managedInfo := &bpfman.ProgramInfo{
+	managedInfo := &bpfman.LoadedProgramInfo{
 		Name:       name,
 		Type:       progType,
 		ObjectPath: objectPath,
@@ -161,29 +132,32 @@ func protoLoadResponseToManagedProgram(resp *pb.LoadResponseInfo) (bpfman.Manage
 		PinDir:     pinDir,
 	}
 
-	kernelInfo := &remoteKernelInfo{
-		programType:   progType,
-		gplCompatible: true, // Default to true
+	kernelProg := &kernel.Program{
+		ProgramType:   progType.String(),
+		GPLCompatible: true, // Default to true
 	}
 	if resp.KernelInfo != nil {
-		kernelInfo.id = resp.KernelInfo.Id
-		kernelInfo.name = resp.KernelInfo.Name
-		kernelInfo.tag = resp.KernelInfo.Tag
-		kernelInfo.mapIDs = resp.KernelInfo.MapIds
-		kernelInfo.btfID = resp.KernelInfo.BtfId
-		kernelInfo.bytesXlated = resp.KernelInfo.BytesXlated
-		kernelInfo.bytesJited = resp.KernelInfo.BytesJited
-		kernelInfo.verifiedInstructions = resp.KernelInfo.VerifiedInsns
-		kernelInfo.gplCompatible = resp.KernelInfo.GplCompatible
-		kernelInfo.memoryLocked = uint64(resp.KernelInfo.BytesMemlock)
+		kernelProg.ID = resp.KernelInfo.Id
+		kernelProg.Name = resp.KernelInfo.Name
+		kernelProg.Tag = resp.KernelInfo.Tag
+		kernelProg.MapIDs = resp.KernelInfo.MapIds
+		kernelProg.HasMapIDs = len(resp.KernelInfo.MapIds) > 0
+		kernelProg.BTFId = resp.KernelInfo.BtfId
+		kernelProg.HasBTFId = resp.KernelInfo.BtfId > 0
+		kernelProg.XlatedSize = resp.KernelInfo.BytesXlated
+		kernelProg.JitedSize = resp.KernelInfo.BytesJited
+		kernelProg.VerifiedInstructions = resp.KernelInfo.VerifiedInsns
+		kernelProg.GPLCompatible = resp.KernelInfo.GplCompatible
+		kernelProg.Memlock = uint64(resp.KernelInfo.BytesMemlock)
+		kernelProg.HasMemlock = resp.KernelInfo.BytesMemlock > 0
 		if resp.KernelInfo.LoadedAt != "" {
-			kernelInfo.loadedAt, _ = time.Parse(time.RFC3339, resp.KernelInfo.LoadedAt)
+			kernelProg.LoadedAt, _ = time.Parse(time.RFC3339, resp.KernelInfo.LoadedAt)
 		}
 	}
 
 	return bpfman.ManagedProgram{
 		Managed: managedInfo,
-		Kernel:  kernelInfo,
+		Kernel:  kernelProg,
 	}, nil
 }
 

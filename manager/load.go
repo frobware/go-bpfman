@@ -41,7 +41,7 @@ func (m *Manager) Load(ctx context.Context, spec bpfman.LoadSpec, opts LoadOpts)
 	}
 	m.logger.InfoContext(ctx, "loaded program",
 		"name", spec.ProgramName(),
-		"kernel_id", loaded.Kernel.ID(),
+		"kernel_id", loaded.Kernel.ID,
 		"prog_pin", loaded.Managed.PinPath,
 		"maps_dir", loaded.Managed.PinDir)
 
@@ -75,10 +75,10 @@ func (m *Manager) Load(ctx context.Context, spec bpfman.LoadSpec, opts LoadOpts)
 	// the upsert, tag updates, and metadata index updates all commit or
 	// roll back together.
 	err = m.store.RunInTransaction(ctx, func(txStore interpreter.Store) error {
-		return txStore.Save(ctx, loaded.Kernel.ID(), metadata)
+		return txStore.Save(ctx, loaded.Kernel.ID, metadata)
 	})
 	if err != nil {
-		m.logger.ErrorContext(ctx, "persist failed, rolling back", "kernel_id", loaded.Kernel.ID(), "error", err)
+		m.logger.ErrorContext(ctx, "persist failed, rolling back", "kernel_id", loaded.Kernel.ID, "error", err)
 		if rbErr := undo.rollback(ctx, m.logger); rbErr != nil {
 			return bpfman.ManagedProgram{}, errors.Join(
 				fmt.Errorf("persist metadata: %w", err),

@@ -203,14 +203,14 @@ func (k *kernelAdapter) Load(ctx context.Context, spec bpfman.LoadSpec) (bpfman.
 	_ = ebpfMapIDs // MapIDs now accessed via KernelProgramInfo
 
 	return bpfman.ManagedProgram{
-		Managed: &bpfman.ProgramInfo{
+		Managed: &bpfman.LoadedProgramInfo{
 			Name:       spec.ProgramName(),
 			Type:       programType,
 			ObjectPath: spec.ObjectPath(),
 			PinPath:    progPinPath,
 			PinDir:     mapsDir,
 		},
-		Kernel: NewProgramInfo(info, license),
+		Kernel: ToKernelProgram(info, license),
 	}, nil
 }
 
