@@ -58,6 +58,18 @@ type LinkInfo struct {
 	Presence Presence
 }
 
+// DispatcherGetter is the subset of interpreter.Store needed by GetDispatcher.
+type DispatcherGetter interface {
+	GetDispatcher(ctx context.Context, dispType string, nsid uint64, ifindex uint32) (dispatcher.State, error)
+}
+
+// DispatcherInfo is the result of GetDispatcher, containing state and presence.
+type DispatcherInfo struct {
+	State        dispatcher.State
+	ProgPresence Presence // dispatcher program presence
+	LinkPresence Presence // XDP link presence (for XDP dispatchers)
+}
+
 // Presence indicates where an object exists across the three sources.
 type Presence struct {
 	InStore  bool
@@ -564,6 +576,90 @@ func GetLink(
 	// If not found in any source, return error
 	if !info.Presence.InStore && !info.Presence.InKernel && !info.Presence.InFS {
 		return LinkInfo{}, ErrNotFound
+	}
+
+	return info, nil
+}
+
+// GetDispatcher retrieves a single dispatcher by its key (type, nsid, ifindex),
+// correlating state from store, kernel, and filesystem. This is more efficient
+// than Snapshot for single-dispatcher lookups.
+//
+// Returns ErrNotFound if the dispatcher does not exist in any source.
+func GetDispatcher(
+	ctx context.Context,
+	dispGetter DispatcherGetter,
+	kern KernelGetter,
+	kernLinkGetter KernelLinkGetter,
+	scanner *bpffs.Scanner,
+	dispType string,
+	nsid uint64,
+	ifindex uint32,
+) (DispatcherInfo, error) {
+	info := DispatcherInfo{}
+
+	// Try store
+	state, err := dispGetter.GetDispatcher(ctx, dispType, nsid, ifindex)
+	if err == nil {
+		info.State = state
+		info.ProgPresence.InStore = true
+		if state.LinkID != 0 {
+			info.LinkPresence.InStore = true
+		}
+	} else if !errors.Is(err, store.ErrNotFound) {
+		// Real error (not just "not found")
+		return DispatcherInfo{}, err
+	}
+
+	// Try kernel for dispatcher program
+	if info.ProgPresence.InStore && info.State.KernelID != 0 {
+		_, err := kern.GetProgramByID(ctx, info.State.KernelID)
+		if err == nil {
+			info.ProgPresence.InKernel = true
+		}
+	}
+
+	// Try kernel for dispatcher link (XDP only)
+	if info.LinkPresence.InStore && info.State.LinkID != 0 {
+		_, err := kernLinkGetter.GetLinkByID(ctx, info.State.LinkID)
+		if err == nil {
+			info.LinkPresence.InKernel = true
+		}
+	}
+
+	// Try filesystem for dispatcher directory
+	// Dispatcher dirs follow pattern: {dispType}/dispatcher_{nsid}_{ifindex}_{revision}
+	if info.ProgPresence.InStore {
+		// Check if the dispatcher directory exists
+		key := dispatcherKey(dispType, nsid, ifindex)
+		for dir, err := range scanner.DispatcherDirs(ctx) {
+			if err != nil {
+				continue
+			}
+			dirKey := dispatcherKey(dir.DispType, dir.Nsid, dir.Ifindex)
+			if dirKey == key {
+				info.ProgPresence.InFS = true
+				break
+			}
+		}
+	}
+
+	// Try filesystem for dispatcher link pin (XDP only)
+	if info.LinkPresence.InStore {
+		for pin, err := range scanner.DispatcherLinkPins(ctx) {
+			if err != nil {
+				continue
+			}
+			if pin.DispType == dispType && pin.Nsid == nsid && pin.Ifindex == ifindex {
+				info.LinkPresence.InFS = true
+				break
+			}
+		}
+	}
+
+	// If not found in store, return error (dispatchers are always store-first)
+	if !info.ProgPresence.InStore {
+		return DispatcherInfo{}, ErrNotFound
 	}
 
 	return info, nil
