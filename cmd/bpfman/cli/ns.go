@@ -248,7 +248,11 @@ func (cmd *NSUprobeCmd) Run() error {
 	// Close our references. The parent now has the fd via SCM_RIGHTS.
 	perfFile.Close()
 
-	// Print success to stdout for the parent
+	// Protocol: write "ok" to stdout to signal success to the parent process.
+	// The parent (manager/uprobe.go) reads this to confirm the helper completed.
+	// This is intentionally not using cli.PrintOut as stdout here is part of
+	// the IPC protocol, not user-facing output. A write failure here will cause
+	// the parent to see no output, which it treats as failure.
 	fmt.Println("ok")
 
 	return nil

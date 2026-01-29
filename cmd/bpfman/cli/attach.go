@@ -97,8 +97,9 @@ func (c *AttachCmd) execute(ctx context.Context, cli *CLI, b client.Client) (att
 func (c *AttachCmd) output(cli *CLI, ctx context.Context, b client.Client, result attachResult) error {
 	summary, details, err := b.GetLink(ctx, result.KernelLinkID)
 	if err != nil {
-		// Can't fetch details, print minimal result
-		return cli.PrintOutf("Attached link %d\n", result.KernelLinkID)
+		// Attachment succeeded but we can't fetch details for display.
+		// This shouldn't normally happen - log it and show minimal output.
+		return cli.PrintOutf("Attached link %d (warning: failed to fetch details: %v)\n", result.KernelLinkID, err)
 	}
 
 	// Fetch program info to get the BPF function name

@@ -117,7 +117,13 @@ func Run(ctx context.Context) {
 	}
 
 	kctx.BindTo(ctx, (*context.Context)(nil))
-	kctx.FatalIfErrorf(kctx.Run(&c))
+
+	// Handle errors ourselves to use injected writers instead of Kong's
+	// default os.Stderr. This ensures I/O error propagation is consistent.
+	if err := kctx.Run(&c); err != nil {
+		fmt.Fprintf(c.Err, "bpfman: %v\n", err)
+		os.Exit(1)
+	}
 }
 
 // KongOptions returns the Kong configuration options for the CLI.

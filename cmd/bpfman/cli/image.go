@@ -60,6 +60,5 @@ func (c *ImageVerifyCmd) Run(cli *CLI, ctx context.Context) error {
 		return fmt.Errorf("verification failed: %w", err)
 	}
 
-	fmt.Printf("Image %s: signature verified\n", c.ImageURL)
-	return nil
+	return cli.PrintOutf("Image %s: signature verified\n", c.ImageURL)
 }

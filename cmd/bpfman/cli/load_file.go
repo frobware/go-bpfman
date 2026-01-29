@@ -34,14 +34,15 @@ func (c *LoadFileCmd) Run(cli *CLI, ctx context.Context) error {
 		return err
 	}
 
-	results, err := RunWithLockValue(ctx, cli, func(ctx context.Context) ([]bpfman.ManagedProgram, error) {
-		dirs := cli.RuntimeDirs()
-		b, err := cli.Client(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create client: %w", err)
-		}
-		defer b.Close()
+	b, err := cli.Client(ctx)
+	if err != nil {
+		return fmt.Errorf("create client: %w", err)
+	}
+	defer b.Close()
 
+	dirs := cli.RuntimeDirs()
+
+	results, err := RunWithLockValue(ctx, cli, func(ctx context.Context) ([]bpfman.ManagedProgram, error) {
 		// Convert global data
 		var globalData map[string][]byte
 		if len(c.GlobalData) > 0 {

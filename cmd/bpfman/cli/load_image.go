@@ -44,14 +44,13 @@ func (c *LoadImageCmd) Run(cli *CLI, ctx context.Context) error {
 		return fmt.Errorf("invalid pull policy %q", c.PullPolicy.Value)
 	}
 
-	results, err := RunWithLockValue(ctx, cli, func(ctx context.Context) ([]bpfman.ManagedProgram, error) {
-		// Get client
-		b, err := cli.Client(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create client: %w", err)
-		}
-		defer b.Close()
+	b, err := cli.Client(ctx)
+	if err != nil {
+		return fmt.Errorf("create client: %w", err)
+	}
+	defer b.Close()
 
+	results, err := RunWithLockValue(ctx, cli, func(ctx context.Context) ([]bpfman.ManagedProgram, error) {
 		// Build auth config from base64-encoded registry-auth
 		var authConfig *interpreter.ImageAuth
 		if c.RegistryAuth != "" {

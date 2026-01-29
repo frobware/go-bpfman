@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"k8s.io/client-go/util/jsonpath"
 
@@ -93,7 +94,7 @@ func formatProgramInfoTree(info manager.ProgramInfo) string {
 		p := info.Kernel.Program
 		fmt.Fprintf(&b, "│  ├─ tag:        %s\n", p.Tag)
 		if !p.LoadedAt.IsZero() {
-			fmt.Fprintf(&b, "│  ├─ loaded_at:  %s\n", p.LoadedAt.Format("2006-01-02T15:04:05Z"))
+			fmt.Fprintf(&b, "│  ├─ loaded_at:  %s\n", p.LoadedAt.Format(time.RFC3339))
 		}
 		if p.BTFId != 0 {
 			fmt.Fprintf(&b, "│  ├─ btf_id:     %d\n", p.BTFId)
@@ -146,7 +147,7 @@ func formatProgramInfoTree(info manager.ProgramInfo) string {
 	if info.Bpfman != nil && info.Bpfman.Program != nil {
 		p := info.Bpfman.Program
 		if !p.CreatedAt.IsZero() {
-			fmt.Fprintf(&b, "   ├─ created:    %s\n", p.CreatedAt.Format("2006-01-02T15:04:05Z"))
+			fmt.Fprintf(&b, "   ├─ created:    %s\n", p.CreatedAt.Format(time.RFC3339))
 		}
 		fmt.Fprintf(&b, "   ├─ source:     %s\n", p.ObjectPath)
 		fmt.Fprintf(&b, "   └─ pin_path:   %s\n", p.PinPath)
@@ -218,10 +219,11 @@ func formatProgramInfoTable(info manager.ProgramInfo) string {
 		fmt.Fprintf(kw, " Kernel Type:\t%s\n", toKernelType(progType))
 
 		if !p.LoadedAt.IsZero() {
-			fmt.Fprintf(kw, " Loaded At:\t%s\n", p.LoadedAt.Format("2006-01-02T15:04:05-0700"))
+			fmt.Fprintf(kw, " Loaded At:\t%s\n", p.LoadedAt.Format(time.RFC3339))
 		}
 		fmt.Fprintf(kw, " Tag:\t%s\n", p.Tag)
-		fmt.Fprintf(kw, " GPL Compatible:\ttrue\n") // Assume GPL compatible if loaded
+		// TODO: kernel.Program struct doesn't include GPL compatibility info
+		fmt.Fprintf(kw, " GPL Compatible:\ttrue\n")
 		if len(p.MapIDs) > 0 {
 			fmt.Fprintf(kw, " Map IDs:\t%v\n", p.MapIDs)
 		}
@@ -762,7 +764,7 @@ func formatLoadedProgramsTable(programs []bpfman.ManagedProgram) string {
 		fmt.Fprintf(kw, " BPF Function:\t%s\n", p.Kernel.Name())
 		fmt.Fprintf(kw, " Kernel Type:\t%s\n", toKernelType(p.Kernel.Type()))
 		if !p.Kernel.LoadedAt().IsZero() {
-			fmt.Fprintf(kw, " Loaded At:\t%s\n", p.Kernel.LoadedAt().Format("2006-01-02T15:04:05-0700"))
+			fmt.Fprintf(kw, " Loaded At:\t%s\n", p.Kernel.LoadedAt().Format(time.RFC3339))
 		}
 		fmt.Fprintf(kw, " Tag:\t%s\n", p.Kernel.Tag())
 		fmt.Fprintf(kw, " GPL Compatible:\t%t\n", p.Kernel.GPLCompatible())
