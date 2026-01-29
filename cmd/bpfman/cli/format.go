@@ -171,7 +171,7 @@ func formatProgramInfoTable(info manager.ProgramInfo) string {
 		p := info.Bpfman.Program
 		b.WriteString(" Bpfman State\n")
 		bw := tabwriter.NewWriter(&b, 0, 0, 1, ' ', 0)
-		fmt.Fprintf(bw, " BPF Function:\t%s\n", p.ProgramName)
+		fmt.Fprintf(bw, " BPF Function:\t%s\n", p.Name)
 		fmt.Fprintf(bw, " Program Type:\t%s\n", p.ProgramType)
 		fmt.Fprintf(bw, " Path:\t%s\n", p.ObjectPath)
 		fmt.Fprintf(bw, " Global:\tNone\n")
@@ -289,8 +289,8 @@ func formatProgramListTable(programs []manager.ManagedProgram) string {
 
 		// Prefer full name from metadata over kernel-truncated name
 		if p.Metadata != nil {
-			if p.Metadata.ProgramName != "" {
-				name = p.Metadata.ProgramName
+			if p.Metadata.Name != "" {
+				name = p.Metadata.Name
 			}
 			source = p.Metadata.ObjectPath
 		}

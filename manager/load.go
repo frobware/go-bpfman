@@ -54,8 +54,8 @@ func (m *Manager) Load(ctx context.Context, spec bpfman.LoadSpec, opts LoadOpts)
 	// Phase 2: Persist metadata to DB (single transaction)
 	// Use the inferred type from the kernel layer (from ELF section name)
 	// rather than the user-specified type.
-	metadata := bpfman.Program{
-		ProgramName:   spec.ProgramName(),
+	metadata := bpfman.ProgramRecord{
+		Name:          spec.ProgramName(),
 		ProgramType:   loaded.Managed.Type,
 		ObjectPath:    spec.ObjectPath(),
 		PinPath:       loaded.Managed.PinPath,

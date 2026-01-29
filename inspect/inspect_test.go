@@ -20,21 +20,21 @@ import (
 
 // fakeStore implements StoreLister for testing.
 type fakeStore struct {
-	programs    map[uint32]bpfman.Program
+	programs    map[uint32]bpfman.ProgramRecord
 	links       []bpfman.LinkSummary
 	linkDetails map[uint32]bpfman.LinkDetails // kernelLinkID -> details
 	dispatchers []dispatcher.State
 }
 
-func (s *fakeStore) List(ctx context.Context) (map[uint32]bpfman.Program, error) {
+func (s *fakeStore) List(ctx context.Context) (map[uint32]bpfman.ProgramRecord, error) {
 	return s.programs, nil
 }
 
-func (s *fakeStore) Get(ctx context.Context, kernelID uint32) (bpfman.Program, error) {
+func (s *fakeStore) Get(ctx context.Context, kernelID uint32) (bpfman.ProgramRecord, error) {
 	if p, ok := s.programs[kernelID]; ok {
 		return p, nil
 	}
-	return bpfman.Program{}, store.ErrNotFound
+	return bpfman.ProgramRecord{}, store.ErrNotFound
 }
 
 func (s *fakeStore) ListLinks(ctx context.Context) ([]bpfman.LinkSummary, error) {
@@ -125,9 +125,9 @@ func TestSnapshot_ManagedPrograms(t *testing.T) {
 	scanner := bpffs.NewScanner(dirs)
 
 	store := &fakeStore{
-		programs: map[uint32]bpfman.Program{
-			100: {ProgramName: "xdp_pass", ProgramType: bpfman.ProgramTypeXDP, PinPath: "/run/bpfman/fs/prog_100"},
-			200: {ProgramName: "tc_filter", ProgramType: bpfman.ProgramTypeTC, PinPath: "/run/bpfman/fs/prog_200"},
+		programs: map[uint32]bpfman.ProgramRecord{
+			100: {Name: "xdp_pass", ProgramType: bpfman.ProgramTypeXDP, PinPath: "/run/bpfman/fs/prog_100"},
+			200: {Name: "tc_filter", ProgramType: bpfman.ProgramTypeTC, PinPath: "/run/bpfman/fs/prog_200"},
 		},
 	}
 
@@ -156,8 +156,8 @@ func TestSnapshot_KernelOnlyPrograms(t *testing.T) {
 	scanner := bpffs.NewScanner(dirs)
 
 	store := &fakeStore{
-		programs: map[uint32]bpfman.Program{
-			100: {ProgramName: "managed", ProgramType: bpfman.ProgramTypeXDP},
+		programs: map[uint32]bpfman.ProgramRecord{
+			100: {Name: "managed", ProgramType: bpfman.ProgramTypeXDP},
 		},
 	}
 
@@ -200,7 +200,7 @@ func TestSnapshot_FSOnlyPrograms(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dirs.FS, "prog_888"), nil, 0644))
 
 	scanner := bpffs.NewScanner(dirs)
-	store := &fakeStore{programs: map[uint32]bpfman.Program{}}
+	store := &fakeStore{programs: map[uint32]bpfman.ProgramRecord{}}
 	kern := &fakeKernelSource{}
 
 	w, err := Snapshot(context.Background(), store, kern, scanner)
@@ -389,8 +389,8 @@ func TestGetProgram_FullyPresent(t *testing.T) {
 	scanner := bpffs.NewScanner(dirs)
 
 	store := &fakeStore{
-		programs: map[uint32]bpfman.Program{
-			100: {ProgramName: "xdp_pass", ProgramType: bpfman.ProgramTypeXDP, PinPath: pinPath},
+		programs: map[uint32]bpfman.ProgramRecord{
+			100: {Name: "xdp_pass", ProgramType: bpfman.ProgramTypeXDP, PinPath: pinPath},
 		},
 	}
 
@@ -405,10 +405,10 @@ func TestGetProgram_FullyPresent(t *testing.T) {
 	assert.True(t, row.Presence.InStore)
 	assert.True(t, row.Presence.InKernel)
 	assert.True(t, row.Presence.InFS)
-	assert.NotNil(t, row.StoreProgram)
-	assert.NotNil(t, row.KernelProgram)
-	assert.Equal(t, "xdp_pass", row.StoreProgram.ProgramName)
-	assert.Equal(t, "xdp_pass", row.KernelProgram.Name)
+	assert.NotNil(t, row.Managed)
+	assert.NotNil(t, row.Kernel)
+	assert.Equal(t, "xdp_pass", row.Managed.Name)
+	assert.Equal(t, "xdp_pass", row.Kernel.Name)
 }
 
 func TestGetProgram_StoreOnly(t *testing.T) {
@@ -416,8 +416,8 @@ func TestGetProgram_StoreOnly(t *testing.T) {
 	scanner := bpffs.NewScanner(dirs)
 
 	store := &fakeStore{
-		programs: map[uint32]bpfman.Program{
-			100: {ProgramName: "stale_prog", ProgramType: bpfman.ProgramTypeXDP},
+		programs: map[uint32]bpfman.ProgramRecord{
+			100: {Name: "stale_prog", ProgramType: bpfman.ProgramTypeXDP},
 		},
 	}
 
@@ -430,15 +430,15 @@ func TestGetProgram_StoreOnly(t *testing.T) {
 	assert.True(t, row.Presence.InStore)
 	assert.False(t, row.Presence.InKernel)
 	assert.False(t, row.Presence.InFS)
-	assert.NotNil(t, row.StoreProgram)
-	assert.Nil(t, row.KernelProgram)
+	assert.NotNil(t, row.Managed)
+	assert.Nil(t, row.Kernel)
 }
 
 func TestGetProgram_KernelOnly(t *testing.T) {
 	dirs := testScannerDirs(t)
 	scanner := bpffs.NewScanner(dirs)
 
-	store := &fakeStore{programs: map[uint32]bpfman.Program{}} // Not in store
+	store := &fakeStore{programs: map[uint32]bpfman.ProgramRecord{}} // Not in store
 
 	kern := &fakeKernelSource{
 		programs: []kernel.Program{{ID: 999, Name: "unmanaged"}},
@@ -451,16 +451,16 @@ func TestGetProgram_KernelOnly(t *testing.T) {
 	assert.False(t, row.Presence.InStore)
 	assert.True(t, row.Presence.InKernel)
 	assert.False(t, row.Presence.InFS)
-	assert.Nil(t, row.StoreProgram)
-	assert.NotNil(t, row.KernelProgram)
-	assert.Equal(t, "unmanaged", row.KernelProgram.Name)
+	assert.Nil(t, row.Managed)
+	assert.NotNil(t, row.Kernel)
+	assert.Equal(t, "unmanaged", row.Kernel.Name)
 }
 
 func TestGetProgram_NotFound(t *testing.T) {
 	dirs := testScannerDirs(t)
 	scanner := bpffs.NewScanner(dirs)
 
-	store := &fakeStore{programs: map[uint32]bpfman.Program{}}
+	store := &fakeStore{programs: map[uint32]bpfman.ProgramRecord{}}
 	kern := &fakeKernelSource{}
 
 	_, err := GetProgram(context.Background(), store, kern, scanner, 12345)

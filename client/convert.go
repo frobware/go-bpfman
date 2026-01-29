@@ -230,8 +230,8 @@ func protoListResponseToPrograms(resp *pb.ListResponse) ([]manager.ManagedProgra
 				}
 			}
 
-			mp.Metadata = &bpfman.Program{
-				ProgramName:  r.Info.Name,
+			mp.Metadata = &bpfman.ProgramRecord{
+				Name:         r.Info.Name,
 				ProgramType:  progType,
 				ObjectPath:   objectPath,
 				PinPath:      r.Info.MapPinPath,
@@ -286,8 +286,8 @@ func protoGetResponseToInfo(resp *pb.GetResponse, kernelID uint32) (manager.Prog
 			}
 		}
 
-		prog := &bpfman.Program{
-			ProgramName:  resp.Info.Name,
+		prog := &bpfman.ProgramRecord{
+			Name:         resp.Info.Name,
 			ProgramType:  progType,
 			ObjectPath:   objectPath,
 			PinPath:      resp.Info.MapPinPath,

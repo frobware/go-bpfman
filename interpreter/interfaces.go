@@ -116,25 +116,25 @@ type Transactional interface {
 // ProgramReader reads program metadata from the store.
 // Get returns store.ErrNotFound if the program does not exist.
 type ProgramReader interface {
-	Get(ctx context.Context, kernelID uint32) (bpfman.Program, error)
+	Get(ctx context.Context, kernelID uint32) (bpfman.ProgramRecord, error)
 }
 
 // ProgramWriter writes program metadata to the store.
 type ProgramWriter interface {
-	Save(ctx context.Context, kernelID uint32, metadata bpfman.Program) error
+	Save(ctx context.Context, kernelID uint32, metadata bpfman.ProgramRecord) error
 	Delete(ctx context.Context, kernelID uint32) error
 }
 
 // ProgramLister lists all program metadata from the store.
 type ProgramLister interface {
-	List(ctx context.Context) (map[uint32]bpfman.Program, error)
+	List(ctx context.Context) (map[uint32]bpfman.ProgramRecord, error)
 }
 
 // ProgramFinder finds programs by criteria.
 type ProgramFinder interface {
 	// FindProgramByMetadata finds a program by a metadata key/value pair.
 	// Returns store.ErrNotFound if no matching program exists.
-	FindProgramByMetadata(ctx context.Context, key, value string) (bpfman.Program, uint32, error)
+	FindProgramByMetadata(ctx context.Context, key, value string) (bpfman.ProgramRecord, uint32, error)
 }
 
 // MapOwnershipReader provides access to map ownership information.

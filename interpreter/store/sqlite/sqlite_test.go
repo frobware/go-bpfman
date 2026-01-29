@@ -26,10 +26,10 @@ func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-// testProgram returns a valid Program for testing.
-func testProgram() bpfman.Program {
-	return bpfman.Program{
-		ProgramName: "test_program",
+// testProgram returns a valid ProgramRecord for testing.
+func testProgram() bpfman.ProgramRecord {
+	return bpfman.ProgramRecord{
+		Name:        "test_program",
 		ProgramType: bpfman.ProgramTypeTracepoint,
 		ObjectPath:  "/test/path/program.o",
 		PinPath:     "/sys/fs/bpf/test",
@@ -552,7 +552,7 @@ func TestMapOwnership_CountDependentPrograms(t *testing.T) {
 	// Create the owner program (first program from an image).
 	ownerID := uint32(100)
 	ownerProg := testProgram()
-	ownerProg.ProgramName = "kprobe_counter"
+	ownerProg.Name = "kprobe_counter"
 	ownerProg.MapPinPath = "/sys/fs/bpf/bpfman/100"
 	require.NoError(t, store.Save(ctx, ownerID, ownerProg), "Save owner failed")
 
@@ -564,7 +564,7 @@ func TestMapOwnership_CountDependentPrograms(t *testing.T) {
 	// Create dependent programs that share the owner's maps.
 	for i := uint32(1); i <= 3; i++ {
 		depProg := testProgram()
-		depProg.ProgramName = "dependent_" + string(rune('0'+i))
+		depProg.Name = "dependent_" + string(rune('0'+i))
 		depProg.MapOwnerID = ownerID
 		depProg.MapPinPath = "/sys/fs/bpf/bpfman/100" // Same as owner
 		require.NoError(t, store.Save(ctx, 100+i, depProg), "Save dependent %d failed", i)
@@ -594,13 +594,13 @@ func TestMapOwnership_ForeignKeyPreventsDeletingOwner(t *testing.T) {
 	// Create the owner program.
 	ownerID := uint32(100)
 	ownerProg := testProgram()
-	ownerProg.ProgramName = "owner"
+	ownerProg.Name = "owner"
 	ownerProg.MapPinPath = "/sys/fs/bpf/bpfman/100"
 	require.NoError(t, store.Save(ctx, ownerID, ownerProg), "Save owner failed")
 
 	// Create a dependent program.
 	depProg := testProgram()
-	depProg.ProgramName = "dependent"
+	depProg.Name = "dependent"
 	depProg.MapOwnerID = ownerID
 	depProg.MapPinPath = "/sys/fs/bpf/bpfman/100"
 	require.NoError(t, store.Save(ctx, 101, depProg), "Save dependent failed")
@@ -648,13 +648,13 @@ func TestMapOwnership_MapOwnerIDPersisted(t *testing.T) {
 	// Create the owner program first.
 	ownerID := uint32(100)
 	ownerProg := testProgram()
-	ownerProg.ProgramName = "owner"
+	ownerProg.Name = "owner"
 	require.NoError(t, store.Save(ctx, ownerID, ownerProg), "Save owner failed")
 
 	// Create a dependent program with MapOwnerID set.
 	depID := uint32(101)
 	depProg := testProgram()
-	depProg.ProgramName = "dependent"
+	depProg.Name = "dependent"
 	depProg.MapOwnerID = ownerID
 	depProg.MapPinPath = "/sys/fs/bpf/bpfman/100"
 
@@ -676,14 +676,14 @@ func TestMapOwnership_ListIncludesMapFields(t *testing.T) {
 	// Create owner.
 	ownerID := uint32(100)
 	ownerProg := testProgram()
-	ownerProg.ProgramName = "owner"
+	ownerProg.Name = "owner"
 	ownerProg.MapPinPath = "/sys/fs/bpf/bpfman/100"
 	require.NoError(t, store.Save(ctx, ownerID, ownerProg), "Save owner failed")
 
 	// Create dependent.
 	depID := uint32(101)
 	depProg := testProgram()
-	depProg.ProgramName = "dependent"
+	depProg.Name = "dependent"
 	depProg.MapOwnerID = ownerID
 	depProg.MapPinPath = "/sys/fs/bpf/bpfman/100"
 	require.NoError(t, store.Save(ctx, depID, depProg), "Save dependent failed")
@@ -948,19 +948,19 @@ func TestGC_MapOwnerOrdering(t *testing.T) {
 
 	// Create owner first (must exist for FK)
 	owner := testProgram()
-	owner.ProgramName = "owner"
+	owner.Name = "owner"
 	err = store.Save(ctx, 100, owner)
 	require.NoError(t, err)
 
 	// Create dependents that reference the owner
 	dep1 := testProgram()
-	dep1.ProgramName = "dep1"
+	dep1.Name = "dep1"
 	dep1.MapOwnerID = 100
 	err = store.Save(ctx, 101, dep1)
 	require.NoError(t, err)
 
 	dep2 := testProgram()
-	dep2.ProgramName = "dep2"
+	dep2.Name = "dep2"
 	dep2.MapOwnerID = 100
 	err = store.Save(ctx, 102, dep2)
 	require.NoError(t, err)
@@ -1082,12 +1082,12 @@ func TestGC_Comprehensive(t *testing.T) {
 	require.NoError(t, err)
 
 	ownerProg := testProgram()
-	ownerProg.ProgramName = "stale_owner"
+	ownerProg.Name = "stale_owner"
 	err = store.Save(ctx, 101, ownerProg)
 	require.NoError(t, err)
 
 	depProg := testProgram()
-	depProg.ProgramName = "stale_dep"
+	depProg.Name = "stale_dep"
 	depProg.MapOwnerID = 101
 	err = store.Save(ctx, 102, depProg)
 	require.NoError(t, err)

@@ -14,7 +14,7 @@ import (
 
 func TestReconcileActions_OrphanedPrograms(t *testing.T) {
 	// Programs in store but not in kernel should be deleted
-	stored := map[uint32]bpfman.Program{
+	stored := map[uint32]bpfman.ProgramRecord{
 		1: {Owner: "bpfman"},
 		2: {Owner: "bpfman"},
 		3: {Owner: "bpfman"},
@@ -42,7 +42,7 @@ func TestReconcileActions_OrphanedPrograms(t *testing.T) {
 }
 
 func TestReconcileActions_NoOrphans(t *testing.T) {
-	stored := map[uint32]bpfman.Program{
+	stored := map[uint32]bpfman.ProgramRecord{
 		1: {Owner: "bpfman"},
 	}
 
@@ -57,7 +57,7 @@ func TestReconcileActions_NoOrphans(t *testing.T) {
 }
 
 func TestReconcileActions_EmptyStore(t *testing.T) {
-	stored := map[uint32]bpfman.Program{}
+	stored := map[uint32]bpfman.ProgramRecord{}
 
 	kps := []kernel.Program{
 		{ID: 1, Name: "prog1"},
@@ -69,7 +69,7 @@ func TestReconcileActions_EmptyStore(t *testing.T) {
 }
 
 func TestOrphanedPrograms(t *testing.T) {
-	stored := map[uint32]bpfman.Program{
+	stored := map[uint32]bpfman.ProgramRecord{
 		1: {Owner: "bpfman"},
 		2: {Owner: "bpfman"},
 	}
@@ -85,7 +85,7 @@ func TestOrphanedPrograms(t *testing.T) {
 }
 
 func TestUnmanagedPrograms(t *testing.T) {
-	stored := map[uint32]bpfman.Program{
+	stored := map[uint32]bpfman.ProgramRecord{
 		1: {Owner: "bpfman"},
 	}
 
@@ -108,10 +108,10 @@ func TestReconcileActions_MapOwnerOrdering(t *testing.T) {
 	//             ON DELETE RESTRICT
 	//
 	// If owner (100) is deleted before dependents (101, 102), FK fails.
-	stored := map[uint32]bpfman.Program{
-		100: {ProgramName: "owner", MapOwnerID: 0},  // Owner - owns maps
-		101: {ProgramName: "dep1", MapOwnerID: 100}, // Dependent - uses owner's maps
-		102: {ProgramName: "dep2", MapOwnerID: 100}, // Dependent - uses owner's maps
+	stored := map[uint32]bpfman.ProgramRecord{
+		100: {Name: "owner", MapOwnerID: 0},  // Owner - owns maps
+		101: {Name: "dep1", MapOwnerID: 100}, // Dependent - uses owner's maps
+		102: {Name: "dep2", MapOwnerID: 100}, // Dependent - uses owner's maps
 	}
 
 	// All programs are gone from kernel

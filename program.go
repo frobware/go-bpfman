@@ -9,6 +9,8 @@ import (
 	"maps"
 	"slices"
 	"time"
+
+	"github.com/frobware/go-bpfman/kernel"
 )
 
 // ProgramType represents the type of BPF program.
@@ -102,19 +104,20 @@ func ParseProgramType(s string) (ProgramType, bool) {
 	}
 }
 
-// Program contains metadata for programs managed by bpfman.
+// ProgramRecord is what bpfman persists/manages about a program.
+// Contains only durable identifiers we control - no kernel IDs.
 // This is what we store - the kernel is the source of truth for runtime state.
-// A Program only exists in the store after successful load.
+// A ProgramRecord only exists in the store after successful load.
 //
-// Note: Program is distinct from LoadSpec. LoadSpec describes how to load a
-// program (validated input), while Program describes a loaded program's state
-// (stored output). They share some fields but serve different purposes.
-type Program struct {
-	// Core identity - what was loaded
-	ProgramName string      `json:"program_name"`
+// Note: ProgramRecord is distinct from LoadSpec. LoadSpec describes how to load
+// a program (validated input), while ProgramRecord describes a loaded program's
+// state (stored output). They share some fields but serve different purposes.
+type ProgramRecord struct {
+	// Core identity - what was loaded (bpfman-level, not kernel)
+	Name        string      `json:"name"`
 	ProgramType ProgramType `json:"program_type"`
 	ObjectPath  string      `json:"object_path,omitempty"`
-	PinPath     string      `json:"pin_path"`
+	PinPath     string      `json:"pin_path"` // stable handle
 
 	// Load-time configuration (stored for reference/potential reload)
 	GlobalData    map[string][]byte `json:"global_data,omitempty"`
@@ -133,8 +136,15 @@ type Program struct {
 	UpdatedAt    time.Time         `json:"updated_at"`
 }
 
-// WithTag returns a new Program with the tag added.
-func (p Program) WithTag(tag string) Program {
+// Program is the canonical domain object - managed state + kernel state.
+// Kernel.ID and Kernel.Name come from the kernel, not duplicated in Managed.
+type Program struct {
+	Managed ProgramRecord
+	Kernel  *kernel.Program
+}
+
+// WithTag returns a new ProgramRecord with the tag added.
+func (p ProgramRecord) WithTag(tag string) ProgramRecord {
 	cp := p
 	cp.Tags = append(slices.Clone(p.Tags), tag)
 	cp.UserMetadata = cloneMap(p.UserMetadata)
@@ -142,8 +152,8 @@ func (p Program) WithTag(tag string) Program {
 	return cp
 }
 
-// WithDescription returns a new Program with the description set.
-func (p Program) WithDescription(desc string) Program {
+// WithDescription returns a new ProgramRecord with the description set.
+func (p ProgramRecord) WithDescription(desc string) ProgramRecord {
 	cp := p
 	cp.Description = desc
 	cp.Tags = slices.Clone(p.Tags)

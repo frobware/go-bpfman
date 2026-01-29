@@ -17,7 +17,7 @@ import (
 // the programs they reference (MapOwnerID == 0). This ensures the schema's
 // ON DELETE RESTRICT constraint on map_owner_id is satisfied.
 func ReconcileActions(
-	stored map[uint32]bpfman.Program,
+	stored map[uint32]bpfman.ProgramRecord,
 	kps []kernel.Program,
 ) []action.Action {
 	// Build set of kernel program IDs
@@ -53,7 +53,7 @@ func ReconcileActions(
 // OrphanedPrograms returns IDs of programs in store that no longer exist in kernel.
 // Pure function.
 func OrphanedPrograms(
-	stored map[uint32]bpfman.Program,
+	stored map[uint32]bpfman.ProgramRecord,
 	kps []kernel.Program,
 ) []uint32 {
 	kernelIDs := make(map[uint32]bool, len(kps))
@@ -73,7 +73,7 @@ func OrphanedPrograms(
 // UnmanagedPrograms returns kernel programs not tracked in the store.
 // Pure function.
 func UnmanagedPrograms(
-	stored map[uint32]bpfman.Program,
+	stored map[uint32]bpfman.ProgramRecord,
 	kps []kernel.Program,
 ) []kernel.Program {
 	var unmanaged []kernel.Program

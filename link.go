@@ -2,7 +2,10 @@ package bpfman
 
 import (
 	"encoding/json"
+	"math"
 	"time"
+
+	"github.com/frobware/go-bpfman/kernel"
 )
 
 // AttachType specifies the type of BPF program attachment.
@@ -159,10 +162,13 @@ type LinkSummary struct {
 	CreatedAt       time.Time `json:"created_at"`
 }
 
-// LinkDetails is a marker interface for type-specific link details.
+// LinkDetails is a sealed interface for type-specific link details.
 // Use type assertion or type switch to access the concrete type.
+// The interface is sealed via the unexported linkDetails() method -
+// only types in this package can implement it.
 type LinkDetails interface {
-	linkDetails()
+	linkDetails()   // unexported - only our types can implement
+	Kind() LinkKind // returns the kind for this detail type
 }
 
 // TracepointDetails contains fields specific to tracepoint attachments.
@@ -171,7 +177,8 @@ type TracepointDetails struct {
 	Name  string `json:"name"`
 }
 
-func (TracepointDetails) linkDetails() {}
+func (TracepointDetails) linkDetails()   {}
+func (TracepointDetails) Kind() LinkKind { return LinkKindTracepoint }
 
 // KprobeDetails contains fields specific to kprobe/kretprobe attachments.
 type KprobeDetails struct {
@@ -181,6 +188,12 @@ type KprobeDetails struct {
 }
 
 func (KprobeDetails) linkDetails() {}
+func (d KprobeDetails) Kind() LinkKind {
+	if d.Retprobe {
+		return LinkKindKretprobe
+	}
+	return LinkKindKprobe
+}
 
 // UprobeDetails contains fields specific to uprobe/uretprobe attachments.
 type UprobeDetails struct {
@@ -193,20 +206,28 @@ type UprobeDetails struct {
 }
 
 func (UprobeDetails) linkDetails() {}
+func (d UprobeDetails) Kind() LinkKind {
+	if d.Retprobe {
+		return LinkKindUretprobe
+	}
+	return LinkKindUprobe
+}
 
 // FentryDetails contains fields specific to fentry attachments.
 type FentryDetails struct {
 	FnName string `json:"fn_name"`
 }
 
-func (FentryDetails) linkDetails() {}
+func (FentryDetails) linkDetails()   {}
+func (FentryDetails) Kind() LinkKind { return LinkKindFentry }
 
 // FexitDetails contains fields specific to fexit attachments.
 type FexitDetails struct {
 	FnName string `json:"fn_name"`
 }
 
-func (FexitDetails) linkDetails() {}
+func (FexitDetails) linkDetails()   {}
+func (FexitDetails) Kind() LinkKind { return LinkKindFexit }
 
 // XDPDetails contains fields specific to XDP attachments.
 type XDPDetails struct {
@@ -221,7 +242,8 @@ type XDPDetails struct {
 	Revision     uint32  `json:"revision"`
 }
 
-func (XDPDetails) linkDetails() {}
+func (XDPDetails) linkDetails()   {}
+func (XDPDetails) Kind() LinkKind { return LinkKindXDP }
 
 // TCDetails contains fields specific to TC attachments.
 type TCDetails struct {
@@ -237,7 +259,8 @@ type TCDetails struct {
 	Revision     uint32  `json:"revision"`
 }
 
-func (TCDetails) linkDetails() {}
+func (TCDetails) linkDetails()   {}
+func (TCDetails) Kind() LinkKind { return LinkKindTC }
 
 // TCXDetails contains fields specific to TCX attachments.
 type TCXDetails struct {
@@ -249,7 +272,8 @@ type TCXDetails struct {
 	Nsid      uint64 `json:"nsid,omitempty"`
 }
 
-func (TCXDetails) linkDetails() {}
+func (TCXDetails) linkDetails()   {}
+func (TCXDetails) Kind() LinkKind { return LinkKindTCX }
 
 // TCXLinkInfo combines link summary with TCX-specific details.
 // Used for computing attach order based on priority.
@@ -317,4 +341,128 @@ func (v kernelLinkView) MarshalJSON() ([]byte, error) {
 		TargetObjID: v.info.TargetObjID(),
 		TargetBTFId: v.info.TargetBTFId(),
 	})
+}
+
+// ----------------------------------------------------------------------------
+// New domain types (Commit 1 refactoring)
+// ----------------------------------------------------------------------------
+
+// LinkKind is bpfman's discriminator for link types.
+// Distinct from kernel.Link.LinkType which is kernel-reported.
+type LinkKind string
+
+const (
+	LinkKindTracepoint LinkKind = "tracepoint"
+	LinkKindKprobe     LinkKind = "kprobe"
+	LinkKindKretprobe  LinkKind = "kretprobe"
+	LinkKindUprobe     LinkKind = "uprobe"
+	LinkKindUretprobe  LinkKind = "uretprobe"
+	LinkKindFentry     LinkKind = "fentry"
+	LinkKindFexit      LinkKind = "fexit"
+	LinkKindXDP        LinkKind = "xdp"
+	LinkKindTC         LinkKind = "tc"
+	LinkKindTCX        LinkKind = "tcx"
+)
+
+// ParseLinkKind parses a string into a LinkKind.
+// Returns the LinkKind and true if valid, or empty string and false if invalid.
+func ParseLinkKind(s string) (LinkKind, bool) {
+	switch s {
+	case "tracepoint":
+		return LinkKindTracepoint, true
+	case "kprobe":
+		return LinkKindKprobe, true
+	case "kretprobe":
+		return LinkKindKretprobe, true
+	case "uprobe":
+		return LinkKindUprobe, true
+	case "uretprobe":
+		return LinkKindUretprobe, true
+	case "fentry":
+		return LinkKindFentry, true
+	case "fexit":
+		return LinkKindFexit, true
+	case "xdp":
+		return LinkKindXDP, true
+	case "tc":
+		return LinkKindTC, true
+	case "tcx":
+		return LinkKindTCX, true
+	default:
+		return "", false
+	}
+}
+
+// LinkTypeToKind converts a LinkType to a LinkKind.
+// This provides a migration path from the old LinkType to the new LinkKind.
+func LinkTypeToKind(t LinkType) LinkKind {
+	return LinkKind(t)
+}
+
+// LinkID is bpfman's identifier for a link.
+// Opaque to callers; currently backed by kernel/synthetic link ID.
+// uint64 to accommodate a future independent autoincrement id.
+//
+// Implementation note: The current schema uses kernel_link_id as the primary
+// key. During this refactor, LinkID is populated from kernel_link_id for
+// compatibility. Callers must treat LinkID as opaque; it must not be used
+// as a kernel correlation key outside inspect/store internals.
+type LinkID uint64
+
+// IsSynthetic returns true if this ID was minted by bpfman (not a kernel-assigned link ID).
+// Future-safe: returns false for ids > MaxUint32 (future autoincrement range).
+func (id LinkID) IsSynthetic() bool {
+	if id > math.MaxUint32 {
+		return false // future autoincrement ids are not synthetic
+	}
+	return IsSyntheticLinkID(uint32(id))
+}
+
+// LinkRecord is what bpfman persists/manages about a link.
+// NO kernel IDs - those are ephemeral. Use composite Link for kernel state.
+type LinkRecord struct {
+	ID        LinkID      `json:"id"`
+	Kind      LinkKind    `json:"kind"`
+	PinPath   string      `json:"pin_path,omitempty"`
+	CreatedAt time.Time   `json:"created_at"`
+	Details   LinkDetails `json:"details,omitempty"`
+	// owner, metadata, etc. as needed
+	// Note: Synthetic is derived via ID.IsSynthetic(), not stored
+	// Note: When Details is non-nil, Kind must equal Details.Kind(); constructors enforce this
+}
+
+// IsSynthetic returns true if this is a synthetic link (perf_event-based, no kernel link).
+func (r LinkRecord) IsSynthetic() bool { return r.ID.IsSynthetic() }
+
+// HasPin returns true if this link has a pin path.
+func (r LinkRecord) HasPin() bool { return r.PinPath != "" }
+
+// Link is the canonical domain object - managed state + kernel state.
+// Kernel.ID, Kernel.ProgramID come from kernel.Link.
+type Link struct {
+	Managed LinkRecord
+	Kernel  kernel.Link
+}
+
+// NewLinkRecordSummary creates a summary-only record (no details).
+// Used by inspect when details are loaded lazily.
+func NewLinkRecordSummary(id LinkID, kind LinkKind, pinPath string, createdAt time.Time) LinkRecord {
+	return LinkRecord{
+		ID:        id,
+		Kind:      kind,
+		PinPath:   pinPath,
+		CreatedAt: createdAt,
+	}
+}
+
+// NewLinkRecord creates a fully-detailed record.
+// Kind is derived from details to enforce the invariant.
+func NewLinkRecord(id LinkID, details LinkDetails, pinPath string, createdAt time.Time) LinkRecord {
+	return LinkRecord{
+		ID:        id,
+		Kind:      details.Kind(),
+		PinPath:   pinPath,
+		CreatedAt: createdAt,
+		Details:   details,
+	}
 }

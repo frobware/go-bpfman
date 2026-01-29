@@ -38,8 +38,8 @@ func (s *Server) List(ctx context.Context, req *pb.ListRequest) (*pb.ListRespons
 			continue
 		}
 
-		prog := row.StoreProgram
-		kp := row.KernelProgram
+		prog := row.Managed
+		kp := row.Kernel
 
 		// Filter by program type if specified
 		if req.ProgramType != nil && *req.ProgramType != uint32(prog.ProgramType) {
@@ -61,7 +61,7 @@ func (s *Server) List(ctx context.Context, req *pb.ListRequest) (*pb.ListRespons
 		}
 
 		info := &pb.ProgramInfo{
-			Name:       prog.ProgramName,
+			Name:       prog.Name,
 			Bytecode:   &pb.BytecodeLocation{Location: &pb.BytecodeLocation_File{File: prog.ObjectPath}},
 			Metadata:   prog.UserMetadata,
 			GlobalData: prog.GlobalData,
@@ -123,8 +123,8 @@ func (s *Server) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, 
 		return nil, status.Errorf(codes.Internal, "program %d exists in store but not in kernel (requires reconciliation)", req.Id)
 	}
 
-	prog := row.StoreProgram
-	kp := row.KernelProgram
+	prog := row.Managed
+	kp := row.Kernel
 
 	// Query store for links associated with this program
 	links, err := s.store.ListLinksByProgram(ctx, req.Id)
@@ -136,10 +136,10 @@ func (s *Server) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, 
 		linkIDs = append(linkIDs, link.KernelLinkID)
 	}
 
-	s.logger.InfoContext(ctx, "Get", "program_id", req.Id, "program_name", prog.ProgramName, "links", len(linkIDs))
+	s.logger.InfoContext(ctx, "Get", "program_id", req.Id, "program_name", prog.Name, "links", len(linkIDs))
 
 	info := &pb.ProgramInfo{
-		Name:       prog.ProgramName,
+		Name:       prog.Name,
 		Bytecode:   &pb.BytecodeLocation{Location: &pb.BytecodeLocation_File{File: prog.ObjectPath}},
 		Metadata:   prog.UserMetadata,
 		GlobalData: prog.GlobalData,

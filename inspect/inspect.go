@@ -20,14 +20,14 @@ var ErrNotFound = errors.New("not found")
 
 // StoreLister is the subset of interpreter.Store needed by Snapshot.
 type StoreLister interface {
-	List(ctx context.Context) (map[uint32]bpfman.Program, error)
+	List(ctx context.Context) (map[uint32]bpfman.ProgramRecord, error)
 	ListLinks(ctx context.Context) ([]bpfman.LinkSummary, error)
 	ListDispatchers(ctx context.Context) ([]dispatcher.State, error)
 }
 
 // StoreGetter is the subset of interpreter.Store needed by GetProgram.
 type StoreGetter interface {
-	Get(ctx context.Context, kernelID uint32) (bpfman.Program, error)
+	Get(ctx context.Context, kernelID uint32) (bpfman.ProgramRecord, error)
 }
 
 // KernelLister is the subset of interpreter.KernelSource needed by Snapshot.
@@ -86,15 +86,16 @@ func (p Presence) OrphanFS() bool { return p.InFS && !p.InStore && !p.InKernel }
 // KernelOnly returns true if the object exists only in the kernel.
 func (p Presence) KernelOnly() bool { return p.InKernel && !p.InStore }
 
-// ProgramRow is a store-first view of a program with presence annotations.
-type ProgramRow struct {
+// ProgramView is a correlation view of a program across store, kernel, and FS.
+// Renamed from ProgramRow.
+type ProgramView struct {
 	KernelID uint32
 
 	// Store fields (valid when Presence.InStore is true)
-	StoreProgram *bpfman.Program
+	Managed *bpfman.ProgramRecord
 
 	// Kernel fields (valid when Presence.InKernel is true)
-	KernelProgram *kernel.Program
+	Kernel *kernel.Program
 
 	// FS fields
 	FSPinPath string // from bpffs scan (may differ from store)
@@ -102,34 +103,47 @@ type ProgramRow struct {
 	Presence Presence
 }
 
-// Name returns the program name (from store if available, else kernel).
-func (r ProgramRow) Name() string {
-	if r.StoreProgram != nil {
-		return r.StoreProgram.ProgramName
+// AsProgram constructs a bpfman.Program composite if both parts are present.
+// Returns by value to avoid deep-copy surprises with maps/slices.
+func (v ProgramView) AsProgram() (bpfman.Program, bool) {
+	if v.Managed == nil || v.Kernel == nil {
+		return bpfman.Program{}, false
 	}
-	if r.KernelProgram != nil {
-		return r.KernelProgram.Name
+	return bpfman.Program{Managed: *v.Managed, Kernel: v.Kernel}, true
+}
+
+// ProgramRow is an alias for ProgramView for backwards compatibility.
+// Deprecated: Use ProgramView instead.
+type ProgramRow = ProgramView
+
+// Name returns the program name (from store if available, else kernel).
+func (v ProgramView) Name() string {
+	if v.Managed != nil {
+		return v.Managed.Name
+	}
+	if v.Kernel != nil {
+		return v.Kernel.Name
 	}
 	return ""
 }
 
 // Type returns the program type (from store if available, else kernel).
-func (r ProgramRow) Type() string {
-	if r.StoreProgram != nil {
-		return r.StoreProgram.ProgramType.String()
+func (v ProgramView) Type() string {
+	if v.Managed != nil {
+		return v.Managed.ProgramType.String()
 	}
-	if r.KernelProgram != nil {
-		return r.KernelProgram.ProgramType
+	if v.Kernel != nil {
+		return v.Kernel.ProgramType
 	}
 	return ""
 }
 
 // PinPath returns the pin path (from store if available, else FS).
-func (r ProgramRow) PinPath() string {
-	if r.StoreProgram != nil && r.StoreProgram.PinPath != "" {
-		return r.StoreProgram.PinPath
+func (v ProgramView) PinPath() string {
+	if v.Managed != nil && v.Managed.PinPath != "" {
+		return v.Managed.PinPath
 	}
-	return r.FSPinPath
+	return v.FSPinPath
 }
 
 // LinkRow is a store-first view of a link with presence annotations.
@@ -307,10 +321,11 @@ func Snapshot(
 		fsPath, inFS := fsProgPins[kernelID]
 		kp, inKernel := kernelProgs[kernelID]
 
-		row := ProgramRow{
-			KernelID:     kernelID,
-			StoreProgram: &prog,
-			FSPinPath:    fsPath,
+		progCopy := prog // copy to avoid address-of-loop-variable trap
+		row := ProgramView{
+			KernelID:  kernelID,
+			Managed:   &progCopy,
+			FSPinPath: fsPath,
 			Presence: Presence{
 				InStore:  true,
 				InKernel: inKernel,
@@ -318,7 +333,8 @@ func Snapshot(
 			},
 		}
 		if inKernel {
-			row.KernelProgram = &kp
+			kpCopy := kp
+			row.Kernel = &kpCopy
 		}
 		w.Programs = append(w.Programs, row)
 	}
@@ -330,10 +346,10 @@ func Snapshot(
 		}
 		fsPath, inFS := fsProgPins[kernelID]
 		kpCopy := kp
-		row := ProgramRow{
-			KernelID:      kernelID,
-			KernelProgram: &kpCopy,
-			FSPinPath:     fsPath,
+		row := ProgramView{
+			KernelID:  kernelID,
+			Kernel:    &kpCopy,
+			FSPinPath: fsPath,
 			Presence: Presence{
 				InStore:  false,
 				InKernel: true,
@@ -349,7 +365,7 @@ func Snapshot(
 		if seenProgIDs[kernelID] {
 			continue
 		}
-		row := ProgramRow{
+		row := ProgramView{
 			KernelID:  kernelID,
 			FSPinPath: fsPath,
 			Presence: Presence{
@@ -493,39 +509,39 @@ func GetProgram(
 	kern KernelGetter,
 	scanner *bpffs.Scanner,
 	kernelID uint32,
-) (ProgramRow, error) {
-	row := ProgramRow{KernelID: kernelID}
+) (ProgramView, error) {
+	row := ProgramView{KernelID: kernelID}
 
 	// Try store
 	prog, err := storeGetter.Get(ctx, kernelID)
 	if err == nil {
-		row.StoreProgram = &prog
+		row.Managed = &prog
 		row.Presence.InStore = true
 	} else if !errors.Is(err, store.ErrNotFound) {
 		// Real error (not just "not found")
-		return ProgramRow{}, err
+		return ProgramView{}, err
 	}
 
 	// Try kernel
 	kp, err := kern.GetProgramByID(ctx, kernelID)
 	if err == nil {
-		row.KernelProgram = &kp
+		row.Kernel = &kp
 		row.Presence.InKernel = true
 	}
 	// Kernel errors (program not found) are not fatal - just means not in kernel
 
 	// Try filesystem
 	// If we have store metadata with a pin path, check that specific path
-	if row.StoreProgram != nil && row.StoreProgram.PinPath != "" {
-		if scanner.PathExists(row.StoreProgram.PinPath) {
-			row.FSPinPath = row.StoreProgram.PinPath
+	if row.Managed != nil && row.Managed.PinPath != "" {
+		if scanner.PathExists(row.Managed.PinPath) {
+			row.FSPinPath = row.Managed.PinPath
 			row.Presence.InFS = true
 		}
 	}
 
 	// If not found in any source, return error
 	if !row.Presence.InStore && !row.Presence.InKernel && !row.Presence.InFS {
-		return ProgramRow{}, ErrNotFound
+		return ProgramView{}, ErrNotFound
 	}
 
 	return row, nil

@@ -1,6 +1,7 @@
 package ebpf
 
 import (
+	"errors"
 	"fmt"
 	"math/rand"
 	"os"
@@ -87,50 +88,99 @@ func bootTime() time.Time {
 }
 
 func infoToProgram(info *ebpf.ProgramInfo, id uint32) kernel.Program {
-	ebpfMapIDs, _ := info.MapIDs()
-	mapIDs := make([]uint32, len(ebpfMapIDs))
-	for i, mid := range ebpfMapIDs {
-		mapIDs[i] = uint32(mid)
-	}
-
 	kp := kernel.Program{
 		ID:          id,
 		Name:        info.Name,
 		ProgramType: info.Type.String(),
 		Tag:         info.Tag,
-		MapIDs:      mapIDs,
 	}
 
+	// Map IDs (available from kernel 4.15)
+	if ebpfMapIDs, ok := info.MapIDs(); ok {
+		kp.HasMapIDs = true
+		kp.MapIDs = make([]uint32, len(ebpfMapIDs))
+		for i, mid := range ebpfMapIDs {
+			kp.MapIDs[i] = uint32(mid)
+		}
+	}
+
+	// UID (available from kernel 4.15)
 	if uid, ok := info.CreatedByUID(); ok {
 		kp.UID = uid
+		kp.HasUID = true
 	}
+
+	// Load time (available from kernel 4.15)
 	if loadTime, ok := info.LoadTime(); ok {
 		// LoadTime is nanoseconds since boot, convert to wall clock time
 		kp.LoadedAt = bootTime().Add(loadTime)
 	}
+
+	// BTF ID (available from kernel 5.0)
 	if btfID, ok := info.BTFID(); ok {
 		kp.BTFId = uint32(btfID)
+		kp.HasBTFId = true
 	}
+
+	// JITed size (available from kernel 4.13)
+	// Error indicates restricted or unsupported
 	if jitedSize, err := info.JitedSize(); err == nil {
 		kp.JitedSize = jitedSize
 	}
+
+	// Translated size (available from kernel 4.13)
+	// Error indicates restricted or unsupported
 	if xlatedSize, err := info.TranslatedSize(); err == nil {
 		kp.XlatedSize = uint32(xlatedSize)
+	} else if errors.Is(err, ebpf.ErrRestrictedKernel) {
+		kp.Restricted = true
+	}
+
+	// Verified instructions (available from kernel 5.16)
+	if verifiedInsns, ok := info.VerifiedInstructions(); ok {
+		kp.VerifiedInstructions = verifiedInsns
+	}
+
+	// Memory locked (available from kernel 4.10)
+	if memlock, ok := info.Memlock(); ok {
+		kp.Memlock = memlock
+		kp.HasMemlock = true
 	}
 
 	return kp
 }
 
 func infoToMap(info *ebpf.MapInfo, id uint32) kernel.Map {
-	return kernel.Map{
+	km := kernel.Map{
 		ID:         id,
 		Name:       info.Name,
 		MapType:    info.Type.String(),
 		KeySize:    info.KeySize,
 		ValueSize:  info.ValueSize,
 		MaxEntries: info.MaxEntries,
-		Flags:      uint32(info.Flags),
+		Flags:      info.Flags,
+		Frozen:     info.Frozen(),
 	}
+
+	// BTF ID (available from kernel 4.18)
+	if btfID, ok := info.BTFID(); ok {
+		km.BTFId = uint32(btfID)
+		km.HasBTFId = true
+	}
+
+	// MapExtra (available from kernel 5.16)
+	if mapExtra, ok := info.MapExtra(); ok {
+		km.MapExtra = mapExtra
+		km.HasMapExtra = true
+	}
+
+	// Memlock (available from kernel 4.10)
+	if memlock, ok := info.Memlock(); ok {
+		km.Memlock = memlock
+		km.HasMemlock = true
+	}
+
+	return km
 }
 
 func infoToLink(info *link.Info) kernel.Link {
@@ -145,19 +195,60 @@ func infoToLink(info *link.Info) kernel.Link {
 		kl.AttachType = fmt.Sprintf("%d", tracing.AttachType)
 		kl.TargetObjID = tracing.TargetObjId
 		kl.TargetBTFId = uint32(tracing.TargetBtfId)
-	} else if xdp := info.XDP(); xdp != nil {
-		kl.TargetObjID = xdp.Ifindex
-	} else if tcx := info.TCX(); tcx != nil {
+	}
+
+	if xdp := info.XDP(); xdp != nil {
+		kl.Ifindex = xdp.Ifindex
+	}
+
+	if tcx := info.TCX(); tcx != nil {
 		kl.AttachType = fmt.Sprintf("%d", tcx.AttachType)
-		kl.TargetObjID = tcx.Ifindex
-	} else if cgroup := info.Cgroup(); cgroup != nil {
+		kl.Ifindex = tcx.Ifindex
+	}
+
+	if cgroup := info.Cgroup(); cgroup != nil {
 		kl.AttachType = fmt.Sprintf("%d", cgroup.AttachType)
-	} else if netns := info.NetNs(); netns != nil {
+		kl.CgroupID = cgroup.CgroupId
+	}
+
+	if netns := info.NetNs(); netns != nil {
 		kl.AttachType = fmt.Sprintf("%d", netns.AttachType)
-		kl.TargetObjID = netns.NetnsIno
-	} else if netkit := info.Netkit(); netkit != nil {
+		kl.NetnsIno = netns.NetnsIno
+	}
+
+	if netkit := info.Netkit(); netkit != nil {
 		kl.AttachType = fmt.Sprintf("%d", netkit.AttachType)
-		kl.TargetObjID = netkit.Ifindex
+		kl.Ifindex = netkit.Ifindex
+	}
+
+	if netfilter := info.Netfilter(); netfilter != nil {
+		kl.NetfilterPf = netfilter.Pf
+		kl.NetfilterHooknum = netfilter.Hooknum
+		kl.NetfilterPriority = netfilter.Priority
+		kl.NetfilterFlags = netfilter.Flags
+	}
+
+	if kprobeMulti := info.KprobeMulti(); kprobeMulti != nil {
+		if count, ok := kprobeMulti.AddressCount(); ok {
+			kl.KprobeMultiCount = count
+		}
+		if flags, ok := kprobeMulti.Flags(); ok {
+			kl.KprobeMultiFlags = flags
+		}
+		if missed, ok := kprobeMulti.Missed(); ok {
+			kl.KprobeMultiMissed = missed
+		}
+	}
+
+	if perfEvent := info.PerfEvent(); perfEvent != nil {
+		if kprobeInfo := perfEvent.Kprobe(); kprobeInfo != nil {
+			if addr, ok := kprobeInfo.Address(); ok {
+				kl.KprobeAddress = addr
+			}
+			if missed, ok := kprobeInfo.Missed(); ok {
+				kl.KprobeMissed = missed
+			}
+		}
 	}
 
 	return kl

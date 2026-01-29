@@ -14,8 +14,8 @@ import (
 
 // ManagedProgram combines kernel and metadata info.
 type ManagedProgram struct {
-	KernelProgram kernel.Program  `json:"kernel"`
-	Metadata      *bpfman.Program `json:"metadata,omitempty"`
+	KernelProgram kernel.Program        `json:"kernel"`
+	Metadata      *bpfman.ProgramRecord `json:"metadata,omitempty"`
 }
 
 // ProgramInfo is the complete view of a managed program.
@@ -33,8 +33,8 @@ type KernelInfo struct {
 
 // BpfmanInfo contains managed metadata.
 type BpfmanInfo struct {
-	Program *bpfman.Program   `json:"program,omitempty"`
-	Links   []LinkWithDetails `json:"links,omitempty"`
+	Program *bpfman.ProgramRecord `json:"program,omitempty"`
+	Links   []LinkWithDetails     `json:"links,omitempty"`
 }
 
 // LinkWithDetails combines a link summary with its type-specific details.
@@ -166,36 +166,36 @@ func (m *Manager) GetLink(ctx context.Context, kernelLinkID uint32) (bpfman.Link
 //
 // Returns an error if no programs match, or if multiple map owners exist
 // (data inconsistency).
-func (m *Manager) FindLoadedProgramByMetadata(ctx context.Context, key, value string) (bpfman.Program, uint32, error) {
+func (m *Manager) FindLoadedProgramByMetadata(ctx context.Context, key, value string) (bpfman.ProgramRecord, uint32, error) {
 	scanner := bpffs.NewScanner(m.dirs.ScannerDirs())
 	world, err := inspect.Snapshot(ctx, m.store, m.kernel, scanner)
 	if err != nil {
-		return bpfman.Program{}, 0, fmt.Errorf("snapshot: %w", err)
+		return bpfman.ProgramRecord{}, 0, fmt.Errorf("snapshot: %w", err)
 	}
 
 	// Find managed programs that are also in kernel and match the metadata
-	var matches []inspect.ProgramRow
+	var matches []inspect.ProgramView
 	for _, row := range world.Programs {
 		if !row.Presence.InStore || !row.Presence.InKernel {
 			continue
 		}
-		if row.StoreProgram.UserMetadata[key] == value {
+		if row.Managed.UserMetadata[key] == value {
 			matches = append(matches, row)
 		}
 	}
 
 	switch len(matches) {
 	case 0:
-		return bpfman.Program{}, 0, fmt.Errorf("program with %s=%s: %w", key, value, store.ErrNotFound)
+		return bpfman.ProgramRecord{}, 0, fmt.Errorf("program with %s=%s: %w", key, value, store.ErrNotFound)
 	case 1:
-		return *matches[0].StoreProgram, matches[0].KernelID, nil
+		return *matches[0].Managed, matches[0].KernelID, nil
 	default:
 		// Multiple programs match - find the map owner (MapOwnerID == 0).
 		// In multi-program loads, one program owns all maps and the others
 		// reference it via MapOwnerID.
-		var owners []inspect.ProgramRow
+		var owners []inspect.ProgramView
 		for _, row := range matches {
-			if row.StoreProgram.MapOwnerID == 0 {
+			if row.Managed.MapOwnerID == 0 {
 				owners = append(owners, row)
 			}
 		}
@@ -208,7 +208,7 @@ func (m *Manager) FindLoadedProgramByMetadata(ctx context.Context, key, value st
 			for i, row := range matches {
 				ids[i] = row.KernelID
 			}
-			return bpfman.Program{}, 0, fmt.Errorf("%w: %d programs with %s=%s but no map owner (kernel IDs: %v)",
+			return bpfman.ProgramRecord{}, 0, fmt.Errorf("%w: %d programs with %s=%s but no map owner (kernel IDs: %v)",
 				ErrMultipleProgramsFound, len(matches), key, value, ids)
 		case 1:
 			m.logger.DebugContext(ctx, "found map owner among multiple matching programs",
@@ -216,16 +216,16 @@ func (m *Manager) FindLoadedProgramByMetadata(ctx context.Context, key, value st
 				"value", value,
 				"total_matches", len(matches),
 				"owner_kernel_id", owners[0].KernelID,
-				"owner_name", owners[0].StoreProgram.ProgramName,
+				"owner_name", owners[0].Managed.Name,
 			)
-			return *owners[0].StoreProgram, owners[0].KernelID, nil
+			return *owners[0].Managed, owners[0].KernelID, nil
 		default:
 			// Multiple map owners - data inconsistency
 			ids := make([]uint32, len(owners))
 			for i, row := range owners {
 				ids[i] = row.KernelID
 			}
-			return bpfman.Program{}, 0, fmt.Errorf("%w: %d map owners with %s=%s (kernel IDs: %v)",
+			return bpfman.ProgramRecord{}, 0, fmt.Errorf("%w: %d map owners with %s=%s (kernel IDs: %v)",
 				ErrMultipleMapOwners, len(owners), key, value, ids)
 		}
 	}

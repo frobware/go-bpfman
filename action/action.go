@@ -18,7 +18,7 @@ type Action interface {
 // SaveProgram saves program metadata to the store.
 type SaveProgram struct {
 	KernelID uint32
-	Metadata bpfman.Program
+	Metadata bpfman.ProgramRecord
 }
 
 func (SaveProgram) isAction() {}
