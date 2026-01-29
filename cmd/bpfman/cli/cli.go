@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sync"
 	"time"
 
 	"github.com/alecthomas/kong"
@@ -37,6 +38,14 @@ type CLI struct {
 	// Err is the writer for error output. Defaults to os.Stderr.
 	// Injected for testability.
 	Err io.Writer `kong:"-"`
+
+	// Cached config and logger to avoid repeated file parsing per invocation.
+	configOnce   sync.Once     `kong:"-"`
+	cachedConfig config.Config `kong:"-"`
+	configErr    error         `kong:"-"`
+	loggerOnce   sync.Once     `kong:"-"`
+	cachedLogger *slog.Logger  `kong:"-"`
+	loggerErr    error         `kong:"-"`
 
 	Serve  ServeCmd  `cmd:"" help:"Start the gRPC daemon."`
 	Load   LoadCmd   `cmd:"" help:"Load a BPF program from an object file."`
@@ -80,6 +89,30 @@ func (c *CLI) PrintOutf(format string, args ...any) error {
 	return c.PrintOut(fmt.Sprintf(format, args...))
 }
 
+// WriteErr writes bytes to Err, returning an error if the write fails or
+// is short. Use this for error output to ensure I/O errors are propagated.
+func (c *CLI) WriteErr(p []byte) error {
+	n, err := c.Err.Write(p)
+	if err != nil {
+		return err
+	}
+	if n != len(p) {
+		return io.ErrShortWrite
+	}
+	return nil
+}
+
+// PrintErr writes a string to Err, returning an error on failure.
+func (c *CLI) PrintErr(s string) error {
+	return c.WriteErr([]byte(s))
+}
+
+// PrintErrf formats and writes to Err, returning an error on failure.
+// Formats in memory first to avoid partial writes on error.
+func (c *CLI) PrintErrf(format string, args ...any) error {
+	return c.PrintErr(fmt.Sprintf(format, args...))
+}
+
 // resolveMode returns the effective mode name by checking the
 // BPFMAN_MODE environment variable first, falling back to argv[0].
 func resolveMode() string {
@@ -121,7 +154,9 @@ func Run(ctx context.Context) {
 	// Handle errors ourselves to use injected writers instead of Kong's
 	// default os.Stderr. This ensures I/O error propagation is consistent.
 	if err := kctx.Run(&c); err != nil {
-		fmt.Fprintf(c.Err, "bpfman: %v\n", err)
+		// Attempt to write error to stderr. If stderr write fails, we still
+		// exit with code 1 - there's nothing more useful we can do.
+		_ = c.PrintErrf("bpfman: %v\n", err)
 		os.Exit(1)
 	}
 }
@@ -150,38 +185,48 @@ func KongOptions() []kong.Option {
 }
 
 // LoadConfig loads the configuration from the config file path.
+// Results are cached for the lifetime of the CLI instance.
 func (c *CLI) LoadConfig() (config.Config, error) {
-	return config.Load(c.Config)
+	c.configOnce.Do(func() {
+		c.cachedConfig, c.configErr = config.Load(c.Config)
+	})
+	return c.cachedConfig, c.configErr
 }
 
 // Logger creates a logger for CLI commands.
 // CLI commands default to WARN level for quieter output.
+// Results are cached for the lifetime of the CLI instance.
 // Use LoggerFromConfig for long-running services like serve.
 func (c *CLI) Logger() (*slog.Logger, error) {
-	cfg, err := c.LoadConfig()
-	if err != nil {
-		return nil, err
-	}
+	c.loggerOnce.Do(func() {
+		cfg, err := c.LoadConfig()
+		if err != nil {
+			c.loggerErr = err
+			return
+		}
 
-	format, err := logging.ParseFormat(cfg.Logging.Format)
-	if err != nil {
-		return nil, err
-	}
+		format, err := logging.ParseFormat(cfg.Logging.Format)
+		if err != nil {
+			c.loggerErr = err
+			return
+		}
 
-	// CLI commands default to warn unless --log is specified
-	spec := c.Log
-	if spec == "" {
-		spec = "warn"
-	}
+		// CLI commands default to warn unless --log is specified
+		spec := c.Log
+		if spec == "" {
+			spec = "warn"
+		}
 
-	opts := logging.Options{
-		CLISpec:    spec,
-		ConfigSpec: cfg.Logging.ToSpec(),
-		Format:     format,
-		Output:     os.Stderr,
-	}
+		opts := logging.Options{
+			CLISpec:    spec,
+			ConfigSpec: cfg.Logging.ToSpec(),
+			Format:     format,
+			Output:     os.Stderr,
+		}
 
-	return logging.New(opts)
+		c.cachedLogger, c.loggerErr = logging.New(opts)
+	})
+	return c.cachedLogger, c.loggerErr
 }
 
 // LoggerFromConfig creates a logger using config file settings.

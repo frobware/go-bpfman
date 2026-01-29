@@ -222,8 +222,22 @@ func formatProgramInfoTable(info manager.ProgramInfo) string {
 			fmt.Fprintf(kw, " Loaded At:\t%s\n", p.LoadedAt.Format(time.RFC3339))
 		}
 		fmt.Fprintf(kw, " Tag:\t%s\n", p.Tag)
-		// TODO: kernel.Program struct doesn't include GPL compatibility info
-		fmt.Fprintf(kw, " GPL Compatible:\ttrue\n")
+		// FIXME: This code path uses manager.ProgramInfo.Kernel.Program which is
+		// *kernel.Program struct - it doesn't have GPL info. The kernel.Program
+		// struct is populated by querying the kernel directly, but the kernel
+		// doesn't expose GPL compatibility after a program is loaded (it's only
+		// checked at load time).
+		//
+		// In contrast, formatLoadedProgramsTable uses bpfman.ManagedProgram.Kernel
+		// which is the KernelProgramInfo interface that HAS GPLCompatible() because
+		// it's populated at load time from the ELF license section.
+		//
+		// To properly fix this would require:
+		// 1. Adding GPLCompatible to bpfman.Program (database model)
+		// 2. Storing it at load time
+		// 3. Schema migration
+		// 4. Retrieving it in manager.Get()
+		fmt.Fprintf(kw, " GPL Compatible:\tFIXME\n")
 		if len(p.MapIDs) > 0 {
 			fmt.Fprintf(kw, " Map IDs:\t%v\n", p.MapIDs)
 		}
@@ -312,6 +326,66 @@ func formatProgramListTable(programs []manager.ManagedProgram) string {
 	return b.String()
 }
 
+// FormatLinkList formats a list of LinkSummary according to the specified output flags.
+func FormatLinkList(links []bpfman.LinkSummary, flags *OutputFlags) (string, error) {
+	switch flags.Format() {
+	case OutputFormatJSON:
+		return formatLinkListJSON(links)
+	case OutputFormatTable:
+		return formatLinkListTable(links), nil
+	case OutputFormatJSONPath:
+		return formatLinkListJSONPath(links, flags.JSONPathExpr())
+	default:
+		return formatLinkListTable(links), nil
+	}
+}
+
+func formatLinkListJSON(links []bpfman.LinkSummary) (string, error) {
+	output, err := json.MarshalIndent(links, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal result: %w", err)
+	}
+	return string(output) + "\n", nil
+}
+
+func formatLinkListJSONPath(links []bpfman.LinkSummary, expr string) (string, error) {
+	jp := jsonpath.New("output")
+	if err := jp.Parse(expr); err != nil {
+		return "", fmt.Errorf("invalid jsonpath expression %q: %w", expr, err)
+	}
+
+	jsonBytes, err := json.Marshal(links)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal: %w", err)
+	}
+
+	var data any
+	if err := json.Unmarshal(jsonBytes, &data); err != nil {
+		return "", fmt.Errorf("failed to unmarshal: %w", err)
+	}
+
+	var buf bytes.Buffer
+	if err := jp.Execute(&buf, data); err != nil {
+		return "", fmt.Errorf("jsonpath execution failed: %w", err)
+	}
+
+	return buf.String() + "\n", nil
+}
+
+func formatLinkListTable(links []bpfman.LinkSummary) string {
+	var b strings.Builder
+	w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
+
+	fmt.Fprintln(w, "LINK ID\tTYPE\tPROGRAM ID\tPIN PATH")
+
+	for _, l := range links {
+		fmt.Fprintf(w, "%d\t%s\t%d\t%s\n", l.KernelLinkID, l.LinkType, l.KernelProgramID, l.PinPath)
+	}
+
+	w.Flush()
+	return b.String()
+}
+
 // FormatLinkResult formats a link result (from attach command) according to
 // the specified output flags. The bpfFunction is the name of the BPF function.
 func FormatLinkResult(bpfFunction string, summary bpfman.LinkSummary, details bpfman.LinkDetails, flags *OutputFlags) (string, error) {
@@ -386,7 +460,7 @@ func formatLinkResultTable(bpfFunction string, summary bpfman.LinkSummary, detai
 
 	// Common fields
 	fmt.Fprintf(w, " BPF Function:\t%s\n", bpfFunction)
-	fmt.Fprintf(w, " Program Type:\t%s\n", summary.LinkType)
+	fmt.Fprintf(w, " Link Type:\t%s\n", summary.LinkType)
 	fmt.Fprintf(w, " Program ID:\t%d\n", summary.KernelProgramID)
 	fmt.Fprintf(w, " Link ID:\t%d\n", summary.KernelLinkID)
 
@@ -547,7 +621,7 @@ func formatLinkInfoTable(bpfFunction string, summary bpfman.LinkSummary, details
 	} else {
 		fmt.Fprintf(w, " BPF Function:\tNone\n")
 	}
-	fmt.Fprintf(w, " Program Type:\t%s\n", summary.LinkType)
+	fmt.Fprintf(w, " Link Type:\t%s\n", summary.LinkType)
 	fmt.Fprintf(w, " Program ID:\t%d\n", summary.KernelProgramID)
 	fmt.Fprintf(w, " Link ID:\t%d\n", summary.KernelLinkID)
 

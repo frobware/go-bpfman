@@ -2,10 +2,10 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 
+	"github.com/frobware/go-bpfman"
 	"github.com/frobware/go-bpfman/client"
 	"github.com/frobware/go-bpfman/manager"
 )
@@ -62,28 +62,22 @@ func (c *ListLinksCmd) Run(cli *CLI, ctx context.Context) error {
 	}
 	defer b.Close()
 
-	var links []interface{}
+	var links []bpfman.LinkSummary
 	if c.ProgramID != nil {
-		result, err := b.ListLinksByProgram(ctx, c.ProgramID.Value)
+		links, err = b.ListLinksByProgram(ctx, c.ProgramID.Value)
 		if errors.Is(err, client.ErrNotSupported) {
 			return fmt.Errorf("listing links by program is only available in local mode")
 		}
 		if err != nil {
 			return err
 		}
-		for _, l := range result {
-			links = append(links, l)
-		}
 	} else {
-		result, err := b.ListLinks(ctx)
+		links, err = b.ListLinks(ctx)
 		if errors.Is(err, client.ErrNotSupported) {
 			return fmt.Errorf("listing links is only available in local mode")
 		}
 		if err != nil {
 			return err
-		}
-		for _, l := range result {
-			links = append(links, l)
 		}
 	}
 
@@ -91,9 +85,9 @@ func (c *ListLinksCmd) Run(cli *CLI, ctx context.Context) error {
 		return cli.PrintOut("No managed links found\n")
 	}
 
-	output, err := json.MarshalIndent(links, "", "  ")
+	output, err := FormatLinkList(links, &c.OutputFlags)
 	if err != nil {
-		return fmt.Errorf("failed to marshal result: %w", err)
+		return err
 	}
-	return cli.PrintOutf("%s\n", output)
+	return cli.PrintOut(output)
 }
