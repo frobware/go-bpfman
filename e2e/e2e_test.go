@@ -14,6 +14,7 @@ import (
 
 	"github.com/frobware/go-bpfman"
 	"github.com/frobware/go-bpfman/interpreter"
+	"github.com/frobware/go-bpfman/kernel"
 	"github.com/frobware/go-bpfman/manager"
 )
 
@@ -59,6 +60,7 @@ func TestTracepoint_LoadAttachDetachUnload(t *testing.T) {
 	// Then: program has expected properties
 	require.NotZero(t, prog.Kernel.ID, "kernel should assign program ID")
 	require.Equal(t, bpfman.ProgramTypeTracepoint, prog.Managed.Type)
+	require.Equal(t, kernel.ProgramType("tracepoint"), prog.Kernel.ProgramType)
 
 	// Register cleanup for the program
 	t.Cleanup(func() {
@@ -183,6 +185,7 @@ func TestKprobe_LoadAttachDetachUnload(t *testing.T) {
 	// Then: program has expected properties
 	require.NotZero(t, prog.Kernel.ID, "kernel should assign program ID")
 	require.Equal(t, bpfman.ProgramTypeKprobe, prog.Managed.Type)
+	require.Equal(t, kernel.ProgramType("kprobe"), prog.Kernel.ProgramType)
 
 	t.Cleanup(func() {
 		env.Unload(context.Background(), prog.Kernel.ID)
@@ -296,6 +299,7 @@ func TestKretprobe_LoadAttachDetachUnload(t *testing.T) {
 	// Then: program has expected properties
 	require.NotZero(t, prog.Kernel.ID, "kernel should assign program ID")
 	require.Equal(t, bpfman.ProgramTypeKretprobe, prog.Managed.Type)
+	require.Equal(t, kernel.ProgramType("kprobe"), prog.Kernel.ProgramType) // kernel sees kprobe for both kprobe and kretprobe
 
 	t.Cleanup(func() {
 		env.Unload(context.Background(), prog.Kernel.ID)
@@ -413,6 +417,7 @@ func TestUprobe_LoadAttachDetachUnload(t *testing.T) {
 	// Then: program has expected properties
 	require.NotZero(t, prog.Kernel.ID, "kernel should assign program ID")
 	require.Equal(t, bpfman.ProgramTypeUprobe, prog.Managed.Type)
+	require.Equal(t, kernel.ProgramType("kprobe"), prog.Kernel.ProgramType) // kernel sees kprobe for uprobes
 
 	t.Cleanup(func() {
 		env.Unload(context.Background(), prog.Kernel.ID)
@@ -531,6 +536,7 @@ func TestUretprobe_LoadAttachDetachUnload(t *testing.T) {
 	// Then: program has expected properties
 	require.NotZero(t, prog.Kernel.ID, "kernel should assign program ID")
 	require.Equal(t, bpfman.ProgramTypeUretprobe, prog.Managed.Type)
+	require.Equal(t, kernel.ProgramType("kprobe"), prog.Kernel.ProgramType) // kernel sees kprobe for uretprobes
 
 	t.Cleanup(func() {
 		env.Unload(context.Background(), prog.Kernel.ID)
@@ -645,6 +651,7 @@ func TestFentry_LoadAttachDetachUnload(t *testing.T) {
 	// Then: program has expected properties
 	require.NotZero(t, prog.Kernel.ID, "kernel should assign program ID")
 	require.Equal(t, bpfman.ProgramTypeFentry, prog.Managed.Type)
+	require.Equal(t, kernel.ProgramType("tracing"), prog.Kernel.ProgramType)
 
 	t.Cleanup(func() {
 		env.Unload(context.Background(), prog.Kernel.ID)
@@ -753,6 +760,7 @@ func TestFexit_LoadAttachDetachUnload(t *testing.T) {
 	// Then: program has expected properties
 	require.NotZero(t, prog.Kernel.ID, "kernel should assign program ID")
 	require.Equal(t, bpfman.ProgramTypeFexit, prog.Managed.Type)
+	require.Equal(t, kernel.ProgramType("tracing"), prog.Kernel.ProgramType)
 
 	t.Cleanup(func() {
 		env.Unload(context.Background(), prog.Kernel.ID)
@@ -863,6 +871,7 @@ func TestTC_LoadAttachDetachUnload(t *testing.T) {
 	// Then: program has expected properties
 	require.NotZero(t, prog.Kernel.ID, "kernel should assign program ID")
 	require.Equal(t, bpfman.ProgramTypeTC, prog.Managed.Type)
+	require.Equal(t, kernel.ProgramType("schedcls"), prog.Kernel.ProgramType)
 
 	t.Cleanup(func() {
 		env.Unload(context.Background(), prog.Kernel.ID)
@@ -1009,6 +1018,7 @@ func TestTCX_LoadAttachDetachUnload(t *testing.T) {
 	// Then: program has expected properties
 	require.NotZero(t, prog.Kernel.ID, "kernel should assign program ID")
 	require.Equal(t, bpfman.ProgramTypeTCX, prog.Managed.Type)
+	require.Equal(t, kernel.ProgramType("schedcls"), prog.Kernel.ProgramType) // kernel sees schedcls for both tc and tcx
 
 	t.Cleanup(func() {
 		env.Unload(context.Background(), prog.Kernel.ID)
@@ -1124,6 +1134,7 @@ func TestXDP_LoadAttachDetachUnload(t *testing.T) {
 	// Then: program has expected properties
 	require.NotZero(t, prog.Kernel.ID, "kernel should assign program ID")
 	require.Equal(t, bpfman.ProgramTypeXDP, prog.Managed.Type)
+	require.Equal(t, kernel.ProgramType("xdp"), prog.Kernel.ProgramType)
 
 	t.Cleanup(func() {
 		env.Unload(context.Background(), prog.Kernel.ID)
