@@ -150,7 +150,7 @@ func (e *TestEnv) AssertLinkCount(expected int) {
 }
 
 // AssertLinkCountByType verifies the number of links of a specific type.
-func (e *TestEnv) AssertLinkCountByType(linkType bpfman.LinkType, expected int) {
+func (e *TestEnv) AssertLinkCountByKind(linkKind bpfman.LinkKind, expected int) {
 	e.T.Helper()
 	ctx := context.Background()
 
@@ -159,11 +159,11 @@ func (e *TestEnv) AssertLinkCountByType(linkType bpfman.LinkType, expected int) 
 
 	count := 0
 	for _, link := range links {
-		if link.LinkType == linkType {
+		if link.Kind == linkKind {
 			count++
 		}
 	}
-	require.Equal(e.T, expected, count, "unexpected link count for type %s", linkType)
+	require.Equal(e.T, expected, count, "unexpected link count for kind %s", linkKind)
 }
 
 // RequireRoot fails the test if not running as root.

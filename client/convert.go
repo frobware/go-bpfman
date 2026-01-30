@@ -277,69 +277,71 @@ func protoGetResponseToInfo(resp *pb.GetResponse, kernelID uint32) (manager.Prog
 			prog.GPLCompatible = resp.KernelInfo.GplCompatible
 		}
 
-		// Convert link IDs to LinkWithDetails (summary only, no details from this RPC)
-		var linksWithDetails []manager.LinkWithDetails
+		// Convert link IDs to LinkRecord (summary only, no details from this RPC)
+		var links []bpfman.LinkRecord
 		for _, linkID := range resp.Info.Links {
-			linksWithDetails = append(linksWithDetails, manager.LinkWithDetails{
-				Summary: bpfman.LinkSummary{
-					KernelLinkID:    linkID,
-					KernelProgramID: kernelID,
-				},
-				Details: nil, // Details not available from Get RPC
+			links = append(links, bpfman.LinkRecord{
+				ID: bpfman.LinkID(linkID),
+				// Details not available from Get RPC
 			})
 		}
 
 		info.Bpfman = &manager.BpfmanInfo{
 			Program: prog,
-			Links:   linksWithDetails,
+			Links:   links,
 		}
 	}
 
 	return info, nil
 }
 
-// protoLinkTypeToManaged converts a protobuf link type to bpfman.LinkType.
-func protoLinkTypeToManaged(t pb.BpfmanLinkType) bpfman.LinkType {
+// protoLinkKindToManaged converts a protobuf link type to bpfman.LinkKind.
+func protoLinkKindToManaged(t pb.BpfmanLinkType) bpfman.LinkKind {
 	switch t {
 	case pb.BpfmanLinkType_LINK_TYPE_TRACEPOINT:
-		return bpfman.LinkTypeTracepoint
+		return bpfman.LinkKindTracepoint
 	case pb.BpfmanLinkType_LINK_TYPE_KPROBE:
-		return bpfman.LinkTypeKprobe
+		return bpfman.LinkKindKprobe
 	case pb.BpfmanLinkType_LINK_TYPE_KRETPROBE:
-		return bpfman.LinkTypeKretprobe
+		return bpfman.LinkKindKretprobe
 	case pb.BpfmanLinkType_LINK_TYPE_UPROBE:
-		return bpfman.LinkTypeUprobe
+		return bpfman.LinkKindUprobe
 	case pb.BpfmanLinkType_LINK_TYPE_URETPROBE:
-		return bpfman.LinkTypeUretprobe
+		return bpfman.LinkKindUretprobe
 	case pb.BpfmanLinkType_LINK_TYPE_FENTRY:
-		return bpfman.LinkTypeFentry
+		return bpfman.LinkKindFentry
 	case pb.BpfmanLinkType_LINK_TYPE_FEXIT:
-		return bpfman.LinkTypeFexit
+		return bpfman.LinkKindFexit
 	case pb.BpfmanLinkType_LINK_TYPE_XDP:
-		return bpfman.LinkTypeXDP
+		return bpfman.LinkKindXDP
 	case pb.BpfmanLinkType_LINK_TYPE_TC:
-		return bpfman.LinkTypeTC
+		return bpfman.LinkKindTC
 	case pb.BpfmanLinkType_LINK_TYPE_TCX:
-		return bpfman.LinkTypeTCX
+		return bpfman.LinkKindTCX
 	default:
 		return ""
 	}
 }
 
-// protoLinkSummaryToManaged converts a protobuf LinkSummary to bpfman.LinkSummary.
-func protoLinkSummaryToManaged(s *pb.LinkSummary) bpfman.LinkSummary {
+// protoLinkSummaryToRecord converts a protobuf LinkSummary to bpfman.LinkRecord.
+func protoLinkSummaryToRecord(s *pb.LinkSummary) bpfman.LinkRecord {
 	if s == nil {
-		return bpfman.LinkSummary{}
+		return bpfman.LinkRecord{}
 	}
 
 	createdAt, _ := time.Parse(time.RFC3339, s.CreatedAt)
 
-	return bpfman.LinkSummary{
-		KernelLinkID:    s.KernelLinkId,
-		LinkType:        protoLinkTypeToManaged(s.LinkType),
-		KernelProgramID: s.KernelProgramId,
-		PinPath:         s.PinPath,
-		CreatedAt:       createdAt,
+	var kernelLinkID *uint32
+	if s.KernelLinkId != 0 {
+		kernelLinkID = &s.KernelLinkId
+	}
+
+	return bpfman.LinkRecord{
+		ID:           bpfman.LinkID(s.KernelLinkId),
+		Kind:         protoLinkKindToManaged(s.LinkType),
+		KernelLinkID: kernelLinkID,
+		PinPath:      s.PinPath,
+		CreatedAt:    createdAt,
 	}
 }
 
@@ -416,16 +418,16 @@ func protoLinkDetailsToManaged(d *pb.LinkDetails) bpfman.LinkDetails {
 	}
 }
 
-// protoListLinksResponseToSummaries converts a ListLinksResponse to []bpfman.LinkSummary.
-func protoListLinksResponseToSummaries(resp *pb.ListLinksResponse) []bpfman.LinkSummary {
+// protoListLinksResponseToRecords converts a ListLinksResponse to []bpfman.LinkRecord.
+func protoListLinksResponseToRecords(resp *pb.ListLinksResponse) []bpfman.LinkRecord {
 	if resp == nil || len(resp.Links) == 0 {
 		return nil
 	}
 
-	result := make([]bpfman.LinkSummary, 0, len(resp.Links))
+	result := make([]bpfman.LinkRecord, 0, len(resp.Links))
 	for _, link := range resp.Links {
 		if link.Summary != nil {
-			result = append(result, protoLinkSummaryToManaged(link.Summary))
+			result = append(result, protoLinkSummaryToRecord(link.Summary))
 		}
 	}
 	return result

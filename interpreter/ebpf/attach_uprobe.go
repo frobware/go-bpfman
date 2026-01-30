@@ -21,7 +21,7 @@ import (
 
 // AttachUprobeLocal attaches a pinned program to a user-space function
 // in the current namespace. Does not spawn a helper, so no lock scope needed.
-func (k *kernelAdapter) AttachUprobeLocal(ctx context.Context, progPinPath, target, fnName string, offset uint64, retprobe bool, linkPinPath string) (bpfman.ManagedLink, error) {
+func (k *kernelAdapter) AttachUprobeLocal(ctx context.Context, progPinPath, target, fnName string, offset uint64, retprobe bool, linkPinPath string) (bpfman.Link, error) {
 	k.logger.Debug("AttachUprobeLocal called",
 		"target", target,
 		"fn_name", fnName,
@@ -32,58 +32,50 @@ func (k *kernelAdapter) AttachUprobeLocal(ctx context.Context, progPinPath, targ
 
 	prog, err := ebpf.LoadPinnedProgram(progPinPath, nil)
 	if err != nil {
-		return bpfman.ManagedLink{}, fmt.Errorf("load pinned program %s: %w", progPinPath, err)
+		return bpfman.Link{}, fmt.Errorf("load pinned program %s: %w", progPinPath, err)
 	}
 	defer prog.Close()
-
-	// Get program info to find kernel program ID
-	progInfo, err := prog.Info()
-	if err != nil {
-		return bpfman.ManagedLink{}, fmt.Errorf("get program info: %w", err)
-	}
-	progID, _ := progInfo.ID()
 
 	// Regular uprobe - attach directly
 	linkID, err := k.doAttachUprobeLocal(progPinPath, target, fnName, offset, retprobe, linkPinPath)
 	if err != nil {
-		return bpfman.ManagedLink{}, err
+		return bpfman.Link{}, err
 	}
 
-	// Determine link type based on retprobe flag
-	linkType := bpfman.LinkTypeUprobe
+	// Determine link kind based on retprobe flag
+	linkKind := bpfman.LinkKindUprobe
 	if retprobe {
-		linkType = bpfman.LinkTypeUretprobe
+		linkKind = bpfman.LinkKindUretprobe
 	}
 
 	// Load pinned link to get full info
-	var kernelLink *kernel.Link
+	var kl kernel.Link
 	if linkPinPath != "" {
 		pinnedLink, err := link.LoadPinnedLink(linkPinPath, nil)
 		if err == nil {
 			if info, err := pinnedLink.Info(); err == nil {
-				kernelLink = ToKernelLink(info)
+				kl = *ToKernelLink(info)
 			}
 			pinnedLink.Close()
 		}
 	}
 
-	return bpfman.ManagedLink{
-		Managed: &bpfman.LinkInfo{
-			KernelLinkID:    linkID,
-			KernelProgramID: uint32(progID),
-			Type:            linkType,
-			PinPath:         linkPinPath,
-			CreatedAt:       time.Now(),
-			Details:         bpfman.UprobeDetails{Target: target, FnName: fnName, Offset: offset, Retprobe: retprobe, ContainerPid: 0},
+	return bpfman.Link{
+		Managed: bpfman.LinkRecord{
+			Kind:         linkKind,
+			KernelLinkID: &linkID,
+			PinPath:      linkPinPath,
+			CreatedAt:    time.Now(),
+			Details:      bpfman.UprobeDetails{Target: target, FnName: fnName, Offset: offset, Retprobe: retprobe, ContainerPid: 0},
 		},
-		Kernel: kernelLink,
+		Kernel: kl,
 	}, nil
 }
 
 // AttachUprobeContainer attaches a pinned program to a user-space function
 // in a container's mount namespace. Spawns bpfman-ns helper, so requires
 // lock scope to pass fd.
-func (k *kernelAdapter) AttachUprobeContainer(ctx context.Context, scope lock.WriterScope, progPinPath, target, fnName string, offset uint64, retprobe bool, linkPinPath string, containerPid int32) (bpfman.ManagedLink, error) {
+func (k *kernelAdapter) AttachUprobeContainer(ctx context.Context, scope lock.WriterScope, progPinPath, target, fnName string, offset uint64, retprobe bool, linkPinPath string, containerPid int32) (bpfman.Link, error) {
 	k.logger.Debug("AttachUprobeContainer called",
 		"target", target,
 		"fn_name", fnName,
@@ -96,52 +88,37 @@ func (k *kernelAdapter) AttachUprobeContainer(ctx context.Context, scope lock.Wr
 
 	prog, err := ebpf.LoadPinnedProgram(progPinPath, nil)
 	if err != nil {
-		return bpfman.ManagedLink{}, fmt.Errorf("load pinned program %s: %w", progPinPath, err)
+		return bpfman.Link{}, fmt.Errorf("load pinned program %s: %w", progPinPath, err)
 	}
 	defer prog.Close()
 
-	// Get program info to find kernel program ID
-	progInfo, err := prog.Info()
-	if err != nil {
-		return bpfman.ManagedLink{}, fmt.Errorf("get program info: %w", err)
-	}
-	progID, _ := progInfo.ID()
-
 	// Use bpfman-ns helper for container uprobes
 	// scope is required - compiler enforces it (not nil)
-	linkID, err := k.attachUprobeViaHelper(scope, progPinPath, target, fnName, offset, retprobe, linkPinPath, containerPid)
+	// Note: syntheticID is returned, not a kernel link ID (container uprobes use perf_event)
+	syntheticID, err := k.attachUprobeViaHelper(scope, progPinPath, target, fnName, offset, retprobe, linkPinPath, containerPid)
 	if err != nil {
-		return bpfman.ManagedLink{}, fmt.Errorf("attach uprobe via helper: %w", err)
+		return bpfman.Link{}, fmt.Errorf("attach uprobe via helper: %w", err)
 	}
 
-	// Determine link type based on retprobe flag
-	linkType := bpfman.LinkTypeUprobe
+	// Determine link kind based on retprobe flag
+	linkKind := bpfman.LinkKindUprobe
 	if retprobe {
-		linkType = bpfman.LinkTypeUretprobe
+		linkKind = bpfman.LinkKindUretprobe
 	}
 
-	// Load pinned link to get full info
-	var kernelLink *kernel.Link
-	if linkPinPath != "" {
-		pinnedLink, err := link.LoadPinnedLink(linkPinPath, nil)
-		if err == nil {
-			if info, err := pinnedLink.Info(); err == nil {
-				kernelLink = ToKernelLink(info)
-			}
-			pinnedLink.Close()
-		}
-	}
-
-	return bpfman.ManagedLink{
-		Managed: &bpfman.LinkInfo{
-			KernelLinkID:    linkID,
-			KernelProgramID: uint32(progID),
-			Type:            linkType,
-			PinPath:         linkPinPath,
-			CreatedAt:       time.Now(),
-			Details:         bpfman.UprobeDetails{Target: target, FnName: fnName, Offset: offset, Retprobe: retprobe, ContainerPid: containerPid},
+	// Container uprobes use perf_event-based links which don't have kernel link IDs.
+	// The syntheticID is stored as the durable ID in the database, but KernelLinkID is nil.
+	// We also can't load the pinned link for container uprobes (they can't be pinned).
+	return bpfman.Link{
+		Managed: bpfman.LinkRecord{
+			ID:           bpfman.LinkID(syntheticID), // Store the synthetic ID
+			Kind:         linkKind,
+			KernelLinkID: nil, // No kernel link for perf_event-based uprobes
+			PinPath:      linkPinPath,
+			CreatedAt:    time.Now(),
+			Details:      bpfman.UprobeDetails{Target: target, FnName: fnName, Offset: offset, Retprobe: retprobe, ContainerPid: containerPid},
 		},
-		Kernel: kernelLink,
+		// Kernel is zero-value since perf_event links don't have kernel link info
 	}, nil
 }
 

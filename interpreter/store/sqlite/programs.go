@@ -378,13 +378,14 @@ func (s *sqliteStore) GC(ctx context.Context, kernelProgramIDs, kernelLinkIDs ma
 		}
 
 		for _, link := range links {
-			// Skip synthetic link IDs - they're not in kernelLinkIDs but are valid
-			if bpfman.IsSyntheticLinkID(link.KernelLinkID) {
+			// Skip links without kernel_link_id (perf_event-based/synthetic links)
+			// They're not subject to kernel-based GC
+			if link.KernelLinkID == nil {
 				continue
 			}
-			if !kernelLinkIDs[link.KernelLinkID] {
-				if err := ts.DeleteLink(ctx, link.KernelLinkID); err != nil {
-					s.logger.Warn("failed to delete link", "kernel_link_id", link.KernelLinkID, "error", err)
+			if !kernelLinkIDs[*link.KernelLinkID] {
+				if err := ts.DeleteLink(ctx, link.ID); err != nil {
+					s.logger.Warn("failed to delete link", "link_id", link.ID, "kernel_link_id", *link.KernelLinkID, "error", err)
 					continue
 				}
 				result.LinksRemoved++

@@ -365,9 +365,8 @@ func TestAttachTracepoint_BuildsCorrectRequest(t *testing.T) {
 		"tracepoint should be group/name format")
 
 	// Verify response mapping
-	assert.Equal(t, bpfman.LinkTypeTracepoint, summary.LinkType)
-	assert.Equal(t, uint32(123), summary.KernelProgramID)
-	assert.Equal(t, uint32(456), summary.KernelLinkID)
+	assert.Equal(t, bpfman.LinkKindTracepoint, summary.Kind)
+	assert.Equal(t, bpfman.LinkID(456), summary.ID)
 }
 
 // TestAttachXDP_BuildsCorrectRequest verifies that AttachXDP
@@ -392,9 +391,8 @@ func TestAttachXDP_BuildsCorrectRequest(t *testing.T) {
 	assert.Equal(t, int32(50), xdpInfo.XdpAttachInfo.Priority)
 
 	// Verify response mapping
-	assert.Equal(t, bpfman.LinkTypeXDP, summary.LinkType)
-	assert.Equal(t, uint32(123), summary.KernelProgramID)
-	assert.Equal(t, uint32(456), summary.KernelLinkID)
+	assert.Equal(t, bpfman.LinkKindXDP, summary.Kind)
+	assert.Equal(t, bpfman.LinkID(456), summary.ID)
 }
 
 // TestAttachTC_BuildsCorrectRequest verifies that AttachTC
@@ -422,9 +420,8 @@ func TestAttachTC_BuildsCorrectRequest(t *testing.T) {
 	assert.Equal(t, []int32{0, 2}, tcInfo.TcAttachInfo.ProceedOn)
 
 	// Verify response mapping
-	assert.Equal(t, bpfman.LinkTypeTC, summary.LinkType)
-	assert.Equal(t, uint32(123), summary.KernelProgramID)
-	assert.Equal(t, uint32(456), summary.KernelLinkID)
+	assert.Equal(t, bpfman.LinkKindTC, summary.Kind)
+	assert.Equal(t, bpfman.LinkID(456), summary.ID)
 }
 
 // TestAttachTCX_BuildsCorrectRequest verifies that AttachTCX
@@ -451,9 +448,8 @@ func TestAttachTCX_BuildsCorrectRequest(t *testing.T) {
 	assert.Equal(t, int32(75), tcxInfo.TcxAttachInfo.Priority)
 
 	// Verify response mapping
-	assert.Equal(t, bpfman.LinkTypeTCX, summary.LinkType)
-	assert.Equal(t, uint32(123), summary.KernelProgramID)
-	assert.Equal(t, uint32(456), summary.KernelLinkID)
+	assert.Equal(t, bpfman.LinkKindTCX, summary.Kind)
+	assert.Equal(t, bpfman.LinkID(456), summary.ID)
 }
 
 // TestAttachKprobe_BuildsCorrectRequest verifies that AttachKprobe
@@ -478,9 +474,8 @@ func TestAttachKprobe_BuildsCorrectRequest(t *testing.T) {
 	assert.Equal(t, uint64(0), kprobeInfo.KprobeAttachInfo.Offset)
 
 	// Verify response mapping
-	assert.Equal(t, bpfman.LinkTypeKprobe, summary.LinkType)
-	assert.Equal(t, uint32(123), summary.KernelProgramID)
-	assert.Equal(t, uint32(456), summary.KernelLinkID)
+	assert.Equal(t, bpfman.LinkKindKprobe, summary.Kind)
+	assert.Equal(t, bpfman.LinkID(456), summary.ID)
 }
 
 // TestAttachKprobe_WithOffset verifies that AttachKprobe includes the offset.
@@ -524,9 +519,8 @@ func TestAttachUprobe_BuildsCorrectRequest(t *testing.T) {
 	assert.Equal(t, uint64(0), uprobeInfo.UprobeAttachInfo.Offset)
 
 	// Verify response mapping
-	assert.Equal(t, bpfman.LinkTypeUprobe, summary.LinkType)
-	assert.Equal(t, uint32(123), summary.KernelProgramID)
-	assert.Equal(t, uint32(456), summary.KernelLinkID)
+	assert.Equal(t, bpfman.LinkKindUprobe, summary.Kind)
+	assert.Equal(t, bpfman.LinkID(456), summary.ID)
 }
 
 // TestAttachFentry_BuildsCorrectRequest verifies that AttachFentry
@@ -550,9 +544,8 @@ func TestAttachFentry_BuildsCorrectRequest(t *testing.T) {
 	_ = fentryInfo // Fentry attach info is empty - function is specified at load time
 
 	// Verify response mapping
-	assert.Equal(t, bpfman.LinkTypeFentry, summary.LinkType)
-	assert.Equal(t, uint32(123), summary.KernelProgramID)
-	assert.Equal(t, uint32(456), summary.KernelLinkID)
+	assert.Equal(t, bpfman.LinkKindFentry, summary.Kind)
+	assert.Equal(t, bpfman.LinkID(456), summary.ID)
 }
 
 // TestAttachFexit_BuildsCorrectRequest verifies that AttachFexit
@@ -576,9 +569,8 @@ func TestAttachFexit_BuildsCorrectRequest(t *testing.T) {
 	_ = fexitInfo // Fexit attach info is empty - function is specified at load time
 
 	// Verify response mapping
-	assert.Equal(t, bpfman.LinkTypeFexit, summary.LinkType)
-	assert.Equal(t, uint32(123), summary.KernelProgramID)
-	assert.Equal(t, uint32(456), summary.KernelLinkID)
+	assert.Equal(t, bpfman.LinkKindFexit, summary.Kind)
+	assert.Equal(t, bpfman.LinkID(456), summary.ID)
 }
 
 // TestAttach_LinkPinPathFromOpts verifies that AttachOpts.LinkPinPath

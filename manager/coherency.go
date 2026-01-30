@@ -97,12 +97,12 @@ type ProgramState struct {
 }
 
 // LinkState correlates a link across DB and kernel.
-// Primary key: kernel link ID.
+// Primary key: bpfman link ID.
 type LinkState struct {
-	DB        *bpfman.LinkSummary // nil = no DB record
-	Kernel    bool                // true = kernel link alive
-	Synthetic bool                // true = perf_event synthetic ID
-	PinExist  *bool               // nil = not checked
+	DB        *bpfman.LinkRecord // nil = no DB record
+	Kernel    bool               // true = kernel link alive
+	Synthetic bool               // true = perf_event synthetic ID (no kernel link)
+	PinExist  *bool              // nil = not checked
 }
 
 // DispatcherState correlates a dispatcher across all three sources.
@@ -172,7 +172,7 @@ type Rule struct {
 type ObservedState struct {
 	// DB facts.
 	dbPrograms    map[uint32]bpfman.ProgramRecord
-	dbLinks       []bpfman.LinkSummary
+	dbLinks       []bpfman.LinkRecord
 	dbDispatchers []dispatcher.State
 
 	// Kernel facts.
@@ -329,7 +329,7 @@ func GatherState(ctx context.Context, store interpreter.Store, kernel interprete
 	// Link pin paths from DB (non-synthetic only).
 	for i := range s.dbLinks {
 		link := &s.dbLinks[i]
-		if link.PinPath != "" && !bpfman.IsSyntheticLinkID(link.KernelLinkID) {
+		if link.PinPath != "" && !link.IsSynthetic() {
 			pathsToStat[link.PinPath] = struct{}{}
 		}
 	}
@@ -529,12 +529,17 @@ func (s *ObservedState) Links() []LinkState {
 	}
 	for i := range s.dbLinks {
 		link := &s.dbLinks[i]
+		synthetic := link.IsSynthetic()
+		inKernel := false
+		if link.KernelLinkID != nil && !synthetic {
+			inKernel = s.kernelLinks[*link.KernelLinkID]
+		}
 		ls := LinkState{
 			DB:        link,
-			Synthetic: bpfman.IsSyntheticLinkID(link.KernelLinkID),
-			Kernel:    s.kernelLinks[link.KernelLinkID],
+			Synthetic: synthetic,
+			Kernel:    inKernel,
 		}
-		if link.PinPath != "" && !ls.Synthetic {
+		if link.PinPath != "" && !synthetic {
 			if exists, ok := s.fsPinExists[link.PinPath]; ok {
 				ls.PinExist = &exists
 			}
@@ -766,10 +771,14 @@ Category: db-vs-kernel`,
 						continue
 					}
 					if !l.Kernel {
+						kernelLinkID := uint32(0)
+						if l.DB.KernelLinkID != nil {
+							kernelLinkID = *l.DB.KernelLinkID
+						}
 						out = append(out, Violation{
 							Severity:    SeverityError,
 							Category:    "db-vs-kernel",
-							Description: fmt.Sprintf("Link %d in DB not found in kernel (program: %d)", l.DB.KernelLinkID, l.DB.KernelProgramID),
+							Description: fmt.Sprintf("Link %d (kernel_link_id=%d) in DB not found in kernel", l.DB.ID, kernelLinkID),
 						})
 					}
 				}

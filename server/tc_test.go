@@ -340,10 +340,10 @@ func TestTC_ExtensionPositionsAreSequential(t *testing.T) {
 
 	// Verify positions are 0, 1, 2 via store
 	for i, linkID := range linkIDs {
-		_, details, err := fix.Store.GetLink(ctx, linkID)
+		record, err := fix.Store.GetLink(ctx, bpfman.LinkID(linkID))
 		require.NoError(t, err, "GetLink for link %d", linkID)
-		tcDetails, ok := details.(bpfman.TCDetails)
-		require.True(t, ok, "expected TCDetails, got %T", details)
+		tcDetails, ok := record.Details.(bpfman.TCDetails)
+		require.True(t, ok, "expected TCDetails, got %T", record.Details)
 		assert.Equal(t, int32(i), tcDetails.Position,
 			"link %d should have position %d", linkID, i)
 	}

@@ -365,14 +365,14 @@ func (f *fakeKernel) GetPinned(_ context.Context, pinPath string) (*kernel.Pinne
 	return nil, nil
 }
 
-func (f *fakeKernel) AttachTracepoint(_ context.Context, progPinPath, group, name, linkPinPath string) (bpfman.ManagedLink, error) {
+func (f *fakeKernel) AttachTracepoint(_ context.Context, progPinPath, group, name, linkPinPath string) (bpfman.Link, error) {
 	// Check error injection
 	f.mu.Lock()
 	failErr := f.failOnAttach["tracepoint"]
 	f.mu.Unlock()
 	if failErr != nil {
 		f.recordOp("attach", "tracepoint:"+group+"/"+name, 0, failErr)
-		return bpfman.ManagedLink{}, failErr
+		return bpfman.Link{}, failErr
 	}
 
 	id := f.nextID.Add(1)
@@ -383,20 +383,19 @@ func (f *fakeKernel) AttachTracepoint(_ context.Context, progPinPath, group, nam
 		Type:    bpfman.AttachTracepoint,
 	}
 	f.recordOp("attach", "tracepoint:"+group+"/"+name, id, nil)
-	return bpfman.ManagedLink{
-		Managed: &bpfman.LinkInfo{
-			KernelLinkID:    id,
-			KernelProgramID: 0,
-			Type:            bpfman.LinkTypeTracepoint,
-			PinPath:         linkPinPath,
-			CreatedAt:       time.Now(),
-			Details:         bpfman.TracepointDetails{Group: group, Name: name},
+	return bpfman.Link{
+		Managed: bpfman.LinkRecord{
+			Kind:         bpfman.LinkKindTracepoint,
+			KernelLinkID: &id,
+			PinPath:      linkPinPath,
+			CreatedAt:    time.Now(),
+			Details:      bpfman.TracepointDetails{Group: group, Name: name},
 		},
-		Kernel: &kernel.Link{ID: id, ProgramID: 0, LinkType: "tracepoint"},
+		Kernel: kernel.Link{ID: id, ProgramID: 0, LinkType: "tracepoint"},
 	}, nil
 }
 
-func (f *fakeKernel) AttachXDP(_ context.Context, progPinPath string, ifindex int, linkPinPath string) (bpfman.ManagedLink, error) {
+func (f *fakeKernel) AttachXDP(_ context.Context, progPinPath string, ifindex int, linkPinPath string) (bpfman.Link, error) {
 	id := f.nextID.Add(1)
 	// Store for DetachLink lookup
 	f.links[id] = &bpfman.AttachedLink{
@@ -404,25 +403,24 @@ func (f *fakeKernel) AttachXDP(_ context.Context, progPinPath string, ifindex in
 		PinPath: linkPinPath,
 		Type:    bpfman.AttachXDP,
 	}
-	return bpfman.ManagedLink{
-		Managed: &bpfman.LinkInfo{
-			KernelLinkID:    id,
-			KernelProgramID: 0,
-			Type:            bpfman.LinkTypeXDP,
-			PinPath:         linkPinPath,
-			CreatedAt:       time.Now(),
-			Details:         bpfman.XDPDetails{Ifindex: uint32(ifindex)},
+	return bpfman.Link{
+		Managed: bpfman.LinkRecord{
+			Kind:         bpfman.LinkKindXDP,
+			KernelLinkID: &id,
+			PinPath:      linkPinPath,
+			CreatedAt:    time.Now(),
+			Details:      bpfman.XDPDetails{Ifindex: uint32(ifindex)},
 		},
-		Kernel: &kernel.Link{ID: id, ProgramID: 0, LinkType: "xdp"},
+		Kernel: kernel.Link{ID: id, ProgramID: 0, LinkType: "xdp"},
 	}, nil
 }
 
-func (f *fakeKernel) AttachKprobe(_ context.Context, progPinPath, fnName string, offset uint64, retprobe bool, linkPinPath string) (bpfman.ManagedLink, error) {
+func (f *fakeKernel) AttachKprobe(_ context.Context, progPinPath, fnName string, offset uint64, retprobe bool, linkPinPath string) (bpfman.Link, error) {
 	id := f.nextID.Add(1)
-	linkType := bpfman.LinkTypeKprobe
+	linkKind := bpfman.LinkKindKprobe
 	kernelLinkType := "kprobe"
 	if retprobe {
-		linkType = bpfman.LinkTypeKretprobe
+		linkKind = bpfman.LinkKindKretprobe
 		kernelLinkType = "kretprobe"
 	}
 	// Store for DetachLink lookup
@@ -431,25 +429,24 @@ func (f *fakeKernel) AttachKprobe(_ context.Context, progPinPath, fnName string,
 		PinPath: linkPinPath,
 		Type:    bpfman.AttachKprobe,
 	}
-	return bpfman.ManagedLink{
-		Managed: &bpfman.LinkInfo{
-			KernelLinkID:    id,
-			KernelProgramID: 0,
-			Type:            linkType,
-			PinPath:         linkPinPath,
-			CreatedAt:       time.Now(),
-			Details:         bpfman.KprobeDetails{FnName: fnName, Offset: offset, Retprobe: retprobe},
+	return bpfman.Link{
+		Managed: bpfman.LinkRecord{
+			Kind:         linkKind,
+			KernelLinkID: &id,
+			PinPath:      linkPinPath,
+			CreatedAt:    time.Now(),
+			Details:      bpfman.KprobeDetails{FnName: fnName, Offset: offset, Retprobe: retprobe},
 		},
-		Kernel: &kernel.Link{ID: id, ProgramID: 0, LinkType: kernelLinkType},
+		Kernel: kernel.Link{ID: id, ProgramID: 0, LinkType: kernelLinkType},
 	}, nil
 }
 
-func (f *fakeKernel) AttachUprobeLocal(_ context.Context, progPinPath, target, fnName string, offset uint64, retprobe bool, linkPinPath string) (bpfman.ManagedLink, error) {
+func (f *fakeKernel) AttachUprobeLocal(_ context.Context, progPinPath, target, fnName string, offset uint64, retprobe bool, linkPinPath string) (bpfman.Link, error) {
 	id := f.nextID.Add(1)
-	linkType := bpfman.LinkTypeUprobe
+	linkKind := bpfman.LinkKindUprobe
 	kernelLinkType := "uprobe"
 	if retprobe {
-		linkType = bpfman.LinkTypeUretprobe
+		linkKind = bpfman.LinkKindUretprobe
 		kernelLinkType = "uretprobe"
 	}
 	// Store for DetachLink lookup
@@ -458,25 +455,24 @@ func (f *fakeKernel) AttachUprobeLocal(_ context.Context, progPinPath, target, f
 		PinPath: linkPinPath,
 		Type:    bpfman.AttachUprobe,
 	}
-	return bpfman.ManagedLink{
-		Managed: &bpfman.LinkInfo{
-			KernelLinkID:    id,
-			KernelProgramID: 0,
-			Type:            linkType,
-			PinPath:         linkPinPath,
-			CreatedAt:       time.Now(),
-			Details:         bpfman.UprobeDetails{Target: target, FnName: fnName, Offset: offset, Retprobe: retprobe, ContainerPid: 0},
+	return bpfman.Link{
+		Managed: bpfman.LinkRecord{
+			Kind:         linkKind,
+			KernelLinkID: &id,
+			PinPath:      linkPinPath,
+			CreatedAt:    time.Now(),
+			Details:      bpfman.UprobeDetails{Target: target, FnName: fnName, Offset: offset, Retprobe: retprobe, ContainerPid: 0},
 		},
-		Kernel: &kernel.Link{ID: id, ProgramID: 0, LinkType: kernelLinkType},
+		Kernel: kernel.Link{ID: id, ProgramID: 0, LinkType: kernelLinkType},
 	}, nil
 }
 
-func (f *fakeKernel) AttachUprobeContainer(_ context.Context, _ lock.WriterScope, progPinPath, target, fnName string, offset uint64, retprobe bool, linkPinPath string, containerPid int32) (bpfman.ManagedLink, error) {
+func (f *fakeKernel) AttachUprobeContainer(_ context.Context, _ lock.WriterScope, progPinPath, target, fnName string, offset uint64, retprobe bool, linkPinPath string, containerPid int32) (bpfman.Link, error) {
 	id := f.nextID.Add(1)
-	linkType := bpfman.LinkTypeUprobe
+	linkKind := bpfman.LinkKindUprobe
 	kernelLinkType := "uprobe"
 	if retprobe {
-		linkType = bpfman.LinkTypeUretprobe
+		linkKind = bpfman.LinkKindUretprobe
 		kernelLinkType = "uretprobe"
 	}
 	// Store for DetachLink lookup
@@ -485,20 +481,19 @@ func (f *fakeKernel) AttachUprobeContainer(_ context.Context, _ lock.WriterScope
 		PinPath: linkPinPath,
 		Type:    bpfman.AttachUprobe,
 	}
-	return bpfman.ManagedLink{
-		Managed: &bpfman.LinkInfo{
-			KernelLinkID:    id,
-			KernelProgramID: 0,
-			Type:            linkType,
-			PinPath:         linkPinPath,
-			CreatedAt:       time.Now(),
-			Details:         bpfman.UprobeDetails{Target: target, FnName: fnName, Offset: offset, Retprobe: retprobe, ContainerPid: containerPid},
+	return bpfman.Link{
+		Managed: bpfman.LinkRecord{
+			Kind:         linkKind,
+			KernelLinkID: &id,
+			PinPath:      linkPinPath,
+			CreatedAt:    time.Now(),
+			Details:      bpfman.UprobeDetails{Target: target, FnName: fnName, Offset: offset, Retprobe: retprobe, ContainerPid: containerPid},
 		},
-		Kernel: &kernel.Link{ID: id, ProgramID: 0, LinkType: kernelLinkType},
+		Kernel: kernel.Link{ID: id, ProgramID: 0, LinkType: kernelLinkType},
 	}, nil
 }
 
-func (f *fakeKernel) AttachFentry(_ context.Context, progPinPath, fnName, linkPinPath string) (bpfman.ManagedLink, error) {
+func (f *fakeKernel) AttachFentry(_ context.Context, progPinPath, fnName, linkPinPath string) (bpfman.Link, error) {
 	id := f.nextID.Add(1)
 	// Store for DetachLink lookup
 	f.links[id] = &bpfman.AttachedLink{
@@ -506,20 +501,19 @@ func (f *fakeKernel) AttachFentry(_ context.Context, progPinPath, fnName, linkPi
 		PinPath: linkPinPath,
 		Type:    bpfman.AttachFentry,
 	}
-	return bpfman.ManagedLink{
-		Managed: &bpfman.LinkInfo{
-			KernelLinkID:    id,
-			KernelProgramID: 0,
-			Type:            bpfman.LinkTypeFentry,
-			PinPath:         linkPinPath,
-			CreatedAt:       time.Now(),
-			Details:         bpfman.FentryDetails{FnName: fnName},
+	return bpfman.Link{
+		Managed: bpfman.LinkRecord{
+			Kind:         bpfman.LinkKindFentry,
+			KernelLinkID: &id,
+			PinPath:      linkPinPath,
+			CreatedAt:    time.Now(),
+			Details:      bpfman.FentryDetails{FnName: fnName},
 		},
-		Kernel: &kernel.Link{ID: id, ProgramID: 0, LinkType: "fentry"},
+		Kernel: kernel.Link{ID: id, ProgramID: 0, LinkType: "fentry"},
 	}, nil
 }
 
-func (f *fakeKernel) AttachFexit(_ context.Context, progPinPath, fnName, linkPinPath string) (bpfman.ManagedLink, error) {
+func (f *fakeKernel) AttachFexit(_ context.Context, progPinPath, fnName, linkPinPath string) (bpfman.Link, error) {
 	id := f.nextID.Add(1)
 	// Store for DetachLink lookup
 	f.links[id] = &bpfman.AttachedLink{
@@ -527,16 +521,15 @@ func (f *fakeKernel) AttachFexit(_ context.Context, progPinPath, fnName, linkPin
 		PinPath: linkPinPath,
 		Type:    bpfman.AttachFexit,
 	}
-	return bpfman.ManagedLink{
-		Managed: &bpfman.LinkInfo{
-			KernelLinkID:    id,
-			KernelProgramID: 0,
-			Type:            bpfman.LinkTypeFexit,
-			PinPath:         linkPinPath,
-			CreatedAt:       time.Now(),
-			Details:         bpfman.FexitDetails{FnName: fnName},
+	return bpfman.Link{
+		Managed: bpfman.LinkRecord{
+			Kind:         bpfman.LinkKindFexit,
+			KernelLinkID: &id,
+			PinPath:      linkPinPath,
+			CreatedAt:    time.Now(),
+			Details:      bpfman.FexitDetails{FnName: fnName},
 		},
-		Kernel: &kernel.Link{ID: id, ProgramID: 0, LinkType: "fexit"},
+		Kernel: kernel.Link{ID: id, ProgramID: 0, LinkType: "fexit"},
 	}, nil
 }
 
@@ -590,7 +583,7 @@ func (f *fakeKernel) AttachXDPDispatcherWithPaths(_ context.Context, ifindex int
 	}, nil
 }
 
-func (f *fakeKernel) AttachXDPExtension(_ context.Context, dispatcherPinPath, objectPath, programName string, position int, linkPinPath, mapPinDir string) (bpfman.ManagedLink, error) {
+func (f *fakeKernel) AttachXDPExtension(_ context.Context, dispatcherPinPath, objectPath, programName string, position int, linkPinPath, mapPinDir string) (bpfman.Link, error) {
 	id := f.nextID.Add(1)
 	// Store for DetachLink lookup
 	f.links[id] = &bpfman.AttachedLink{
@@ -600,16 +593,15 @@ func (f *fakeKernel) AttachXDPExtension(_ context.Context, dispatcherPinPath, ob
 	}
 	// Record the operation with mapPinDir for test verification
 	f.recordExtensionAttach("attach-xdp-ext", programName, id, mapPinDir)
-	return bpfman.ManagedLink{
-		Managed: &bpfman.LinkInfo{
-			KernelLinkID:    id,
-			KernelProgramID: 0,
-			Type:            bpfman.LinkTypeXDP,
-			PinPath:         linkPinPath,
-			CreatedAt:       time.Now(),
-			Details:         bpfman.XDPDetails{Position: int32(position)},
+	return bpfman.Link{
+		Managed: bpfman.LinkRecord{
+			Kind:         bpfman.LinkKindXDP,
+			KernelLinkID: &id,
+			PinPath:      linkPinPath,
+			CreatedAt:    time.Now(),
+			Details:      bpfman.XDPDetails{Position: int32(position)},
 		},
-		Kernel: &kernel.Link{ID: id, ProgramID: 0, LinkType: "xdp"},
+		Kernel: kernel.Link{ID: id, ProgramID: 0, LinkType: "xdp"},
 	}, nil
 }
 
@@ -666,7 +658,7 @@ func (f *fakeKernel) FindTCFilterHandle(_ context.Context, ifindex int, parent u
 	return handle, nil
 }
 
-func (f *fakeKernel) AttachTCExtension(_ context.Context, dispatcherPinPath, objectPath, programName string, position int, linkPinPath, mapPinDir string) (bpfman.ManagedLink, error) {
+func (f *fakeKernel) AttachTCExtension(_ context.Context, dispatcherPinPath, objectPath, programName string, position int, linkPinPath, mapPinDir string) (bpfman.Link, error) {
 	id := f.nextID.Add(1)
 	// Store for DetachLink lookup
 	f.links[id] = &bpfman.AttachedLink{
@@ -676,20 +668,19 @@ func (f *fakeKernel) AttachTCExtension(_ context.Context, dispatcherPinPath, obj
 	}
 	// Record the operation with mapPinDir for test verification
 	f.recordExtensionAttach("attach-tc-ext", programName, id, mapPinDir)
-	return bpfman.ManagedLink{
-		Managed: &bpfman.LinkInfo{
-			KernelLinkID:    id,
-			KernelProgramID: 0,
-			Type:            bpfman.LinkTypeTC,
-			PinPath:         linkPinPath,
-			CreatedAt:       time.Now(),
-			Details:         bpfman.TCDetails{Position: int32(position)},
+	return bpfman.Link{
+		Managed: bpfman.LinkRecord{
+			Kind:         bpfman.LinkKindTC,
+			KernelLinkID: &id,
+			PinPath:      linkPinPath,
+			CreatedAt:    time.Now(),
+			Details:      bpfman.TCDetails{Position: int32(position)},
 		},
-		Kernel: &kernel.Link{ID: id, ProgramID: 0, LinkType: "tc"},
+		Kernel: kernel.Link{ID: id, ProgramID: 0, LinkType: "tc"},
 	}, nil
 }
 
-func (f *fakeKernel) AttachTCX(_ context.Context, ifindex int, direction, programPinPath, linkPinPath, netns string, order bpfman.TCXAttachOrder) (bpfman.ManagedLink, error) {
+func (f *fakeKernel) AttachTCX(_ context.Context, ifindex int, direction, programPinPath, linkPinPath, netns string, order bpfman.TCXAttachOrder) (bpfman.Link, error) {
 	id := f.nextID.Add(1)
 	f.links[id] = &bpfman.AttachedLink{
 		ID:      id,
@@ -698,15 +689,14 @@ func (f *fakeKernel) AttachTCX(_ context.Context, ifindex int, direction, progra
 	}
 	// Record the operation with programPinPath for test verification
 	f.recordTCXAttach(programPinPath, id)
-	return bpfman.ManagedLink{
-		Managed: &bpfman.LinkInfo{
-			KernelLinkID:    id,
-			KernelProgramID: 0,
-			Type:            bpfman.LinkTypeTCX,
-			PinPath:         linkPinPath,
-			CreatedAt:       time.Now(),
+	return bpfman.Link{
+		Managed: bpfman.LinkRecord{
+			Kind:         bpfman.LinkKindTCX,
+			KernelLinkID: &id,
+			PinPath:      linkPinPath,
+			CreatedAt:    time.Now(),
 		},
-		Kernel: &kernel.Link{ID: id, ProgramID: 0, LinkType: "tcx"},
+		Kernel: kernel.Link{ID: id, ProgramID: 0, LinkType: "tcx"},
 	}, nil
 }
 

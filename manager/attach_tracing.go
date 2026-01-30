@@ -8,14 +8,13 @@ import (
 	"time"
 
 	"github.com/frobware/go-bpfman"
-	"github.com/frobware/go-bpfman/action"
 	"github.com/frobware/go-bpfman/lock"
 )
 
 // AttachTracepoint attaches a pinned program to a tracepoint.
 //
 // Pattern: FETCH -> KERNEL I/O -> COMPUTE -> EXECUTE
-func (m *Manager) AttachTracepoint(ctx context.Context, spec bpfman.TracepointAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error) {
+func (m *Manager) AttachTracepoint(ctx context.Context, spec bpfman.TracepointAttachSpec, opts bpfman.AttachOpts) (bpfman.Link, error) {
 	programKernelID := spec.ProgramID()
 	group := spec.Group()
 	name := spec.Name()
@@ -24,7 +23,7 @@ func (m *Manager) AttachTracepoint(ctx context.Context, spec bpfman.TracepointAt
 	// FETCH: Verify program exists in store
 	_, err := m.store.Get(ctx, programKernelID)
 	if err != nil {
-		return bpfman.LinkSummary{}, fmt.Errorf("get program %d: %w", programKernelID, err)
+		return bpfman.Link{}, fmt.Errorf("get program %d: %w", programKernelID, err)
 	}
 
 	// COMPUTE: Construct paths from convention (kernel ID + bpffs root)
@@ -37,62 +36,51 @@ func (m *Manager) AttachTracepoint(ctx context.Context, spec bpfman.TracepointAt
 		linkPinPath = filepath.Join(linksDir, linkName)
 	}
 
-	// KERNEL I/O: Attach to the kernel (returns ManagedLink with full info)
+	// KERNEL I/O: Attach to the kernel
 	link, err := m.kernel.AttachTracepoint(ctx, progPinPath, group, name, linkPinPath)
 	if err != nil {
-		return bpfman.LinkSummary{}, fmt.Errorf("attach tracepoint %s/%s: %w", group, name, err)
+		return bpfman.Link{}, fmt.Errorf("attach tracepoint %s/%s: %w", group, name, err)
 	}
 
 	// ROLLBACK: If the store write fails, detach the link we just created.
 	var undo undoStack
 	undo.push(func() error {
-		return m.kernel.DetachLink(ctx, link.Managed.PinPath)
+		return m.kernel.DetachLink(ctx, linkPinPath)
 	})
 
-	// COMPUTE: Build save action from kernel result
-	saveAction := computeAttachTracepointAction(programKernelID, link.Kernel.ID, link.Managed.PinPath, group, name)
+	// COMPUTE: Build link record
+	details := bpfman.TracepointDetails{Group: group, Name: name}
+	record := bpfman.NewLinkRecord(0, details, linkPinPath, time.Now())
 
-	// EXECUTE: Save link metadata
-	if err := m.executor.Execute(ctx, saveAction); err != nil {
+	// EXECUTE: Save link metadata directly to store (need LinkID back)
+	linkID, err := m.store.SaveLink(ctx, record, programKernelID, link.Managed.KernelLinkID)
+	if err != nil {
 		m.logger.ErrorContext(ctx, "persist failed, rolling back", "program_id", programKernelID, "error", err)
 		if rbErr := undo.rollback(ctx, m.logger); rbErr != nil {
-			return bpfman.LinkSummary{}, errors.Join(fmt.Errorf("save link metadata: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
+			return bpfman.Link{}, errors.Join(fmt.Errorf("save link metadata: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
 		}
-		return bpfman.LinkSummary{}, fmt.Errorf("save link metadata: %w", err)
+		return bpfman.Link{}, fmt.Errorf("save link metadata: %w", err)
 	}
+
+	// Update record with assigned ID and kernel link ID
+	record.ID = linkID
+	record.KernelLinkID = link.Managed.KernelLinkID
 
 	m.logger.InfoContext(ctx, "attached tracepoint",
-		"kernel_link_id", link.Kernel.ID,
+		"link_id", linkID,
+		"kernel_link_id", link.Managed.KernelLinkID,
 		"program_id", programKernelID,
 		"tracepoint", group+"/"+name,
-		"pin_path", link.Managed.PinPath)
+		"pin_path", linkPinPath)
 
-	return saveAction.Summary, nil
-}
-
-// computeAttachTracepointAction is a pure function that builds the save action
-// for a tracepoint attachment.
-func computeAttachTracepointAction(programKernelID, kernelLinkID uint32, pinPath, group, name string) action.SaveTracepointLink {
-	return action.SaveTracepointLink{
-		Summary: bpfman.LinkSummary{
-			KernelLinkID:    kernelLinkID,
-			LinkType:        bpfman.LinkTypeTracepoint,
-			KernelProgramID: programKernelID,
-			PinPath:         pinPath,
-			CreatedAt:       time.Now(),
-		},
-		Details: bpfman.TracepointDetails{
-			Group: group,
-			Name:  name,
-		},
-	}
+	return bpfman.Link{Managed: record, Kernel: link.Kernel}, nil
 }
 
 // AttachKprobe attaches a pinned program to a kernel function.
 // retprobe is derived from the program type stored in the database.
 //
 // Pattern: FETCH -> KERNEL I/O -> COMPUTE -> EXECUTE
-func (m *Manager) AttachKprobe(ctx context.Context, spec bpfman.KprobeAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error) {
+func (m *Manager) AttachKprobe(ctx context.Context, spec bpfman.KprobeAttachSpec, opts bpfman.AttachOpts) (bpfman.Link, error) {
 	programKernelID := spec.ProgramID()
 	fnName := spec.FnName()
 	offset := spec.Offset()
@@ -101,7 +89,7 @@ func (m *Manager) AttachKprobe(ctx context.Context, spec bpfman.KprobeAttachSpec
 	// FETCH: Get program to determine if it's a kretprobe
 	prog, err := m.store.Get(ctx, programKernelID)
 	if err != nil {
-		return bpfman.LinkSummary{}, fmt.Errorf("get program %d: %w", programKernelID, err)
+		return bpfman.Link{}, fmt.Errorf("get program %d: %w", programKernelID, err)
 	}
 
 	// Derive retprobe from program type
@@ -120,65 +108,49 @@ func (m *Manager) AttachKprobe(ctx context.Context, spec bpfman.KprobeAttachSpec
 		linkPinPath = filepath.Join(linksDir, linkName)
 	}
 
-	// KERNEL I/O: Attach to the kernel (returns ManagedLink with full info)
+	// KERNEL I/O: Attach to the kernel
 	link, err := m.kernel.AttachKprobe(ctx, progPinPath, fnName, offset, retprobe, linkPinPath)
 	if err != nil {
-		return bpfman.LinkSummary{}, fmt.Errorf("attach kprobe %s: %w", fnName, err)
+		return bpfman.Link{}, fmt.Errorf("attach kprobe %s: %w", fnName, err)
 	}
 
 	// ROLLBACK: If the store write fails, detach the link we just created.
 	var undo undoStack
 	undo.push(func() error {
-		return m.kernel.DetachLink(ctx, link.Managed.PinPath)
+		return m.kernel.DetachLink(ctx, linkPinPath)
 	})
 
-	// COMPUTE: Build save action from kernel result
-	saveAction := computeAttachKprobeAction(programKernelID, link.Kernel.ID, link.Managed.PinPath, fnName, offset, retprobe)
+	// COMPUTE: Build link record
+	details := bpfman.KprobeDetails{FnName: fnName, Offset: offset, Retprobe: retprobe}
+	record := bpfman.NewLinkRecord(0, details, linkPinPath, time.Now())
 
-	// EXECUTE: Save link metadata
-	if err := m.executor.Execute(ctx, saveAction); err != nil {
+	// EXECUTE: Save link metadata directly to store (need LinkID back)
+	linkID, err := m.store.SaveLink(ctx, record, programKernelID, link.Managed.KernelLinkID)
+	if err != nil {
 		m.logger.ErrorContext(ctx, "persist failed, rolling back", "program_id", programKernelID, "error", err)
 		if rbErr := undo.rollback(ctx, m.logger); rbErr != nil {
-			return bpfman.LinkSummary{}, errors.Join(fmt.Errorf("save link metadata: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
+			return bpfman.Link{}, errors.Join(fmt.Errorf("save link metadata: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
 		}
-		return bpfman.LinkSummary{}, fmt.Errorf("save link metadata: %w", err)
+		return bpfman.Link{}, fmt.Errorf("save link metadata: %w", err)
 	}
+
+	// Update record with assigned ID and kernel link ID
+	record.ID = linkID
+	record.KernelLinkID = link.Managed.KernelLinkID
 
 	probeType := "kprobe"
 	if retprobe {
 		probeType = "kretprobe"
 	}
 	m.logger.InfoContext(ctx, "attached "+probeType,
-		"kernel_link_id", link.Kernel.ID,
+		"link_id", linkID,
+		"kernel_link_id", link.Managed.KernelLinkID,
 		"program_id", programKernelID,
 		"fn_name", fnName,
 		"offset", offset,
-		"pin_path", link.Managed.PinPath)
+		"pin_path", linkPinPath)
 
-	return saveAction.Summary, nil
-}
-
-// computeAttachKprobeAction is a pure function that builds the save action
-// for a kprobe/kretprobe attachment.
-func computeAttachKprobeAction(programKernelID, kernelLinkID uint32, pinPath, fnName string, offset uint64, retprobe bool) action.SaveKprobeLink {
-	linkType := bpfman.LinkTypeKprobe
-	if retprobe {
-		linkType = bpfman.LinkTypeKretprobe
-	}
-	return action.SaveKprobeLink{
-		Summary: bpfman.LinkSummary{
-			KernelLinkID:    kernelLinkID,
-			LinkType:        linkType,
-			KernelProgramID: programKernelID,
-			PinPath:         pinPath,
-			CreatedAt:       time.Now(),
-		},
-		Details: bpfman.KprobeDetails{
-			FnName:   fnName,
-			Offset:   offset,
-			Retprobe: retprobe,
-		},
-	}
+	return bpfman.Link{Managed: record, Kernel: link.Kernel}, nil
 }
 
 // AttachUprobe attaches a pinned program to a user-space function.
@@ -189,7 +161,7 @@ func computeAttachKprobeAction(programKernelID, kernelLinkID uint32, pinPath, fn
 // is not used but accepted for API uniformity.
 //
 // Pattern: FETCH -> KERNEL I/O -> COMPUTE -> EXECUTE
-func (m *Manager) AttachUprobe(ctx context.Context, scope lock.WriterScope, spec bpfman.UprobeAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error) {
+func (m *Manager) AttachUprobe(ctx context.Context, scope lock.WriterScope, spec bpfman.UprobeAttachSpec, opts bpfman.AttachOpts) (bpfman.Link, error) {
 	programKernelID := spec.ProgramID()
 	target := spec.Target()
 	fnName := spec.FnName()
@@ -200,7 +172,7 @@ func (m *Manager) AttachUprobe(ctx context.Context, scope lock.WriterScope, spec
 	// FETCH: Get program to determine if it's a uretprobe
 	prog, err := m.store.Get(ctx, programKernelID)
 	if err != nil {
-		return bpfman.LinkSummary{}, fmt.Errorf("get program %d: %w", programKernelID, err)
+		return bpfman.Link{}, fmt.Errorf("get program %d: %w", programKernelID, err)
 	}
 
 	// Derive retprobe from program type
@@ -220,11 +192,11 @@ func (m *Manager) AttachUprobe(ctx context.Context, scope lock.WriterScope, spec
 	}
 
 	// KERNEL I/O: Choose local vs container method based on spec
-	var link bpfman.ManagedLink
+	var link bpfman.Link
 	if containerPid > 0 {
 		// Container uprobe - scope required
 		if scope == nil {
-			return bpfman.LinkSummary{}, fmt.Errorf("container uprobe requires lock scope (containerPid=%d)", containerPid)
+			return bpfman.Link{}, fmt.Errorf("container uprobe requires lock scope (containerPid=%d)", containerPid)
 		}
 		link, err = m.kernel.AttachUprobeContainer(ctx, scope, progPinPath, target, fnName, offset, retprobe, linkPinPath, containerPid)
 	} else {
@@ -232,93 +204,74 @@ func (m *Manager) AttachUprobe(ctx context.Context, scope lock.WriterScope, spec
 		link, err = m.kernel.AttachUprobeLocal(ctx, progPinPath, target, fnName, offset, retprobe, linkPinPath)
 	}
 	if err != nil {
-		return bpfman.LinkSummary{}, fmt.Errorf("attach uprobe %s to %s: %w", fnName, target, err)
-	}
-
-	// Get kernel link ID (0 for perf_event-based links which have no kernel link)
-	var kernelLinkID uint32
-	if link.Kernel != nil {
-		kernelLinkID = link.Kernel.ID
-	} else {
-		kernelLinkID = link.Managed.KernelLinkID
+		return bpfman.Link{}, fmt.Errorf("attach uprobe %s to %s: %w", fnName, target, err)
 	}
 
 	// ROLLBACK: If the store write fails, detach the link we just created.
 	var undo undoStack
 	undo.push(func() error {
-		return m.kernel.DetachLink(ctx, link.Managed.PinPath)
+		return m.kernel.DetachLink(ctx, linkPinPath)
 	})
 
-	// COMPUTE: Build save action from kernel result
-	saveAction := computeAttachUprobeAction(programKernelID, kernelLinkID, link.Managed.PinPath, target, fnName, offset, retprobe, containerPid)
+	// COMPUTE: Build link record
+	details := bpfman.UprobeDetails{
+		Target:       target,
+		FnName:       fnName,
+		Offset:       offset,
+		Retprobe:     retprobe,
+		ContainerPid: containerPid,
+	}
+	record := bpfman.NewLinkRecord(0, details, linkPinPath, time.Now())
 
-	// EXECUTE: Save link metadata
-	if err := m.executor.Execute(ctx, saveAction); err != nil {
+	// EXECUTE: Save link metadata directly to store (need LinkID back)
+	// For container uprobes, KernelLinkID is nil (perf_event-based)
+	linkID, err := m.store.SaveLink(ctx, record, programKernelID, link.Managed.KernelLinkID)
+	if err != nil {
 		m.logger.ErrorContext(ctx, "persist failed, rolling back", "program_id", programKernelID, "error", err)
 		if rbErr := undo.rollback(ctx, m.logger); rbErr != nil {
-			return bpfman.LinkSummary{}, errors.Join(fmt.Errorf("save link metadata: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
+			return bpfman.Link{}, errors.Join(fmt.Errorf("save link metadata: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
 		}
-		return bpfman.LinkSummary{}, fmt.Errorf("save link metadata: %w", err)
+		return bpfman.Link{}, fmt.Errorf("save link metadata: %w", err)
 	}
+
+	// Update record with assigned ID and kernel link ID
+	record.ID = linkID
+	record.KernelLinkID = link.Managed.KernelLinkID
 
 	probeType := "uprobe"
 	if retprobe {
 		probeType = "uretprobe"
 	}
 	m.logger.InfoContext(ctx, "attached "+probeType,
-		"kernel_link_id", kernelLinkID,
+		"link_id", linkID,
+		"kernel_link_id", link.Managed.KernelLinkID,
 		"program_id", programKernelID,
 		"target", target,
 		"fn_name", fnName,
 		"offset", offset,
 		"container_pid", containerPid,
-		"pin_path", link.Managed.PinPath)
+		"pin_path", linkPinPath)
 
-	return saveAction.Summary, nil
-}
-
-// computeAttachUprobeAction is a pure function that builds the save action
-// for a uprobe/uretprobe attachment.
-func computeAttachUprobeAction(programKernelID, kernelLinkID uint32, pinPath, target, fnName string, offset uint64, retprobe bool, containerPid int32) action.SaveUprobeLink {
-	linkType := bpfman.LinkTypeUprobe
-	if retprobe {
-		linkType = bpfman.LinkTypeUretprobe
-	}
-	return action.SaveUprobeLink{
-		Summary: bpfman.LinkSummary{
-			KernelLinkID:    kernelLinkID,
-			LinkType:        linkType,
-			KernelProgramID: programKernelID,
-			PinPath:         pinPath,
-			CreatedAt:       time.Now(),
-		},
-		Details: bpfman.UprobeDetails{
-			Target:       target,
-			FnName:       fnName,
-			Offset:       offset,
-			Retprobe:     retprobe,
-			ContainerPid: containerPid,
-		},
-	}
+	return bpfman.Link{Managed: record, Kernel: link.Kernel}, nil
 }
 
 // AttachFentry attaches a pinned fentry program to its target kernel function.
 // The target function was specified at load time and stored in the program's AttachFunc.
 //
 // Pattern: FETCH -> KERNEL I/O -> COMPUTE -> EXECUTE
-func (m *Manager) AttachFentry(ctx context.Context, spec bpfman.FentryAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error) {
+func (m *Manager) AttachFentry(ctx context.Context, spec bpfman.FentryAttachSpec, opts bpfman.AttachOpts) (bpfman.Link, error) {
 	programKernelID := spec.ProgramID()
 	linkPinPath := opts.LinkPinPath
 
 	// FETCH: Get program metadata to access AttachFunc
 	prog, err := m.store.Get(ctx, programKernelID)
 	if err != nil {
-		return bpfman.LinkSummary{}, fmt.Errorf("get program %d: %w", programKernelID, err)
+		return bpfman.Link{}, fmt.Errorf("get program %d: %w", programKernelID, err)
 	}
 
 	fnName := prog.AttachFunc
 	if fnName == "" {
-		return bpfman.LinkSummary{}, fmt.Errorf("program %d has no attach function (fentry requires attach function at load time)", programKernelID)
+		return bpfman.Link{}, fmt.Errorf("program %d has no attach function (fentry requires attach function at load time)", programKernelID)
 	}
 
 	// COMPUTE: Construct paths from convention (kernel ID + bpffs root)
@@ -334,70 +287,60 @@ func (m *Manager) AttachFentry(ctx context.Context, spec bpfman.FentryAttachSpec
 	// KERNEL I/O: Attach to the kernel
 	link, err := m.kernel.AttachFentry(ctx, progPinPath, fnName, linkPinPath)
 	if err != nil {
-		return bpfman.LinkSummary{}, fmt.Errorf("attach fentry %s: %w", fnName, err)
+		return bpfman.Link{}, fmt.Errorf("attach fentry %s: %w", fnName, err)
 	}
 
 	// ROLLBACK: If the store write fails, detach the link we just created.
 	var undo undoStack
 	undo.push(func() error {
-		return m.kernel.DetachLink(ctx, link.Managed.PinPath)
+		return m.kernel.DetachLink(ctx, linkPinPath)
 	})
 
-	// COMPUTE: Build save action from kernel result
-	saveAction := computeAttachFentryAction(programKernelID, link.Kernel.ID, link.Managed.PinPath, fnName)
+	// COMPUTE: Build link record
+	details := bpfman.FentryDetails{FnName: fnName}
+	record := bpfman.NewLinkRecord(0, details, linkPinPath, time.Now())
 
-	// EXECUTE: Save link metadata
-	if err := m.executor.Execute(ctx, saveAction); err != nil {
+	// EXECUTE: Save link metadata directly to store (need LinkID back)
+	linkID, err := m.store.SaveLink(ctx, record, programKernelID, link.Managed.KernelLinkID)
+	if err != nil {
 		m.logger.ErrorContext(ctx, "persist failed, rolling back", "program_id", programKernelID, "error", err)
 		if rbErr := undo.rollback(ctx, m.logger); rbErr != nil {
-			return bpfman.LinkSummary{}, errors.Join(fmt.Errorf("save link metadata: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
+			return bpfman.Link{}, errors.Join(fmt.Errorf("save link metadata: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
 		}
-		return bpfman.LinkSummary{}, fmt.Errorf("save link metadata: %w", err)
+		return bpfman.Link{}, fmt.Errorf("save link metadata: %w", err)
 	}
+
+	// Update record with assigned ID and kernel link ID
+	record.ID = linkID
+	record.KernelLinkID = link.Managed.KernelLinkID
 
 	m.logger.InfoContext(ctx, "attached fentry",
-		"kernel_link_id", link.Kernel.ID,
+		"link_id", linkID,
+		"kernel_link_id", link.Managed.KernelLinkID,
 		"program_id", programKernelID,
 		"fn_name", fnName,
-		"pin_path", link.Managed.PinPath)
+		"pin_path", linkPinPath)
 
-	return saveAction.Summary, nil
-}
-
-// computeAttachFentryAction is a pure function that builds the save action
-// for a fentry attachment.
-func computeAttachFentryAction(programKernelID, kernelLinkID uint32, pinPath, fnName string) action.SaveFentryLink {
-	return action.SaveFentryLink{
-		Summary: bpfman.LinkSummary{
-			KernelLinkID:    kernelLinkID,
-			LinkType:        bpfman.LinkTypeFentry,
-			KernelProgramID: programKernelID,
-			PinPath:         pinPath,
-			CreatedAt:       time.Now(),
-		},
-		Details: bpfman.FentryDetails{
-			FnName: fnName,
-		},
-	}
+	return bpfman.Link{Managed: record, Kernel: link.Kernel}, nil
 }
 
 // AttachFexit attaches a pinned fexit program to its target kernel function.
 // The target function was specified at load time and stored in the program's AttachFunc.
 //
 // Pattern: FETCH -> KERNEL I/O -> COMPUTE -> EXECUTE
-func (m *Manager) AttachFexit(ctx context.Context, spec bpfman.FexitAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error) {
+func (m *Manager) AttachFexit(ctx context.Context, spec bpfman.FexitAttachSpec, opts bpfman.AttachOpts) (bpfman.Link, error) {
 	programKernelID := spec.ProgramID()
 	linkPinPath := opts.LinkPinPath
 
 	// FETCH: Get program metadata to access AttachFunc
 	prog, err := m.store.Get(ctx, programKernelID)
 	if err != nil {
-		return bpfman.LinkSummary{}, fmt.Errorf("get program %d: %w", programKernelID, err)
+		return bpfman.Link{}, fmt.Errorf("get program %d: %w", programKernelID, err)
 	}
 
 	fnName := prog.AttachFunc
 	if fnName == "" {
-		return bpfman.LinkSummary{}, fmt.Errorf("program %d has no attach function (fexit requires attach function at load time)", programKernelID)
+		return bpfman.Link{}, fmt.Errorf("program %d has no attach function (fexit requires attach function at load time)", programKernelID)
 	}
 
 	// COMPUTE: Construct paths from convention (kernel ID + bpffs root)
@@ -413,49 +356,39 @@ func (m *Manager) AttachFexit(ctx context.Context, spec bpfman.FexitAttachSpec, 
 	// KERNEL I/O: Attach to the kernel
 	link, err := m.kernel.AttachFexit(ctx, progPinPath, fnName, linkPinPath)
 	if err != nil {
-		return bpfman.LinkSummary{}, fmt.Errorf("attach fexit %s: %w", fnName, err)
+		return bpfman.Link{}, fmt.Errorf("attach fexit %s: %w", fnName, err)
 	}
 
 	// ROLLBACK: If the store write fails, detach the link we just created.
 	var undo undoStack
 	undo.push(func() error {
-		return m.kernel.DetachLink(ctx, link.Managed.PinPath)
+		return m.kernel.DetachLink(ctx, linkPinPath)
 	})
 
-	// COMPUTE: Build save action from kernel result
-	saveAction := computeAttachFexitAction(programKernelID, link.Kernel.ID, link.Managed.PinPath, fnName)
+	// COMPUTE: Build link record
+	details := bpfman.FexitDetails{FnName: fnName}
+	record := bpfman.NewLinkRecord(0, details, linkPinPath, time.Now())
 
-	// EXECUTE: Save link metadata
-	if err := m.executor.Execute(ctx, saveAction); err != nil {
+	// EXECUTE: Save link metadata directly to store (need LinkID back)
+	linkID, err := m.store.SaveLink(ctx, record, programKernelID, link.Managed.KernelLinkID)
+	if err != nil {
 		m.logger.ErrorContext(ctx, "persist failed, rolling back", "program_id", programKernelID, "error", err)
 		if rbErr := undo.rollback(ctx, m.logger); rbErr != nil {
-			return bpfman.LinkSummary{}, errors.Join(fmt.Errorf("save link metadata: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
+			return bpfman.Link{}, errors.Join(fmt.Errorf("save link metadata: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
 		}
-		return bpfman.LinkSummary{}, fmt.Errorf("save link metadata: %w", err)
+		return bpfman.Link{}, fmt.Errorf("save link metadata: %w", err)
 	}
+
+	// Update record with assigned ID and kernel link ID
+	record.ID = linkID
+	record.KernelLinkID = link.Managed.KernelLinkID
 
 	m.logger.InfoContext(ctx, "attached fexit",
-		"kernel_link_id", link.Kernel.ID,
+		"link_id", linkID,
+		"kernel_link_id", link.Managed.KernelLinkID,
 		"program_id", programKernelID,
 		"fn_name", fnName,
-		"pin_path", link.Managed.PinPath)
+		"pin_path", linkPinPath)
 
-	return saveAction.Summary, nil
-}
-
-// computeAttachFexitAction is a pure function that builds the save action
-// for a fexit attachment.
-func computeAttachFexitAction(programKernelID, kernelLinkID uint32, pinPath, fnName string) action.SaveFexitLink {
-	return action.SaveFexitLink{
-		Summary: bpfman.LinkSummary{
-			KernelLinkID:    kernelLinkID,
-			LinkType:        bpfman.LinkTypeFexit,
-			KernelProgramID: programKernelID,
-			PinPath:         pinPath,
-			CreatedAt:       time.Now(),
-		},
-		Details: bpfman.FexitDetails{
-			FnName: fnName,
-		},
-	}
+	return bpfman.Link{Managed: record, Kernel: link.Kernel}, nil
 }

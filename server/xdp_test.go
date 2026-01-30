@@ -303,10 +303,10 @@ func TestXDP_ExtensionPositionsAreSequential(t *testing.T) {
 	}
 
 	for i, linkID := range linkIDs {
-		_, details, err := fix.Store.GetLink(ctx, linkID)
+		record, err := fix.Store.GetLink(ctx, bpfman.LinkID(linkID))
 		require.NoError(t, err)
-		xdpDetails, ok := details.(bpfman.XDPDetails)
-		require.True(t, ok, "expected XDPDetails, got %T", details)
+		xdpDetails, ok := record.Details.(bpfman.XDPDetails)
+		require.True(t, ok, "expected XDPDetails, got %T", record.Details)
 		assert.Equal(t, int32(i), xdpDetails.Position,
 			"link %d should have position %d", linkID, i)
 	}

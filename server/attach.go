@@ -85,7 +85,7 @@ func (s *Server) attachTracepoint(ctx context.Context, programID uint32, info *p
 	}
 
 	// Call manager with empty LinkPinPath to auto-generate
-	summary, err := s.mgr.AttachTracepoint(ctx, spec, bpfman.AttachOpts{})
+	link, err := s.mgr.AttachTracepoint(ctx, spec, bpfman.AttachOpts{})
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return nil, status.Errorf(codes.NotFound, "program with ID %d not found", programID)
@@ -94,7 +94,7 @@ func (s *Server) attachTracepoint(ctx context.Context, programID uint32, info *p
 	}
 
 	return &pb.AttachResponse{
-		LinkId: summary.KernelLinkID,
+		LinkId: uint32(link.Managed.ID),
 	}, nil
 }
 
@@ -118,13 +118,13 @@ func (s *Server) attachXDP(ctx context.Context, programID uint32, info *pb.XDPAt
 	}
 
 	// Call manager with empty LinkPinPath to auto-generate
-	summary, err := s.mgr.AttachXDP(ctx, spec, bpfman.AttachOpts{})
+	link, err := s.mgr.AttachXDP(ctx, spec, bpfman.AttachOpts{})
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "attach XDP: %v", err)
 	}
 
 	return &pb.AttachResponse{
-		LinkId: summary.KernelLinkID,
+		LinkId: uint32(link.Managed.ID),
 	}, nil
 }
 
@@ -169,13 +169,13 @@ func (s *Server) attachTC(ctx context.Context, programID uint32, info *pb.TCAtta
 	}
 
 	// Call manager with empty LinkPinPath to auto-generate
-	summary, err := s.mgr.AttachTC(ctx, spec, bpfman.AttachOpts{})
+	link, err := s.mgr.AttachTC(ctx, spec, bpfman.AttachOpts{})
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "attach TC: %v", err)
 	}
 
 	return &pb.AttachResponse{
-		LinkId: summary.KernelLinkID,
+		LinkId: uint32(link.Managed.ID),
 	}, nil
 }
 
@@ -212,13 +212,13 @@ func (s *Server) attachTCX(ctx context.Context, programID uint32, info *pb.TCXAt
 	}
 
 	// Call manager with empty LinkPinPath to auto-generate
-	summary, err := s.mgr.AttachTCX(ctx, spec, bpfman.AttachOpts{})
+	link, err := s.mgr.AttachTCX(ctx, spec, bpfman.AttachOpts{})
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "attach TCX: %v", err)
 	}
 
 	return &pb.AttachResponse{
-		LinkId: summary.KernelLinkID,
+		LinkId: uint32(link.Managed.ID),
 	}, nil
 }
 
@@ -238,13 +238,13 @@ func (s *Server) attachKprobe(ctx context.Context, programID uint32, info *pb.Kp
 	}
 
 	// Call manager - it will determine retprobe from program type
-	summary, err := s.mgr.AttachKprobe(ctx, spec, bpfman.AttachOpts{})
+	link, err := s.mgr.AttachKprobe(ctx, spec, bpfman.AttachOpts{})
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "attach kprobe: %v", err)
 	}
 
 	return &pb.AttachResponse{
-		LinkId: summary.KernelLinkID,
+		LinkId: uint32(link.Managed.ID),
 	}, nil
 }
 
@@ -284,13 +284,13 @@ func (s *Server) attachUprobe(ctx context.Context, programID uint32, info *pb.Up
 	scope := ScopeFromContext(ctx)
 
 	// Call manager with empty linkPinPath to auto-generate
-	summary, err := s.mgr.AttachUprobe(ctx, scope, spec, bpfman.AttachOpts{})
+	link, err := s.mgr.AttachUprobe(ctx, scope, spec, bpfman.AttachOpts{})
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "attach uprobe: %v", err)
 	}
 
 	return &pb.AttachResponse{
-		LinkId: summary.KernelLinkID,
+		LinkId: uint32(link.Managed.ID),
 	}, nil
 }
 
@@ -305,13 +305,13 @@ func (s *Server) attachFentry(ctx context.Context, programID uint32, info *pb.Fe
 
 	// Call manager with empty linkPinPath to auto-generate.
 	// The manager will retrieve the attach function from the stored program metadata.
-	summary, err := s.mgr.AttachFentry(ctx, spec, bpfman.AttachOpts{})
+	link, err := s.mgr.AttachFentry(ctx, spec, bpfman.AttachOpts{})
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "attach fentry: %v", err)
 	}
 
 	return &pb.AttachResponse{
-		LinkId: summary.KernelLinkID,
+		LinkId: uint32(link.Managed.ID),
 	}, nil
 }
 
@@ -326,13 +326,13 @@ func (s *Server) attachFexit(ctx context.Context, programID uint32, info *pb.Fex
 
 	// Call manager with empty linkPinPath to auto-generate.
 	// The manager will retrieve the attach function from the stored program metadata.
-	summary, err := s.mgr.AttachFexit(ctx, spec, bpfman.AttachOpts{})
+	link, err := s.mgr.AttachFexit(ctx, spec, bpfman.AttachOpts{})
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "attach fexit: %v", err)
 	}
 
 	return &pb.AttachResponse{
-		LinkId: summary.KernelLinkID,
+		LinkId: uint32(link.Managed.ID),
 	}, nil
 }
 
@@ -346,7 +346,7 @@ func (s *Server) Detach(ctx context.Context, req *pb.DetachRequest) (*pb.DetachR
 	}
 	defer s.mgr.MarkMutated()
 
-	if err := s.mgr.Detach(ctx, req.LinkId); err != nil {
+	if err := s.mgr.Detach(ctx, bpfman.LinkID(req.LinkId)); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return nil, status.Errorf(codes.NotFound, "link with ID %d not found", req.LinkId)
 		}

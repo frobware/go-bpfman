@@ -113,9 +113,10 @@ func ReconcileDispatcherActions(
 
 // ReconcileLinkActions computes actions to remove stale link entries.
 // A link is stale if its KernelLinkID doesn't exist in the kernel link set.
+// Links without a kernel link ID (perf_event-based) are skipped.
 // Pure function - no I/O.
 func ReconcileLinkActions(
-	links []bpfman.LinkSummary,
+	links []bpfman.LinkRecord,
 	kernelLinks []kernel.Link,
 ) []action.Action {
 	// Build set of kernel link IDs
@@ -126,8 +127,12 @@ func ReconcileLinkActions(
 
 	var actions []action.Action
 	for _, link := range links {
-		if !kernelIDs[link.KernelLinkID] {
-			actions = append(actions, action.DeleteLink{KernelLinkID: link.KernelLinkID})
+		// Skip links without kernel_link_id (perf_event-based/synthetic links)
+		if link.KernelLinkID == nil {
+			continue
+		}
+		if !kernelIDs[*link.KernelLinkID] {
+			actions = append(actions, action.DeleteLink{LinkID: link.ID})
 		}
 	}
 	return actions

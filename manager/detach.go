@@ -11,7 +11,7 @@ import (
 	"github.com/frobware/go-bpfman/dispatcher"
 )
 
-// Detach removes a link by kernel link ID.
+// Detach removes a link by link ID.
 //
 // This detaches the link from the kernel (if pinned) and removes it from the
 // store. The associated program remains loaded.
@@ -21,17 +21,17 @@ import (
 // dispatcher is cleaned up automatically (pins removed, deleted from store).
 //
 // Pattern: FETCH -> EXECUTE (detach link) -> QUERY -> EXECUTE (cleanup)
-func (m *Manager) Detach(ctx context.Context, kernelLinkID uint32) error {
-	// FETCH: Get link summary and details
-	summary, details, err := m.store.GetLink(ctx, kernelLinkID)
+func (m *Manager) Detach(ctx context.Context, linkID bpfman.LinkID) error {
+	// FETCH: Get link record (includes details)
+	record, err := m.store.GetLink(ctx, linkID)
 	if err != nil {
-		return fmt.Errorf("get link %d: %w", kernelLinkID, err)
+		return fmt.Errorf("get link %d: %w", linkID, err)
 	}
 
 	// FETCH: Get dispatcher state if this is a dispatcher-based link
 	var dispState *dispatcher.State
-	if summary.LinkType == bpfman.LinkTypeXDP || summary.LinkType == bpfman.LinkTypeTC {
-		dispType, nsid, ifindex, err := extractDispatcherKey(details)
+	if record.Kind == bpfman.LinkKindXDP || record.Kind == bpfman.LinkKindTC {
+		dispType, nsid, ifindex, err := extractDispatcherKey(record.Details)
 		if err != nil {
 			return fmt.Errorf("extract dispatcher key: %w", err)
 		}
@@ -47,13 +47,13 @@ func (m *Manager) Detach(ctx context.Context, kernelLinkID uint32) error {
 
 	// Log before executing
 	m.logger.InfoContext(ctx, "detaching link",
-		"kernel_link_id", kernelLinkID,
-		"type", summary.LinkType,
-		"program_id", summary.KernelProgramID,
-		"pin_path", summary.PinPath)
+		"link_id", linkID,
+		"kernel_link_id", record.KernelLinkID,
+		"kind", record.Kind,
+		"pin_path", record.PinPath)
 
 	// Phase 1: Detach the link and delete it from the store.
-	linkActions := computeDetachLinkActions(summary)
+	linkActions := computeDetachLinkActions(record)
 	if err := m.executor.ExecuteAll(ctx, linkActions); err != nil {
 		return fmt.Errorf("execute detach link actions: %w", err)
 	}
@@ -66,22 +66,22 @@ func (m *Manager) Detach(ctx context.Context, kernelLinkID uint32) error {
 		}
 	}
 
-	m.logger.InfoContext(ctx, "removed link", "kernel_link_id", kernelLinkID, "type", summary.LinkType, "program_id", summary.KernelProgramID)
+	m.logger.InfoContext(ctx, "removed link", "link_id", linkID, "kind", record.Kind)
 	return nil
 }
 
 // computeDetachLinkActions is a pure function that computes the actions
 // needed to detach and delete a link from the store.
-func computeDetachLinkActions(summary bpfman.LinkSummary) []action.Action {
+func computeDetachLinkActions(record bpfman.LinkRecord) []action.Action {
 	var actions []action.Action
 
 	// Detach link from kernel if pinned
-	if summary.PinPath != "" {
-		actions = append(actions, action.DetachLink{PinPath: summary.PinPath})
+	if record.PinPath != "" {
+		actions = append(actions, action.DetachLink{PinPath: record.PinPath})
 	}
 
 	// Delete link from store
-	actions = append(actions, action.DeleteLink{KernelLinkID: summary.KernelLinkID})
+	actions = append(actions, action.DeleteLink{LinkID: record.ID})
 
 	return actions
 }
@@ -155,22 +155,22 @@ func (m *Manager) cleanupEmptyDispatcher(ctx context.Context, state dispatcher.S
 // collectDispatcherKeys examines links for dispatcher associations and
 // returns a deduplicated set of dispatcher keys. This must be called
 // before the links are deleted from the store.
-func (m *Manager) collectDispatcherKeys(ctx context.Context, links []bpfman.LinkSummary) map[dispatcher.Key]struct{} {
+func (m *Manager) collectDispatcherKeys(ctx context.Context, links []bpfman.LinkRecord) map[dispatcher.Key]struct{} {
 	keys := make(map[dispatcher.Key]struct{})
 	for _, link := range links {
-		if link.LinkType != bpfman.LinkTypeTC && link.LinkType != bpfman.LinkTypeXDP {
+		if link.Kind != bpfman.LinkKindTC && link.Kind != bpfman.LinkKindXDP {
 			continue
 		}
-		_, details, err := m.store.GetLink(ctx, link.KernelLinkID)
+		record, err := m.store.GetLink(ctx, link.ID)
 		if err != nil {
 			m.logger.WarnContext(ctx, "failed to get link details for dispatcher cleanup",
-				"kernel_link_id", link.KernelLinkID, "error", err)
+				"link_id", link.ID, "error", err)
 			continue
 		}
-		dispType, nsid, ifindex, err := extractDispatcherKey(details)
+		dispType, nsid, ifindex, err := extractDispatcherKey(record.Details)
 		if err != nil {
 			m.logger.WarnContext(ctx, "failed to extract dispatcher key",
-				"kernel_link_id", link.KernelLinkID, "error", err)
+				"link_id", link.ID, "error", err)
 			continue
 		}
 		if dispType != "" {

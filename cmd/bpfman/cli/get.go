@@ -54,7 +54,7 @@ func (c *GetLinkCmd) Run(cli *CLI, ctx context.Context) error {
 	}
 	defer b.Close()
 
-	summary, details, err := b.GetLink(ctx, c.LinkID.Value)
+	record, details, err := b.GetLink(ctx, c.LinkID.Value)
 	if errors.Is(err, client.ErrNotSupported) {
 		return fmt.Errorf("getting link details is only available in local mode")
 	}
@@ -62,14 +62,9 @@ func (c *GetLinkCmd) Run(cli *CLI, ctx context.Context) error {
 		return err
 	}
 
-	// Fetch program info to get the BPF function name
-	var bpfFunction string
-	progInfo, err := b.Get(ctx, summary.KernelProgramID)
-	if err == nil && progInfo.Bpfman != nil && progInfo.Bpfman.Program != nil {
-		bpfFunction = progInfo.Bpfman.Program.Name
-	}
-
-	output, err := FormatLinkInfo(bpfFunction, summary, details, &c.OutputFlags)
+	// Note: Program name not available without program ID lookup.
+	// The LinkRecord doesn't contain program ID (it's kernel state).
+	output, err := FormatLinkInfo("", record, details, &c.OutputFlags)
 	if err != nil {
 		return err
 	}

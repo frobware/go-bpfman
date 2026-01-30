@@ -40,7 +40,7 @@ var DefaultTCProceedOn = tcProceedOnOK | tcProceedOnPipe | tcProceedOnDispatcher
 //   - Extension links: /sys/fs/bpf/bpfman/tc-{direction}/dispatcher_{nsid}_{ifindex}_{revision}/link_{position}
 //
 // Pattern: FETCH -> KERNEL I/O -> COMPUTE -> EXECUTE
-func (m *Manager) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error) {
+func (m *Manager) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts bpfman.AttachOpts) (bpfman.Link, error) {
 	programKernelID := spec.ProgramID()
 	ifindex := spec.Ifindex()
 	ifname := spec.Ifname()
@@ -53,13 +53,13 @@ func (m *Manager) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts b
 	// FETCH: Get program metadata to access ObjectPath and ProgramName
 	prog, err := m.store.Get(ctx, programKernelID)
 	if err != nil {
-		return bpfman.LinkSummary{}, fmt.Errorf("get program %d: %w", programKernelID, err)
+		return bpfman.Link{}, fmt.Errorf("get program %d: %w", programKernelID, err)
 	}
 
 	// FETCH: Get network namespace ID (from target namespace if specified)
 	nsid, err := netns.GetNsid(netnsPath)
 	if err != nil {
-		return bpfman.LinkSummary{}, fmt.Errorf("get nsid: %w", err)
+		return bpfman.Link{}, fmt.Errorf("get nsid: %w", err)
 	}
 
 	// Determine dispatcher type based on direction
@@ -76,10 +76,10 @@ func (m *Manager) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts b
 		// KERNEL I/O + EXECUTE: Create new dispatcher
 		dispState, err = m.createTCDispatcher(ctx, nsid, uint32(ifindex), ifname, direction, dispType, netnsPath)
 		if err != nil {
-			return bpfman.LinkSummary{}, fmt.Errorf("create TC dispatcher for %s %s: %w", ifname, direction, err)
+			return bpfman.Link{}, fmt.Errorf("create TC dispatcher for %s %s: %w", ifname, direction, err)
 		}
 	} else if err != nil {
-		return bpfman.LinkSummary{}, fmt.Errorf("get dispatcher: %w", err)
+		return bpfman.Link{}, fmt.Errorf("get dispatcher: %w", err)
 	}
 
 	m.logger.DebugContext(ctx, "using TC dispatcher",
@@ -94,7 +94,7 @@ func (m *Manager) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts b
 	revisionDir := dispatcher.DispatcherRevisionDir(m.dirs.FS, dispType, nsid, uint32(ifindex), dispState.Revision)
 	position, err := m.store.CountDispatcherLinks(ctx, dispState.KernelID)
 	if err != nil {
-		return bpfman.LinkSummary{}, fmt.Errorf("count dispatcher links: %w", err)
+		return bpfman.Link{}, fmt.Errorf("count dispatcher links: %w", err)
 	}
 	extensionLinkPath := dispatcher.ExtensionLinkPath(revisionDir, position)
 	if linkPinPath == "" {
@@ -105,7 +105,7 @@ func (m *Manager) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts b
 	// directory (either the program's own or the map owner's if sharing).
 	mapPinDir := prog.MapPinPath
 
-	// KERNEL I/O: Attach user program as extension (returns ManagedLink)
+	// KERNEL I/O: Attach user program as extension
 	progPinPath := dispatcher.DispatcherProgPath(revisionDir)
 	link, err := m.kernel.AttachTCExtension(
 		ctx,
@@ -123,24 +123,24 @@ func (m *Manager) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts b
 		// program exists, but the pin path is invalid. Delete the
 		// stale record and retry once with a fresh dispatcher.
 		if !errors.Is(err, os.ErrNotExist) {
-			return bpfman.LinkSummary{}, fmt.Errorf("attach TC extension to %s %s slot %d: %w", ifname, direction, position, err)
+			return bpfman.Link{}, fmt.Errorf("attach TC extension to %s %s slot %d: %w", ifname, direction, position, err)
 		}
 		m.logger.WarnContext(ctx, "dispatcher pin missing, recreating",
 			"prog_pin_path", progPinPath,
 			"dispatcher_id", dispState.KernelID,
 			"error", err)
 		if delErr := m.store.DeleteDispatcher(ctx, string(dispType), nsid, uint32(ifindex)); delErr != nil {
-			return bpfman.LinkSummary{}, fmt.Errorf("delete stale TC dispatcher: %w", delErr)
+			return bpfman.Link{}, fmt.Errorf("delete stale TC dispatcher: %w", delErr)
 		}
 		dispState, err = m.createTCDispatcher(ctx, nsid, uint32(ifindex), ifname, direction, dispType, netnsPath)
 		if err != nil {
-			return bpfman.LinkSummary{}, fmt.Errorf("recreate TC dispatcher for %s %s: %w", ifname, direction, err)
+			return bpfman.Link{}, fmt.Errorf("recreate TC dispatcher for %s %s: %w", ifname, direction, err)
 		}
 		// Recalculate paths for the fresh dispatcher
 		revisionDir = dispatcher.DispatcherRevisionDir(m.dirs.FS, dispType, nsid, uint32(ifindex), dispState.Revision)
 		position, err = m.store.CountDispatcherLinks(ctx, dispState.KernelID)
 		if err != nil {
-			return bpfman.LinkSummary{}, fmt.Errorf("count dispatcher links after recreate: %w", err)
+			return bpfman.Link{}, fmt.Errorf("count dispatcher links after recreate: %w", err)
 		}
 		extensionLinkPath = dispatcher.ExtensionLinkPath(revisionDir, position)
 		if linkPinPath == "" || strings.Contains(linkPinPath, "dispatcher_") {
@@ -157,42 +157,47 @@ func (m *Manager) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts b
 			mapPinDir,
 		)
 		if err != nil {
-			return bpfman.LinkSummary{}, fmt.Errorf("attach TC extension to %s %s slot %d (after recreate): %w", ifname, direction, position, err)
+			return bpfman.Link{}, fmt.Errorf("attach TC extension to %s %s slot %d (after recreate): %w", ifname, direction, position, err)
 		}
 	}
 
 	// ROLLBACK: If the store write fails, detach the link we just created.
 	var undo undoStack
 	undo.push(func() error {
-		return m.kernel.DetachLink(ctx, link.Managed.PinPath)
+		return m.kernel.DetachLink(ctx, linkPinPath)
 	})
 
-	// COMPUTE: Build save actions from kernel result
-	saveActions := computeAttachTCActions(
-		programKernelID,
-		link.Kernel.ID,
-		link.Managed.PinPath,
-		ifname,
-		uint32(ifindex),
-		direction,
-		int32(priority),
-		proceedOn,
-		nsid,
-		position,
-		dispState,
-	)
+	// COMPUTE: Build link record with TC details
+	details := bpfman.TCDetails{
+		Interface:    ifname,
+		Ifindex:      uint32(ifindex),
+		Direction:    direction,
+		Priority:     int32(priority),
+		Position:     int32(position),
+		ProceedOn:    proceedOn,
+		Nsid:         nsid,
+		DispatcherID: dispState.KernelID,
+		Revision:     dispState.Revision,
+	}
+	record := bpfman.NewLinkRecord(0, details, linkPinPath, time.Now())
 
-	// EXECUTE: Save dispatcher update and link metadata
-	if err := m.executor.ExecuteAll(ctx, saveActions); err != nil {
+	// EXECUTE: Save link metadata directly to store (need LinkID back)
+	linkID, err := m.store.SaveLink(ctx, record, programKernelID, link.Managed.KernelLinkID)
+	if err != nil {
 		m.logger.ErrorContext(ctx, "persist failed, rolling back", "program_id", programKernelID, "error", err)
 		if rbErr := undo.rollback(ctx, m.logger); rbErr != nil {
-			return bpfman.LinkSummary{}, errors.Join(fmt.Errorf("save link metadata: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
+			return bpfman.Link{}, errors.Join(fmt.Errorf("save link metadata: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
 		}
-		return bpfman.LinkSummary{}, fmt.Errorf("save link metadata: %w", err)
+		return bpfman.Link{}, fmt.Errorf("save link metadata: %w", err)
 	}
 
+	// Update record with assigned ID and kernel link ID
+	record.ID = linkID
+	record.KernelLinkID = link.Managed.KernelLinkID
+
 	m.logger.InfoContext(ctx, "attached TC via dispatcher",
-		"kernel_link_id", link.Kernel.ID,
+		"link_id", linkID,
+		"kernel_link_id", link.Managed.KernelLinkID,
 		"program_id", programKernelID,
 		"interface", ifname,
 		"direction", direction,
@@ -200,59 +205,9 @@ func (m *Manager) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts b
 		"nsid", nsid,
 		"position", position,
 		"revision", dispState.Revision,
-		"pin_path", link.Managed.PinPath)
+		"pin_path", linkPinPath)
 
-	// Extract summary from computed action for return value
-	for _, a := range saveActions {
-		if saveTC, ok := a.(action.SaveTCLink); ok {
-			return saveTC.Summary, nil
-		}
-	}
-	// Shouldn't happen, but return a constructed summary as fallback
-	return bpfman.LinkSummary{
-		KernelLinkID:    link.Kernel.ID,
-		LinkType:        bpfman.LinkTypeTC,
-		KernelProgramID: programKernelID,
-		PinPath:         link.Managed.PinPath,
-		CreatedAt:       time.Now(),
-	}, nil
-}
-
-// computeAttachTCActions is a pure function that builds the actions needed
-// to save TC attachment metadata (dispatcher update + link save).
-func computeAttachTCActions(
-	programKernelID, kernelLinkID uint32,
-	pinPath, ifname string,
-	ifindex uint32,
-	direction string,
-	priority int32,
-	proceedOn []int32,
-	nsid uint64,
-	position int,
-	dispState dispatcher.State,
-) []action.Action {
-	return []action.Action{
-		action.SaveTCLink{
-			Summary: bpfman.LinkSummary{
-				KernelLinkID:    kernelLinkID,
-				LinkType:        bpfman.LinkTypeTC,
-				KernelProgramID: programKernelID,
-				PinPath:         pinPath,
-				CreatedAt:       time.Now(),
-			},
-			Details: bpfman.TCDetails{
-				Interface:    ifname,
-				Ifindex:      ifindex,
-				Direction:    direction,
-				Priority:     priority,
-				Position:     int32(position),
-				ProceedOn:    proceedOn,
-				Nsid:         nsid,
-				DispatcherID: dispState.KernelID,
-				Revision:     dispState.Revision,
-			},
-		},
-	}
+	return bpfman.Link{Managed: record, Kernel: link.Kernel}, nil
 }
 
 // AttachTCX attaches a TCX program to a network interface using native
@@ -262,7 +217,7 @@ func computeAttachTCActions(
 //   - Link: /sys/fs/bpf/bpfman/tcx-{direction}/link_{nsid}_{ifindex}_{linkid}
 //
 // Pattern: FETCH -> KERNEL I/O -> COMPUTE -> EXECUTE
-func (m *Manager) AttachTCX(ctx context.Context, spec bpfman.TCXAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error) {
+func (m *Manager) AttachTCX(ctx context.Context, spec bpfman.TCXAttachSpec, opts bpfman.AttachOpts) (bpfman.Link, error) {
 	programKernelID := spec.ProgramID()
 	ifindex := spec.Ifindex()
 	ifname := spec.Ifname()
@@ -274,18 +229,18 @@ func (m *Manager) AttachTCX(ctx context.Context, spec bpfman.TCXAttachSpec, opts
 	// FETCH: Get program metadata to find pin path
 	prog, err := m.store.Get(ctx, programKernelID)
 	if err != nil {
-		return bpfman.LinkSummary{}, fmt.Errorf("get program %d: %w", programKernelID, err)
+		return bpfman.Link{}, fmt.Errorf("get program %d: %w", programKernelID, err)
 	}
 
 	// Verify program type is TCX
 	if prog.ProgramType != bpfman.ProgramTypeTCX {
-		return bpfman.LinkSummary{}, fmt.Errorf("program %d is type %s, not tcx", programKernelID, prog.ProgramType)
+		return bpfman.Link{}, fmt.Errorf("program %d is type %s, not tcx", programKernelID, prog.ProgramType)
 	}
 
 	// FETCH: Get network namespace ID (from target namespace if specified)
 	nsid, err := netns.GetNsid(netnsPath)
 	if err != nil {
-		return bpfman.LinkSummary{}, fmt.Errorf("get nsid: %w", err)
+		return bpfman.Link{}, fmt.Errorf("get nsid: %w", err)
 	}
 
 	// COMPUTE: Calculate link pin path if not provided.
@@ -301,7 +256,7 @@ func (m *Manager) AttachTCX(ctx context.Context, spec bpfman.TCXAttachSpec, opts
 	if _, statErr := os.Stat(linkPinPath); statErr == nil {
 		m.logger.WarnContext(ctx, "removing stale TCX link pin", "path", linkPinPath)
 		if removeErr := os.Remove(linkPinPath); removeErr != nil {
-			return bpfman.LinkSummary{}, fmt.Errorf("remove stale TCX link pin %s: %w", linkPinPath, removeErr)
+			return bpfman.Link{}, fmt.Errorf("remove stale TCX link pin %s: %w", linkPinPath, removeErr)
 		}
 	}
 
@@ -311,7 +266,7 @@ func (m *Manager) AttachTCX(ctx context.Context, spec bpfman.TCXAttachSpec, opts
 	// FETCH: Get existing TCX links for this interface/direction to compute order
 	existingLinks, err := m.store.ListTCXLinksByInterface(ctx, nsid, uint32(ifindex), direction)
 	if err != nil {
-		return bpfman.LinkSummary{}, fmt.Errorf("list existing TCX links: %w", err)
+		return bpfman.Link{}, fmt.Errorf("list existing TCX links: %w", err)
 	}
 
 	// COMPUTE: Determine attach order based on priority
@@ -328,18 +283,16 @@ func (m *Manager) AttachTCX(ctx context.Context, spec bpfman.TCXAttachSpec, opts
 	// KERNEL I/O: Attach program using TCX link with computed order
 	link, err := m.kernel.AttachTCX(ctx, ifindex, direction, progPinPath, linkPinPath, netnsPath, order)
 	if err != nil {
-		return bpfman.LinkSummary{}, fmt.Errorf("attach TCX to %s %s: %w", ifname, direction, err)
+		return bpfman.Link{}, fmt.Errorf("attach TCX to %s %s: %w", ifname, direction, err)
 	}
 
-	// COMPUTE: Build save action
-	summary := bpfman.LinkSummary{
-		KernelLinkID:    link.Kernel.ID,
-		LinkType:        bpfman.LinkTypeTCX,
-		KernelProgramID: programKernelID,
-		PinPath:         link.Managed.PinPath,
-		CreatedAt:       time.Now(),
-	}
+	// ROLLBACK: If the store write fails, detach the link we just created.
+	var undo undoStack
+	undo.push(func() error {
+		return m.kernel.DetachLink(ctx, linkPinPath)
+	})
 
+	// COMPUTE: Build link record with TCX details
 	details := bpfman.TCXDetails{
 		Interface: ifname,
 		Ifindex:   uint32(ifindex),
@@ -347,38 +300,34 @@ func (m *Manager) AttachTCX(ctx context.Context, spec bpfman.TCXAttachSpec, opts
 		Priority:  int32(priority),
 		Nsid:      nsid,
 	}
+	record := bpfman.NewLinkRecord(0, details, linkPinPath, time.Now())
 
-	// ROLLBACK: If the store write fails, detach the link we just created.
-	var undo undoStack
-	undo.push(func() error {
-		return m.kernel.DetachLink(ctx, link.Managed.PinPath)
-	})
-
-	saveAction := action.SaveTCXLink{
-		Summary: summary,
-		Details: details,
-	}
-
-	// EXECUTE: Save link metadata
-	if err := m.executor.Execute(ctx, saveAction); err != nil {
+	// EXECUTE: Save link metadata directly to store (need LinkID back)
+	linkID, err := m.store.SaveLink(ctx, record, programKernelID, link.Managed.KernelLinkID)
+	if err != nil {
 		m.logger.ErrorContext(ctx, "persist failed, rolling back", "program_id", programKernelID, "error", err)
 		if rbErr := undo.rollback(ctx, m.logger); rbErr != nil {
-			return bpfman.LinkSummary{}, errors.Join(fmt.Errorf("save TCX link metadata: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
+			return bpfman.Link{}, errors.Join(fmt.Errorf("save TCX link metadata: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
 		}
-		return bpfman.LinkSummary{}, fmt.Errorf("save TCX link metadata: %w", err)
+		return bpfman.Link{}, fmt.Errorf("save TCX link metadata: %w", err)
 	}
 
+	// Update record with assigned ID and kernel link ID
+	record.ID = linkID
+	record.KernelLinkID = link.Managed.KernelLinkID
+
 	m.logger.InfoContext(ctx, "attached TCX program",
-		"kernel_link_id", link.Kernel.ID,
+		"link_id", linkID,
+		"kernel_link_id", link.Managed.KernelLinkID,
 		"program_id", programKernelID,
 		"interface", ifname,
 		"direction", direction,
 		"ifindex", ifindex,
 		"nsid", nsid,
 		"priority", priority,
-		"pin_path", link.Managed.PinPath)
+		"pin_path", linkPinPath)
 
-	return summary, nil
+	return bpfman.Link{Managed: record, Kernel: link.Kernel}, nil
 }
 
 // computeTCXAttachOrder determines where to insert a new TCX program in the chain

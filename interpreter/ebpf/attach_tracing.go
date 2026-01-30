@@ -12,30 +12,23 @@ import (
 )
 
 // AttachTracepoint attaches a pinned program to a tracepoint.
-func (k *kernelAdapter) AttachTracepoint(ctx context.Context, progPinPath, group, name, linkPinPath string) (bpfman.ManagedLink, error) {
+func (k *kernelAdapter) AttachTracepoint(ctx context.Context, progPinPath, group, name, linkPinPath string) (bpfman.Link, error) {
 	prog, err := ebpf.LoadPinnedProgram(progPinPath, nil)
 	if err != nil {
-		return bpfman.ManagedLink{}, fmt.Errorf("load pinned program %s: %w", progPinPath, err)
+		return bpfman.Link{}, fmt.Errorf("load pinned program %s: %w", progPinPath, err)
 	}
 	defer prog.Close()
 
-	// Get program info to find kernel program ID
-	progInfo, err := prog.Info()
-	if err != nil {
-		return bpfman.ManagedLink{}, fmt.Errorf("get program info: %w", err)
-	}
-	progID, _ := progInfo.ID()
-
 	lnk, err := link.Tracepoint(group, name, prog, nil)
 	if err != nil {
-		return bpfman.ManagedLink{}, fmt.Errorf("attach to tracepoint %s:%s: %w", group, name, err)
+		return bpfman.Link{}, fmt.Errorf("attach to tracepoint %s:%s: %w", group, name, err)
 	}
 
 	// Pin the link if a path is provided
 	if linkPinPath != "" {
 		if err := pinWithRetry(lnk, linkPinPath); err != nil {
 			lnk.Close()
-			return bpfman.ManagedLink{}, fmt.Errorf("pin link to %s: %w", linkPinPath, err)
+			return bpfman.Link{}, fmt.Errorf("pin link to %s: %w", linkPinPath, err)
 		}
 	}
 
@@ -43,37 +36,30 @@ func (k *kernelAdapter) AttachTracepoint(ctx context.Context, progPinPath, group
 	linkInfo, err := lnk.Info()
 	if err != nil {
 		lnk.Close()
-		return bpfman.ManagedLink{}, fmt.Errorf("get link info: %w", err)
+		return bpfman.Link{}, fmt.Errorf("get link info: %w", err)
 	}
 
-	return bpfman.ManagedLink{
-		Managed: &bpfman.LinkInfo{
-			KernelLinkID:    uint32(linkInfo.ID),
-			KernelProgramID: uint32(progID),
-			Type:            bpfman.LinkTypeTracepoint,
-			PinPath:         linkPinPath,
-			CreatedAt:       time.Now(),
-			Details:         bpfman.TracepointDetails{Group: group, Name: name},
+	kernelLinkID := uint32(linkInfo.ID)
+	return bpfman.Link{
+		Managed: bpfman.LinkRecord{
+			Kind:         bpfman.LinkKindTracepoint,
+			KernelLinkID: &kernelLinkID,
+			PinPath:      linkPinPath,
+			CreatedAt:    time.Now(),
+			Details:      bpfman.TracepointDetails{Group: group, Name: name},
 		},
-		Kernel: ToKernelLink(linkInfo),
+		Kernel: *ToKernelLink(linkInfo),
 	}, nil
 }
 
 // AttachKprobe attaches a pinned program to a kernel function.
 // If retprobe is true, attaches as a kretprobe instead of kprobe.
-func (k *kernelAdapter) AttachKprobe(ctx context.Context, progPinPath, fnName string, offset uint64, retprobe bool, linkPinPath string) (bpfman.ManagedLink, error) {
+func (k *kernelAdapter) AttachKprobe(ctx context.Context, progPinPath, fnName string, offset uint64, retprobe bool, linkPinPath string) (bpfman.Link, error) {
 	prog, err := ebpf.LoadPinnedProgram(progPinPath, nil)
 	if err != nil {
-		return bpfman.ManagedLink{}, fmt.Errorf("load pinned program %s: %w", progPinPath, err)
+		return bpfman.Link{}, fmt.Errorf("load pinned program %s: %w", progPinPath, err)
 	}
 	defer prog.Close()
-
-	// Get program info to find kernel program ID
-	progInfo, err := prog.Info()
-	if err != nil {
-		return bpfman.ManagedLink{}, fmt.Errorf("get program info: %w", err)
-	}
-	progID, _ := progInfo.ID()
 
 	// Build kprobe options
 	opts := &link.KprobeOptions{
@@ -88,14 +74,14 @@ func (k *kernelAdapter) AttachKprobe(ctx context.Context, progPinPath, fnName st
 		lnk, err = link.Kprobe(fnName, prog, opts)
 	}
 	if err != nil {
-		return bpfman.ManagedLink{}, fmt.Errorf("attach kprobe to %s: %w", fnName, err)
+		return bpfman.Link{}, fmt.Errorf("attach kprobe to %s: %w", fnName, err)
 	}
 
 	// Pin the link if a path is provided
 	if linkPinPath != "" {
 		if err := pinWithRetry(lnk, linkPinPath); err != nil {
 			lnk.Close()
-			return bpfman.ManagedLink{}, fmt.Errorf("pin link to %s: %w", linkPinPath, err)
+			return bpfman.Link{}, fmt.Errorf("pin link to %s: %w", linkPinPath, err)
 		}
 	}
 
@@ -103,54 +89,47 @@ func (k *kernelAdapter) AttachKprobe(ctx context.Context, progPinPath, fnName st
 	linkInfo, err := lnk.Info()
 	if err != nil {
 		lnk.Close()
-		return bpfman.ManagedLink{}, fmt.Errorf("get link info: %w", err)
+		return bpfman.Link{}, fmt.Errorf("get link info: %w", err)
 	}
 
-	// Determine link type based on retprobe flag
-	linkType := bpfman.LinkTypeKprobe
+	// Determine link kind based on retprobe flag
+	linkKind := bpfman.LinkKindKprobe
 	if retprobe {
-		linkType = bpfman.LinkTypeKretprobe
+		linkKind = bpfman.LinkKindKretprobe
 	}
 
-	return bpfman.ManagedLink{
-		Managed: &bpfman.LinkInfo{
-			KernelLinkID:    uint32(linkInfo.ID),
-			KernelProgramID: uint32(progID),
-			Type:            linkType,
-			PinPath:         linkPinPath,
-			CreatedAt:       time.Now(),
-			Details:         bpfman.KprobeDetails{FnName: fnName, Offset: offset, Retprobe: retprobe},
+	kernelLinkID := uint32(linkInfo.ID)
+	return bpfman.Link{
+		Managed: bpfman.LinkRecord{
+			Kind:         linkKind,
+			KernelLinkID: &kernelLinkID,
+			PinPath:      linkPinPath,
+			CreatedAt:    time.Now(),
+			Details:      bpfman.KprobeDetails{FnName: fnName, Offset: offset, Retprobe: retprobe},
 		},
-		Kernel: ToKernelLink(linkInfo),
+		Kernel: *ToKernelLink(linkInfo),
 	}, nil
 }
 
 // AttachFentry attaches a pinned fentry program to a kernel function.
 // The target function was specified at load time and is stored in the program.
-func (k *kernelAdapter) AttachFentry(ctx context.Context, progPinPath, fnName, linkPinPath string) (bpfman.ManagedLink, error) {
-	return k.attachTracing(ctx, progPinPath, fnName, linkPinPath, bpfman.LinkTypeFentry)
+func (k *kernelAdapter) AttachFentry(ctx context.Context, progPinPath, fnName, linkPinPath string) (bpfman.Link, error) {
+	return k.attachTracing(ctx, progPinPath, fnName, linkPinPath, bpfman.LinkKindFentry)
 }
 
 // AttachFexit attaches a pinned fexit program to a kernel function.
 // The target function was specified at load time and is stored in the program.
-func (k *kernelAdapter) AttachFexit(ctx context.Context, progPinPath, fnName, linkPinPath string) (bpfman.ManagedLink, error) {
-	return k.attachTracing(ctx, progPinPath, fnName, linkPinPath, bpfman.LinkTypeFexit)
+func (k *kernelAdapter) AttachFexit(ctx context.Context, progPinPath, fnName, linkPinPath string) (bpfman.Link, error) {
+	return k.attachTracing(ctx, progPinPath, fnName, linkPinPath, bpfman.LinkKindFexit)
 }
 
 // attachTracing is the shared implementation for fentry and fexit attachment.
-func (k *kernelAdapter) attachTracing(ctx context.Context, progPinPath, fnName, linkPinPath string, linkType bpfman.LinkType) (bpfman.ManagedLink, error) {
+func (k *kernelAdapter) attachTracing(ctx context.Context, progPinPath, fnName, linkPinPath string, linkKind bpfman.LinkKind) (bpfman.Link, error) {
 	prog, err := ebpf.LoadPinnedProgram(progPinPath, nil)
 	if err != nil {
-		return bpfman.ManagedLink{}, fmt.Errorf("load pinned program %s: %w", progPinPath, err)
+		return bpfman.Link{}, fmt.Errorf("load pinned program %s: %w", progPinPath, err)
 	}
 	defer prog.Close()
-
-	// Get program info to find kernel program ID
-	progInfo, err := prog.Info()
-	if err != nil {
-		return bpfman.ManagedLink{}, fmt.Errorf("get program info: %w", err)
-	}
-	progID, _ := progInfo.ID()
 
 	// Attach using link.AttachTracing - the program already has the target
 	// function and attach type set from load time (via ELF section name).
@@ -158,14 +137,14 @@ func (k *kernelAdapter) attachTracing(ctx context.Context, progPinPath, fnName, 
 		Program: prog,
 	})
 	if err != nil {
-		return bpfman.ManagedLink{}, fmt.Errorf("attach tracing to %s: %w", fnName, err)
+		return bpfman.Link{}, fmt.Errorf("attach tracing to %s: %w", fnName, err)
 	}
 
 	// Pin the link if a path is provided
 	if linkPinPath != "" {
 		if err := pinWithRetry(lnk, linkPinPath); err != nil {
 			lnk.Close()
-			return bpfman.ManagedLink{}, fmt.Errorf("pin link to %s: %w", linkPinPath, err)
+			return bpfman.Link{}, fmt.Errorf("pin link to %s: %w", linkPinPath, err)
 		}
 	}
 
@@ -173,26 +152,26 @@ func (k *kernelAdapter) attachTracing(ctx context.Context, progPinPath, fnName, 
 	linkInfo, err := lnk.Info()
 	if err != nil {
 		lnk.Close()
-		return bpfman.ManagedLink{}, fmt.Errorf("get link info: %w", err)
+		return bpfman.Link{}, fmt.Errorf("get link info: %w", err)
 	}
 
-	// Build details based on link type
+	// Build details based on link kind
 	var details bpfman.LinkDetails
-	if linkType == bpfman.LinkTypeFentry {
+	if linkKind == bpfman.LinkKindFentry {
 		details = bpfman.FentryDetails{FnName: fnName}
 	} else {
 		details = bpfman.FexitDetails{FnName: fnName}
 	}
 
-	return bpfman.ManagedLink{
-		Managed: &bpfman.LinkInfo{
-			KernelLinkID:    uint32(linkInfo.ID),
-			KernelProgramID: uint32(progID),
-			Type:            linkType,
-			PinPath:         linkPinPath,
-			CreatedAt:       time.Now(),
-			Details:         details,
+	kernelLinkID := uint32(linkInfo.ID)
+	return bpfman.Link{
+		Managed: bpfman.LinkRecord{
+			Kind:         linkKind,
+			KernelLinkID: &kernelLinkID,
+			PinPath:      linkPinPath,
+			CreatedAt:    time.Now(),
+			Details:      details,
 		},
-		Kernel: ToKernelLink(linkInfo),
+		Kernel: *ToKernelLink(linkInfo),
 	}, nil
 }

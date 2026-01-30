@@ -34,13 +34,7 @@ type KernelInfo struct {
 // BpfmanInfo contains managed metadata.
 type BpfmanInfo struct {
 	Program *bpfman.ProgramRecord `json:"program,omitempty"`
-	Links   []LinkWithDetails     `json:"links,omitempty"`
-}
-
-// LinkWithDetails combines a link summary with its type-specific details.
-type LinkWithDetails struct {
-	Summary bpfman.LinkSummary `json:"summary"`
-	Details bpfman.LinkDetails `json:"details"`
+	Links   []bpfman.LinkRecord   `json:"links,omitempty"`
 }
 
 // ErrMultipleProgramsFound is returned when multiple programs match the
@@ -80,37 +74,31 @@ func (m *Manager) Get(ctx context.Context, kernelID uint32) (ProgramInfo, error)
 		return ProgramInfo{}, fmt.Errorf("program %d exists in store but not in kernel (requires reconciliation): %w", kernelID, err)
 	}
 
-	// Fetch links from store (summaries only)
+	// Fetch links from store (records with details)
 	storedLinks, err := m.store.ListLinksByProgram(ctx, kernelID)
 	if err != nil {
 		return ProgramInfo{}, fmt.Errorf("list links: %w", err)
 	}
 
-	// Fetch each link's details and kernel info
+	// Fetch complete records with details, and kernel info
 	var kernelLinks []kernel.Link
-	var linksWithDetails []LinkWithDetails
+	var linksWithDetails []bpfman.LinkRecord
 	for _, sl := range storedLinks {
-		// Fetch details for this link
-		_, details, err := m.store.GetLink(ctx, sl.KernelLinkID)
+		// Fetch full record with details for this link
+		record, err := m.store.GetLink(ctx, sl.ID)
 		if err != nil {
-			m.logger.WarnContext(ctx, "failed to get link details", "kernel_link_id", sl.KernelLinkID, "error", err)
-			// Include summary only with nil details
-			linksWithDetails = append(linksWithDetails, LinkWithDetails{
-				Summary: sl,
-				Details: nil,
-			})
+			m.logger.WarnContext(ctx, "failed to get link details", "link_id", sl.ID, "error", err)
+			// Include the summary record without details
+			linksWithDetails = append(linksWithDetails, sl)
 		} else {
-			linksWithDetails = append(linksWithDetails, LinkWithDetails{
-				Summary: sl,
-				Details: details,
-			})
+			linksWithDetails = append(linksWithDetails, record)
 		}
 
 		// Fetch from kernel if we have a kernel link ID
-		if sl.KernelLinkID == 0 {
+		if sl.KernelLinkID == nil {
 			continue // Link not pinned or no kernel ID
 		}
-		kl, err := m.kernel.GetLinkByID(ctx, sl.KernelLinkID)
+		kl, err := m.kernel.GetLinkByID(ctx, *sl.KernelLinkID)
 		if err != nil {
 			// Link exists in store but not kernel - skip
 			continue
@@ -142,19 +130,19 @@ func (m *Manager) Get(ctx context.Context, kernelID uint32) (ProgramInfo, error)
 	}, nil
 }
 
-// ListLinks returns all managed links (summaries only).
-func (m *Manager) ListLinks(ctx context.Context) ([]bpfman.LinkSummary, error) {
+// ListLinks returns all managed links (records only).
+func (m *Manager) ListLinks(ctx context.Context) ([]bpfman.LinkRecord, error) {
 	return m.store.ListLinks(ctx)
 }
 
 // ListLinksByProgram returns all links for a given program.
-func (m *Manager) ListLinksByProgram(ctx context.Context, programKernelID uint32) ([]bpfman.LinkSummary, error) {
+func (m *Manager) ListLinksByProgram(ctx context.Context, programKernelID uint32) ([]bpfman.LinkRecord, error) {
 	return m.store.ListLinksByProgram(ctx, programKernelID)
 }
 
-// GetLink retrieves a link by kernel link ID, returning both summary and type-specific details.
-func (m *Manager) GetLink(ctx context.Context, kernelLinkID uint32) (bpfman.LinkSummary, bpfman.LinkDetails, error) {
-	return m.store.GetLink(ctx, kernelLinkID)
+// GetLink retrieves a link by link ID, returning the full record with details.
+func (m *Manager) GetLink(ctx context.Context, linkID bpfman.LinkID) (bpfman.LinkRecord, error) {
+	return m.store.GetLink(ctx, linkID)
 }
 
 // FindLoadedProgramByMetadata finds a program by metadata key/value from

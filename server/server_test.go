@@ -1303,13 +1303,20 @@ func TestDetach_KernelFailure_ReturnsError(t *testing.T) {
 
 	attachResp, err := fix.Server.Attach(ctx, attachReq)
 	require.NoError(t, err, "Attach should succeed")
-	linkID := attachResp.LinkId
+	durableLinkID := attachResp.LinkId
 
-	// Configure kernel to fail on detach for this link
-	fix.Kernel.FailOnDetach(linkID, fmt.Errorf("injected detach failure"))
+	// Get the kernel link ID to configure FailOnDetach.
+	// attachResp.LinkId is the durable link ID used for lookups,
+	// but FailOnDetach needs the kernel-assigned link ID.
+	getResp, err := fix.Server.GetLink(ctx, &pb.GetLinkRequest{KernelLinkId: durableLinkID})
+	require.NoError(t, err, "GetLink should succeed")
+	kernelLinkID := getResp.Link.Summary.KernelLinkId
+
+	// Configure kernel to fail on detach for this kernel link ID
+	fix.Kernel.FailOnDetach(kernelLinkID, fmt.Errorf("injected detach failure"))
 
 	// Attempt to detach - should fail
-	_, err = fix.Server.Detach(ctx, &pb.DetachRequest{LinkId: linkID})
+	_, err = fix.Server.Detach(ctx, &pb.DetachRequest{LinkId: durableLinkID})
 	require.Error(t, err, "Detach should fail due to kernel error")
 	assert.Contains(t, err.Error(), "injected detach failure", "error should mention injected failure")
 

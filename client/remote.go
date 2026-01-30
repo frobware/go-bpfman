@@ -137,7 +137,7 @@ func (c *remoteClient) Get(ctx context.Context, kernelID uint32) (manager.Progra
 }
 
 // AttachTracepoint attaches a program to a tracepoint via gRPC.
-func (c *remoteClient) AttachTracepoint(ctx context.Context, spec bpfman.TracepointAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error) {
+func (c *remoteClient) AttachTracepoint(ctx context.Context, spec bpfman.TracepointAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkRecord, error) {
 	req := &pb.AttachRequest{
 		Id: spec.ProgramID(),
 		Attach: &pb.AttachInfo{
@@ -151,19 +151,20 @@ func (c *remoteClient) AttachTracepoint(ctx context.Context, spec bpfman.Tracepo
 
 	resp, err := c.client.Attach(ctx, req)
 	if err != nil {
-		return bpfman.LinkSummary{}, translateGRPCError(err)
+		return bpfman.LinkRecord{}, translateGRPCError(err)
 	}
 
-	return bpfman.LinkSummary{
-		LinkType:        bpfman.LinkTypeTracepoint,
-		KernelProgramID: spec.ProgramID(),
-		KernelLinkID:    resp.LinkId,
-		PinPath:         opts.LinkPinPath,
+	linkID := resp.LinkId
+	return bpfman.LinkRecord{
+		ID:           bpfman.LinkID(linkID),
+		Kind:         bpfman.LinkKindTracepoint,
+		KernelLinkID: &linkID,
+		PinPath:      opts.LinkPinPath,
 	}, nil
 }
 
 // AttachXDP attaches an XDP program to a network interface via gRPC.
-func (c *remoteClient) AttachXDP(ctx context.Context, spec bpfman.XDPAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error) {
+func (c *remoteClient) AttachXDP(ctx context.Context, spec bpfman.XDPAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkRecord, error) {
 	req := &pb.AttachRequest{
 		Id: spec.ProgramID(),
 		Attach: &pb.AttachInfo{
@@ -178,19 +179,20 @@ func (c *remoteClient) AttachXDP(ctx context.Context, spec bpfman.XDPAttachSpec,
 
 	resp, err := c.client.Attach(ctx, req)
 	if err != nil {
-		return bpfman.LinkSummary{}, translateGRPCError(err)
+		return bpfman.LinkRecord{}, translateGRPCError(err)
 	}
 
-	return bpfman.LinkSummary{
-		LinkType:        bpfman.LinkTypeXDP,
-		KernelProgramID: spec.ProgramID(),
-		KernelLinkID:    resp.LinkId,
-		PinPath:         opts.LinkPinPath,
+	linkID := resp.LinkId
+	return bpfman.LinkRecord{
+		ID:           bpfman.LinkID(linkID),
+		Kind:         bpfman.LinkKindXDP,
+		KernelLinkID: &linkID,
+		PinPath:      opts.LinkPinPath,
 	}, nil
 }
 
 // AttachTC attaches a TC program to a network interface via gRPC.
-func (c *remoteClient) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error) {
+func (c *remoteClient) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkRecord, error) {
 	req := &pb.AttachRequest{
 		Id: spec.ProgramID(),
 		Attach: &pb.AttachInfo{
@@ -207,19 +209,20 @@ func (c *remoteClient) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, o
 
 	resp, err := c.client.Attach(ctx, req)
 	if err != nil {
-		return bpfman.LinkSummary{}, translateGRPCError(err)
+		return bpfman.LinkRecord{}, translateGRPCError(err)
 	}
 
-	return bpfman.LinkSummary{
-		LinkType:        bpfman.LinkTypeTC,
-		KernelProgramID: spec.ProgramID(),
-		KernelLinkID:    resp.LinkId,
-		PinPath:         opts.LinkPinPath,
+	linkID := resp.LinkId
+	return bpfman.LinkRecord{
+		ID:           bpfman.LinkID(linkID),
+		Kind:         bpfman.LinkKindTC,
+		KernelLinkID: &linkID,
+		PinPath:      opts.LinkPinPath,
 	}, nil
 }
 
 // AttachTCX attaches a TCX program to a network interface via gRPC.
-func (c *remoteClient) AttachTCX(ctx context.Context, spec bpfman.TCXAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error) {
+func (c *remoteClient) AttachTCX(ctx context.Context, spec bpfman.TCXAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkRecord, error) {
 	req := &pb.AttachRequest{
 		Id: spec.ProgramID(),
 		Attach: &pb.AttachInfo{
@@ -235,19 +238,20 @@ func (c *remoteClient) AttachTCX(ctx context.Context, spec bpfman.TCXAttachSpec,
 
 	resp, err := c.client.Attach(ctx, req)
 	if err != nil {
-		return bpfman.LinkSummary{}, translateGRPCError(err)
+		return bpfman.LinkRecord{}, translateGRPCError(err)
 	}
 
-	return bpfman.LinkSummary{
-		LinkType:        bpfman.LinkTypeTCX,
-		KernelProgramID: spec.ProgramID(),
-		KernelLinkID:    resp.LinkId,
-		PinPath:         opts.LinkPinPath,
+	linkID := resp.LinkId
+	return bpfman.LinkRecord{
+		ID:           bpfman.LinkID(linkID),
+		Kind:         bpfman.LinkKindTCX,
+		KernelLinkID: &linkID,
+		PinPath:      opts.LinkPinPath,
 	}, nil
 }
 
 // AttachKprobe attaches a kprobe/kretprobe program to a kernel function via gRPC.
-func (c *remoteClient) AttachKprobe(ctx context.Context, spec bpfman.KprobeAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error) {
+func (c *remoteClient) AttachKprobe(ctx context.Context, spec bpfman.KprobeAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkRecord, error) {
 	req := &pb.AttachRequest{
 		Id: spec.ProgramID(),
 		Attach: &pb.AttachInfo{
@@ -262,19 +266,20 @@ func (c *remoteClient) AttachKprobe(ctx context.Context, spec bpfman.KprobeAttac
 
 	resp, err := c.client.Attach(ctx, req)
 	if err != nil {
-		return bpfman.LinkSummary{}, translateGRPCError(err)
+		return bpfman.LinkRecord{}, translateGRPCError(err)
 	}
 
-	return bpfman.LinkSummary{
-		LinkType:        bpfman.LinkTypeKprobe,
-		KernelProgramID: spec.ProgramID(),
-		KernelLinkID:    resp.LinkId,
-		PinPath:         opts.LinkPinPath,
+	linkID := resp.LinkId
+	return bpfman.LinkRecord{
+		ID:           bpfman.LinkID(linkID),
+		Kind:         bpfman.LinkKindKprobe,
+		KernelLinkID: &linkID,
+		PinPath:      opts.LinkPinPath,
 	}, nil
 }
 
 // AttachUprobe attaches a uprobe/uretprobe program to a user-space function via gRPC.
-func (c *remoteClient) AttachUprobe(ctx context.Context, spec bpfman.UprobeAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error) {
+func (c *remoteClient) AttachUprobe(ctx context.Context, spec bpfman.UprobeAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkRecord, error) {
 	fnName := spec.FnName()
 	uprobeInfo := &pb.UprobeAttachInfo{
 		Target: spec.Target(),
@@ -295,19 +300,20 @@ func (c *remoteClient) AttachUprobe(ctx context.Context, spec bpfman.UprobeAttac
 
 	resp, err := c.client.Attach(ctx, req)
 	if err != nil {
-		return bpfman.LinkSummary{}, translateGRPCError(err)
+		return bpfman.LinkRecord{}, translateGRPCError(err)
 	}
 
-	return bpfman.LinkSummary{
-		LinkType:        bpfman.LinkTypeUprobe,
-		KernelProgramID: spec.ProgramID(),
-		KernelLinkID:    resp.LinkId,
-		PinPath:         opts.LinkPinPath,
+	linkID := resp.LinkId
+	return bpfman.LinkRecord{
+		ID:           bpfman.LinkID(linkID),
+		Kind:         bpfman.LinkKindUprobe,
+		KernelLinkID: &linkID,
+		PinPath:      opts.LinkPinPath,
 	}, nil
 }
 
 // AttachFentry attaches a fentry program via gRPC.
-func (c *remoteClient) AttachFentry(ctx context.Context, spec bpfman.FentryAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error) {
+func (c *remoteClient) AttachFentry(ctx context.Context, spec bpfman.FentryAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkRecord, error) {
 	req := &pb.AttachRequest{
 		Id: spec.ProgramID(),
 		Attach: &pb.AttachInfo{
@@ -319,19 +325,20 @@ func (c *remoteClient) AttachFentry(ctx context.Context, spec bpfman.FentryAttac
 
 	resp, err := c.client.Attach(ctx, req)
 	if err != nil {
-		return bpfman.LinkSummary{}, translateGRPCError(err)
+		return bpfman.LinkRecord{}, translateGRPCError(err)
 	}
 
-	return bpfman.LinkSummary{
-		LinkType:        bpfman.LinkTypeFentry,
-		KernelProgramID: spec.ProgramID(),
-		KernelLinkID:    resp.LinkId,
-		PinPath:         opts.LinkPinPath,
+	linkID := resp.LinkId
+	return bpfman.LinkRecord{
+		ID:           bpfman.LinkID(linkID),
+		Kind:         bpfman.LinkKindFentry,
+		KernelLinkID: &linkID,
+		PinPath:      opts.LinkPinPath,
 	}, nil
 }
 
 // AttachFexit attaches a fexit program via gRPC.
-func (c *remoteClient) AttachFexit(ctx context.Context, spec bpfman.FexitAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error) {
+func (c *remoteClient) AttachFexit(ctx context.Context, spec bpfman.FexitAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkRecord, error) {
 	req := &pb.AttachRequest{
 		Id: spec.ProgramID(),
 		Attach: &pb.AttachInfo{
@@ -343,14 +350,15 @@ func (c *remoteClient) AttachFexit(ctx context.Context, spec bpfman.FexitAttachS
 
 	resp, err := c.client.Attach(ctx, req)
 	if err != nil {
-		return bpfman.LinkSummary{}, translateGRPCError(err)
+		return bpfman.LinkRecord{}, translateGRPCError(err)
 	}
 
-	return bpfman.LinkSummary{
-		LinkType:        bpfman.LinkTypeFexit,
-		KernelProgramID: spec.ProgramID(),
-		KernelLinkID:    resp.LinkId,
-		PinPath:         opts.LinkPinPath,
+	linkID := resp.LinkId
+	return bpfman.LinkRecord{
+		ID:           bpfman.LinkID(linkID),
+		Kind:         bpfman.LinkKindFexit,
+		KernelLinkID: &linkID,
+		PinPath:      opts.LinkPinPath,
 	}, nil
 }
 
@@ -362,32 +370,32 @@ func (c *remoteClient) Detach(ctx context.Context, kernelLinkID uint32) error {
 }
 
 // ListLinks returns all managed links via gRPC.
-func (c *remoteClient) ListLinks(ctx context.Context) ([]bpfman.LinkSummary, error) {
+func (c *remoteClient) ListLinks(ctx context.Context) ([]bpfman.LinkRecord, error) {
 	resp, err := c.client.ListLinks(ctx, &pb.ListLinksRequest{})
 	if err != nil {
 		return nil, translateGRPCError(err)
 	}
-	return protoListLinksResponseToSummaries(resp), nil
+	return protoListLinksResponseToRecords(resp), nil
 }
 
 // ListLinksByProgram returns all links for a given program via gRPC.
-func (c *remoteClient) ListLinksByProgram(ctx context.Context, programKernelID uint32) ([]bpfman.LinkSummary, error) {
+func (c *remoteClient) ListLinksByProgram(ctx context.Context, programKernelID uint32) ([]bpfman.LinkRecord, error) {
 	resp, err := c.client.ListLinks(ctx, &pb.ListLinksRequest{ProgramId: &programKernelID})
 	if err != nil {
 		return nil, translateGRPCError(err)
 	}
-	return protoListLinksResponseToSummaries(resp), nil
+	return protoListLinksResponseToRecords(resp), nil
 }
 
 // GetLink retrieves a link by kernel link ID via gRPC.
-func (c *remoteClient) GetLink(ctx context.Context, kernelLinkID uint32) (bpfman.LinkSummary, bpfman.LinkDetails, error) {
+func (c *remoteClient) GetLink(ctx context.Context, kernelLinkID uint32) (bpfman.LinkRecord, bpfman.LinkDetails, error) {
 	resp, err := c.client.GetLink(ctx, &pb.GetLinkRequest{KernelLinkId: kernelLinkID})
 	if err != nil {
-		return bpfman.LinkSummary{}, nil, translateGRPCError(err)
+		return bpfman.LinkRecord{}, nil, translateGRPCError(err)
 	}
-	summary := protoLinkSummaryToManaged(resp.Link.Summary)
-	details := protoLinkDetailsToManaged(resp.Link.Details)
-	return summary, details, nil
+	record := protoLinkSummaryToRecord(resp.Link.Summary)
+	record.Details = protoLinkDetailsToManaged(resp.Link.Details)
+	return record, record.Details, nil
 }
 
 // GC is a local-only operation.

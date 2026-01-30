@@ -14,30 +14,26 @@ import (
 )
 
 // LinkWriter writes link metadata to the store.
-// Each link type has its own save method to enforce type safety.
+// SaveLink dispatches to the appropriate detail table based on record.Details.Kind().
 type LinkWriter interface {
-	SaveTracepointLink(ctx context.Context, summary bpfman.LinkSummary, details bpfman.TracepointDetails) error
-	SaveKprobeLink(ctx context.Context, summary bpfman.LinkSummary, details bpfman.KprobeDetails) error
-	SaveUprobeLink(ctx context.Context, summary bpfman.LinkSummary, details bpfman.UprobeDetails) error
-	SaveFentryLink(ctx context.Context, summary bpfman.LinkSummary, details bpfman.FentryDetails) error
-	SaveFexitLink(ctx context.Context, summary bpfman.LinkSummary, details bpfman.FexitDetails) error
-	SaveXDPLink(ctx context.Context, summary bpfman.LinkSummary, details bpfman.XDPDetails) error
-	SaveTCLink(ctx context.Context, summary bpfman.LinkSummary, details bpfman.TCDetails) error
-	SaveTCXLink(ctx context.Context, summary bpfman.LinkSummary, details bpfman.TCXDetails) error
-	DeleteLink(ctx context.Context, kernelLinkID uint32) error
+	// SaveLink saves a link record with its details and returns the assigned LinkID.
+	// kernelProgramID is stored for queries but not part of LinkRecord (ephemeral).
+	// kernelLinkID is nullable: present for real BPF links, absent for perf_event links.
+	// The returned LinkID is the durable bpfman identity (autoincrement).
+	SaveLink(ctx context.Context, record bpfman.LinkRecord, kernelProgramID uint32, kernelLinkID *uint32) (bpfman.LinkID, error)
+	DeleteLink(ctx context.Context, linkID bpfman.LinkID) error
 }
 
 // LinkReader reads link metadata from the store.
 // GetLink performs a two-phase lookup: registry then type-specific details.
 type LinkReader interface {
-	GetLink(ctx context.Context, kernelLinkID uint32) (bpfman.LinkSummary, bpfman.LinkDetails, error)
+	GetLink(ctx context.Context, linkID bpfman.LinkID) (bpfman.LinkRecord, error)
 }
 
 // LinkLister lists links from the store.
-// Returns only LinkSummary for efficiency; use GetLink for full details.
 type LinkLister interface {
-	ListLinks(ctx context.Context) ([]bpfman.LinkSummary, error)
-	ListLinksByProgram(ctx context.Context, programKernelID uint32) ([]bpfman.LinkSummary, error)
+	ListLinks(ctx context.Context) ([]bpfman.LinkRecord, error)
+	ListLinksByProgram(ctx context.Context, programKernelID uint32) ([]bpfman.LinkRecord, error)
 	// ListTCXLinksByInterface returns all TCX links for a given interface/direction/namespace.
 	// Used for computing attach order based on priority.
 	ListTCXLinksByInterface(ctx context.Context, nsid uint64, ifindex uint32, direction string) ([]bpfman.TCXLinkInfo, error)
@@ -187,30 +183,30 @@ type PinInspector interface {
 // ProgramAttacher attaches programs to hooks.
 type ProgramAttacher interface {
 	// AttachTracepoint attaches a pinned program to a tracepoint.
-	AttachTracepoint(ctx context.Context, progPinPath, group, name, linkPinPath string) (bpfman.ManagedLink, error)
+	AttachTracepoint(ctx context.Context, progPinPath, group, name, linkPinPath string) (bpfman.Link, error)
 	// AttachXDP attaches a pinned XDP program to a network interface.
-	AttachXDP(ctx context.Context, progPinPath string, ifindex int, linkPinPath string) (bpfman.ManagedLink, error)
+	AttachXDP(ctx context.Context, progPinPath string, ifindex int, linkPinPath string) (bpfman.Link, error)
 	// AttachKprobe attaches a pinned program to a kernel function.
 	// If retprobe is true, attaches as a kretprobe instead of kprobe.
-	AttachKprobe(ctx context.Context, progPinPath, fnName string, offset uint64, retprobe bool, linkPinPath string) (bpfman.ManagedLink, error)
+	AttachKprobe(ctx context.Context, progPinPath, fnName string, offset uint64, retprobe bool, linkPinPath string) (bpfman.Link, error)
 	// AttachUprobeLocal attaches a pinned program to a user-space function
 	// in the current namespace. Does not spawn a helper, so no lock scope needed.
 	// target is the path to the binary or library (e.g., /usr/lib/libc.so.6).
 	// If retprobe is true, attaches as a uretprobe instead of uprobe.
-	AttachUprobeLocal(ctx context.Context, progPinPath, target, fnName string, offset uint64, retprobe bool, linkPinPath string) (bpfman.ManagedLink, error)
+	AttachUprobeLocal(ctx context.Context, progPinPath, target, fnName string, offset uint64, retprobe bool, linkPinPath string) (bpfman.Link, error)
 	// AttachUprobeContainer attaches a pinned program to a user-space function
 	// in a container's mount namespace. Spawns bpfman-ns helper, so requires
 	// lock scope to pass fd.
 	// target is the path to the binary or library (resolved in the container's namespace).
 	// If retprobe is true, attaches as a uretprobe instead of uprobe.
 	// containerPid identifies the target container.
-	AttachUprobeContainer(ctx context.Context, scope lock.WriterScope, progPinPath, target, fnName string, offset uint64, retprobe bool, linkPinPath string, containerPid int32) (bpfman.ManagedLink, error)
+	AttachUprobeContainer(ctx context.Context, scope lock.WriterScope, progPinPath, target, fnName string, offset uint64, retprobe bool, linkPinPath string, containerPid int32) (bpfman.Link, error)
 	// AttachFentry attaches a pinned program to a kernel function entry point.
 	// The fnName was specified at load time and stored with the program.
-	AttachFentry(ctx context.Context, progPinPath, fnName, linkPinPath string) (bpfman.ManagedLink, error)
+	AttachFentry(ctx context.Context, progPinPath, fnName, linkPinPath string) (bpfman.Link, error)
 	// AttachFexit attaches a pinned program to a kernel function exit point.
 	// The fnName was specified at load time and stored with the program.
-	AttachFexit(ctx context.Context, progPinPath, fnName, linkPinPath string) (bpfman.ManagedLink, error)
+	AttachFexit(ctx context.Context, progPinPath, fnName, linkPinPath string) (bpfman.Link, error)
 }
 
 // XDPDispatcherResult holds the result of loading an XDP dispatcher.
@@ -259,7 +255,7 @@ type DispatcherAttacher interface {
 	// The mapPinDir parameter specifies the directory containing the program's
 	// pinned maps. These maps are loaded and passed as MapReplacements so the
 	// extension program shares the same maps as the original loaded program.
-	AttachXDPExtension(ctx context.Context, dispatcherPinPath, objectPath, programName string, position int, linkPinPath, mapPinDir string) (bpfman.ManagedLink, error)
+	AttachXDPExtension(ctx context.Context, dispatcherPinPath, objectPath, programName string, position int, linkPinPath, mapPinDir string) (bpfman.Link, error)
 
 	// AttachTCDispatcherWithPaths loads and attaches a TC dispatcher to an
 	// interface using legacy netlink TC (clsact qdisc + BPF tc filter).
@@ -283,7 +279,7 @@ type DispatcherAttacher interface {
 	// The mapPinDir parameter specifies the directory containing the program's
 	// pinned maps. These maps are loaded and passed as MapReplacements so the
 	// extension program shares the same maps as the original loaded program.
-	AttachTCExtension(ctx context.Context, dispatcherPinPath, objectPath, programName string, position int, linkPinPath, mapPinDir string) (bpfman.ManagedLink, error)
+	AttachTCExtension(ctx context.Context, dispatcherPinPath, objectPath, programName string, position int, linkPinPath, mapPinDir string) (bpfman.Link, error)
 
 	// AttachTCX attaches a loaded program directly to an interface using TCX link.
 	// Unlike TC which uses dispatchers, TCX uses native kernel multi-program support.
@@ -296,7 +292,7 @@ type DispatcherAttacher interface {
 	//   - linkPinPath: Path to pin the TCX link
 	//   - netns: Optional network namespace path. If non-empty, attachment is performed in that namespace.
 	//   - order: Specifies where to insert the program in the TCX chain based on priority.
-	AttachTCX(ctx context.Context, ifindex int, direction, programPinPath, linkPinPath, netns string, order bpfman.TCXAttachOrder) (bpfman.ManagedLink, error)
+	AttachTCX(ctx context.Context, ifindex int, direction, programPinPath, linkPinPath, netns string, order bpfman.TCXAttachOrder) (bpfman.Link, error)
 }
 
 // LinkDetacher detaches links from hooks.

@@ -62,7 +62,7 @@ func (c *ListLinksCmd) Run(cli *CLI, ctx context.Context) error {
 	}
 	defer b.Close()
 
-	var links []bpfman.LinkSummary
+	var links []bpfman.LinkRecord
 	if c.ProgramID != nil {
 		links, err = b.ListLinksByProgram(ctx, c.ProgramID.Value)
 		if errors.Is(err, client.ErrNotSupported) {

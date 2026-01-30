@@ -96,21 +96,21 @@ func (c *AttachCmd) execute(ctx context.Context, cli *CLI, b client.Client) (att
 
 // output fetches link details and formats output outside the lock.
 func (c *AttachCmd) output(cli *CLI, ctx context.Context, b client.Client, result attachResult) error {
-	summary, details, err := b.GetLink(ctx, result.KernelLinkID)
+	record, details, err := b.GetLink(ctx, result.KernelLinkID)
 	if err != nil {
 		// Attachment succeeded but we can't fetch details for display.
 		// This shouldn't normally happen - log it and show minimal output.
 		return cli.PrintOutf("Attached link %d (warning: failed to fetch details: %v)\n", result.KernelLinkID, err)
 	}
 
-	// Fetch program info to get the BPF function name
+	// Fetch program info to get the BPF function name using the original program ID
 	var bpfFunction string
-	progInfo, err := b.Get(ctx, summary.KernelProgramID)
+	progInfo, err := b.Get(ctx, c.ProgramID.Value)
 	if err == nil && progInfo.Kernel != nil && progInfo.Kernel.Program != nil {
 		bpfFunction = progInfo.Kernel.Program.Name
 	}
 
-	output, err := FormatLinkResult(bpfFunction, summary, details, &c.OutputFlags)
+	output, err := FormatLinkResult(bpfFunction, record, details, &c.OutputFlags)
 	if err != nil {
 		return err
 	}
@@ -137,7 +137,7 @@ func (c *AttachCmd) attachTracepoint(ctx context.Context, b client.Client) (atta
 	if err != nil {
 		return attachResult{}, err
 	}
-	return attachResult{KernelLinkID: result.KernelLinkID}, nil
+	return attachResult{KernelLinkID: uint32(result.ID)}, nil
 }
 
 func (c *AttachCmd) attachXDP(ctx context.Context, b client.Client) (attachResult, error) {
@@ -162,7 +162,7 @@ func (c *AttachCmd) attachXDP(ctx context.Context, b client.Client) (attachResul
 	if err != nil {
 		return attachResult{}, err
 	}
-	return attachResult{KernelLinkID: result.KernelLinkID}, nil
+	return attachResult{KernelLinkID: uint32(result.ID)}, nil
 }
 
 func (c *AttachCmd) attachTC(ctx context.Context, b client.Client) (attachResult, error) {
@@ -205,7 +205,7 @@ func (c *AttachCmd) attachTC(ctx context.Context, b client.Client) (attachResult
 	if err != nil {
 		return attachResult{}, err
 	}
-	return attachResult{KernelLinkID: result.KernelLinkID}, nil
+	return attachResult{KernelLinkID: uint32(result.ID)}, nil
 }
 
 func (c *AttachCmd) attachTCX(ctx context.Context, b client.Client) (attachResult, error) {
@@ -242,7 +242,7 @@ func (c *AttachCmd) attachTCX(ctx context.Context, b client.Client) (attachResul
 	if err != nil {
 		return attachResult{}, err
 	}
-	return attachResult{KernelLinkID: result.KernelLinkID}, nil
+	return attachResult{KernelLinkID: uint32(result.ID)}, nil
 }
 
 func (c *AttachCmd) attachKprobe(ctx context.Context, b client.Client) (attachResult, error) {
@@ -262,7 +262,7 @@ func (c *AttachCmd) attachKprobe(ctx context.Context, b client.Client) (attachRe
 	if err != nil {
 		return attachResult{}, err
 	}
-	return attachResult{KernelLinkID: result.KernelLinkID}, nil
+	return attachResult{KernelLinkID: uint32(result.ID)}, nil
 }
 
 func (c *AttachCmd) attachUprobe(ctx context.Context, b client.Client) (attachResult, error) {
@@ -288,7 +288,7 @@ func (c *AttachCmd) attachUprobe(ctx context.Context, b client.Client) (attachRe
 	if err != nil {
 		return attachResult{}, err
 	}
-	return attachResult{KernelLinkID: result.KernelLinkID}, nil
+	return attachResult{KernelLinkID: uint32(result.ID)}, nil
 }
 
 func (c *AttachCmd) attachFentry(ctx context.Context, b client.Client) (attachResult, error) {
@@ -301,7 +301,7 @@ func (c *AttachCmd) attachFentry(ctx context.Context, b client.Client) (attachRe
 	if err != nil {
 		return attachResult{}, err
 	}
-	return attachResult{KernelLinkID: result.KernelLinkID}, nil
+	return attachResult{KernelLinkID: uint32(result.ID)}, nil
 }
 
 func (c *AttachCmd) attachFexit(ctx context.Context, b client.Client) (attachResult, error) {
@@ -314,5 +314,5 @@ func (c *AttachCmd) attachFexit(ctx context.Context, b client.Client) (attachRes
 	if err != nil {
 		return attachResult{}, err
 	}
-	return attachResult{KernelLinkID: result.KernelLinkID}, nil
+	return attachResult{KernelLinkID: uint32(result.ID)}, nil
 }

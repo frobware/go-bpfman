@@ -151,7 +151,7 @@ func (m *Manager) Unload(ctx context.Context, kernelID uint32) error {
 // 2. UnloadProgram (program pin)
 // 3. UnloadProgram (maps directory)
 // 4. DeleteProgram
-func computeUnloadActions(kernelID uint32, progPinPath, mapsDir, linksDir string, links []bpfman.LinkSummary) []action.Action {
+func computeUnloadActions(kernelID uint32, progPinPath, mapsDir, linksDir string, links []bpfman.LinkRecord) []action.Action {
 	var actions []action.Action
 
 	// Detach links first, then remove the links directory.

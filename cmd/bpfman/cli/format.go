@@ -186,10 +186,10 @@ func formatProgramInfoTable(info manager.ProgramInfo) string {
 				var linkStr string
 				if l.Details != nil {
 					attachInfo := formatAttachDetails(l.Details)
-					linkStr = fmt.Sprintf("%d (%s)", l.Summary.KernelLinkID, attachInfo)
+					linkStr = fmt.Sprintf("%d (%s)", l.ID, attachInfo)
 				} else {
 					// No details available, just show the link ID
-					linkStr = fmt.Sprintf("%d", l.Summary.KernelLinkID)
+					linkStr = fmt.Sprintf("%d", l.ID)
 				}
 				if i == 0 {
 					fmt.Fprintf(bw, " Links:\t%s\n", linkStr)
@@ -302,8 +302,8 @@ func formatProgramListTable(programs []manager.ManagedProgram) string {
 	return b.String()
 }
 
-// FormatLinkList formats a list of LinkSummary according to the specified output flags.
-func FormatLinkList(links []bpfman.LinkSummary, flags *OutputFlags) (string, error) {
+// FormatLinkList formats a list of LinkRecord according to the specified output flags.
+func FormatLinkList(links []bpfman.LinkRecord, flags *OutputFlags) (string, error) {
 	format, err := flags.Format()
 	if err != nil {
 		return "", err
@@ -320,7 +320,7 @@ func FormatLinkList(links []bpfman.LinkSummary, flags *OutputFlags) (string, err
 	}
 }
 
-func formatLinkListJSON(links []bpfman.LinkSummary) (string, error) {
+func formatLinkListJSON(links []bpfman.LinkRecord) (string, error) {
 	output, err := json.MarshalIndent(links, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal result: %w", err)
@@ -328,18 +328,18 @@ func formatLinkListJSON(links []bpfman.LinkSummary) (string, error) {
 	return string(output) + "\n", nil
 }
 
-func formatLinkListJSONPath(links []bpfman.LinkSummary, expr string) (string, error) {
+func formatLinkListJSONPath(links []bpfman.LinkRecord, expr string) (string, error) {
 	return executeJSONPath(links, expr)
 }
 
-func formatLinkListTable(links []bpfman.LinkSummary) string {
+func formatLinkListTable(links []bpfman.LinkRecord) string {
 	var b strings.Builder
 	w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
 
-	fmt.Fprintln(w, "LINK ID\tTYPE\tPROGRAM ID\tPIN PATH")
+	fmt.Fprintln(w, "LINK ID\tTYPE\tPIN PATH")
 
 	for _, l := range links {
-		fmt.Fprintf(w, "%d\t%s\t%d\t%s\n", l.KernelLinkID, l.LinkType, l.KernelProgramID, l.PinPath)
+		fmt.Fprintf(w, "%d\t%s\t%s\n", l.ID, l.Kind, l.PinPath)
 	}
 
 	w.Flush()
@@ -348,34 +348,34 @@ func formatLinkListTable(links []bpfman.LinkSummary) string {
 
 // FormatLinkResult formats a link result (from attach command) according to
 // the specified output flags. The bpfFunction is the name of the BPF function.
-func FormatLinkResult(bpfFunction string, summary bpfman.LinkSummary, details bpfman.LinkDetails, flags *OutputFlags) (string, error) {
+func FormatLinkResult(bpfFunction string, record bpfman.LinkRecord, details bpfman.LinkDetails, flags *OutputFlags) (string, error) {
 	format, err := flags.Format()
 	if err != nil {
 		return "", err
 	}
 	switch format {
 	case OutputFormatJSON:
-		return formatLinkResultJSON(bpfFunction, summary, details)
+		return formatLinkResultJSON(bpfFunction, record, details)
 	case OutputFormatTable:
-		return formatLinkResultTable(bpfFunction, summary, details), nil
+		return formatLinkResultTable(bpfFunction, record, details), nil
 	case OutputFormatJSONPath:
-		return formatLinkResultJSONPath(bpfFunction, summary, details, flags.JSONPathExpr())
+		return formatLinkResultJSONPath(bpfFunction, record, details, flags.JSONPathExpr())
 	default:
-		return formatLinkResultTable(bpfFunction, summary, details), nil
+		return formatLinkResultTable(bpfFunction, record, details), nil
 	}
 }
 
-// linkResultData combines summary, details, and bpf function for JSON serialisation.
+// linkResultData combines record, details, and bpf function for JSON serialisation.
 type linkResultData struct {
-	BPFFunction string             `json:"bpf_function,omitempty"`
-	Summary     bpfman.LinkSummary `json:"summary"`
+	BPFFunction string            `json:"bpf_function,omitempty"`
+	Record      bpfman.LinkRecord `json:"record"`
 	Details     bpfman.LinkDetails `json:"details"`
 }
 
-func formatLinkResultJSON(bpfFunction string, summary bpfman.LinkSummary, details bpfman.LinkDetails) (string, error) {
+func formatLinkResultJSON(bpfFunction string, record bpfman.LinkRecord, details bpfman.LinkDetails) (string, error) {
 	data := linkResultData{
 		BPFFunction: bpfFunction,
-		Summary:     summary,
+		Record:      record,
 		Details:     details,
 	}
 	output, err := json.MarshalIndent(data, "", "  ")
@@ -385,16 +385,16 @@ func formatLinkResultJSON(bpfFunction string, summary bpfman.LinkSummary, detail
 	return string(output) + "\n", nil
 }
 
-func formatLinkResultJSONPath(bpfFunction string, summary bpfman.LinkSummary, details bpfman.LinkDetails, expr string) (string, error) {
+func formatLinkResultJSONPath(bpfFunction string, record bpfman.LinkRecord, details bpfman.LinkDetails, expr string) (string, error) {
 	data := linkResultData{
 		BPFFunction: bpfFunction,
-		Summary:     summary,
+		Record:      record,
 		Details:     details,
 	}
 	return executeJSONPath(data, expr)
 }
 
-func formatLinkResultTable(bpfFunction string, summary bpfman.LinkSummary, details bpfman.LinkDetails) string {
+func formatLinkResultTable(bpfFunction string, record bpfman.LinkRecord, details bpfman.LinkDetails) string {
 	var b strings.Builder
 	w := tabwriter.NewWriter(&b, 0, 0, 1, ' ', 0)
 
@@ -403,9 +403,8 @@ func formatLinkResultTable(bpfFunction string, summary bpfman.LinkSummary, detai
 
 	// Common fields
 	fmt.Fprintf(w, " BPF Function:\t%s\n", bpfFunction)
-	fmt.Fprintf(w, " Link Type:\t%s\n", summary.LinkType)
-	fmt.Fprintf(w, " Program ID:\t%d\n", summary.KernelProgramID)
-	fmt.Fprintf(w, " Link ID:\t%d\n", summary.KernelLinkID)
+	fmt.Fprintf(w, " Link Type:\t%s\n", record.Kind)
+	fmt.Fprintf(w, " Link ID:\t%d\n", record.ID)
 
 	// Type-specific fields
 	switch d := details.(type) {
@@ -487,31 +486,31 @@ type LinkInfo struct {
 }
 
 // FormatLinkInfo formats link info for the get link command according to the specified output flags.
-func FormatLinkInfo(bpfFunction string, summary bpfman.LinkSummary, details bpfman.LinkDetails, flags *OutputFlags) (string, error) {
+func FormatLinkInfo(bpfFunction string, record bpfman.LinkRecord, details bpfman.LinkDetails, flags *OutputFlags) (string, error) {
 	format, err := flags.Format()
 	if err != nil {
 		return "", err
 	}
 	switch format {
 	case OutputFormatJSON:
-		return formatLinkInfoJSON(bpfFunction, summary, details)
+		return formatLinkInfoJSON(bpfFunction, record, details)
 	case OutputFormatTable:
-		return formatLinkInfoTable(bpfFunction, summary, details), nil
+		return formatLinkInfoTable(bpfFunction, record, details), nil
 	case OutputFormatJSONPath:
-		return formatLinkInfoJSONPath(bpfFunction, summary, details, flags.JSONPathExpr())
+		return formatLinkInfoJSONPath(bpfFunction, record, details, flags.JSONPathExpr())
 	default:
-		return formatLinkInfoTable(bpfFunction, summary, details), nil
+		return formatLinkInfoTable(bpfFunction, record, details), nil
 	}
 }
 
-func formatLinkInfoJSON(bpfFunction string, summary bpfman.LinkSummary, details bpfman.LinkDetails) (string, error) {
+func formatLinkInfoJSON(bpfFunction string, record bpfman.LinkRecord, details bpfman.LinkDetails) (string, error) {
 	data := struct {
-		BPFFunction string             `json:"bpf_function,omitempty"`
-		Summary     bpfman.LinkSummary `json:"summary"`
+		BPFFunction string            `json:"bpf_function,omitempty"`
+		Record      bpfman.LinkRecord `json:"record"`
 		Details     bpfman.LinkDetails `json:"details,omitempty"`
 	}{
 		BPFFunction: bpfFunction,
-		Summary:     summary,
+		Record:      record,
 		Details:     details,
 	}
 	output, err := json.MarshalIndent(data, "", "  ")
@@ -521,20 +520,20 @@ func formatLinkInfoJSON(bpfFunction string, summary bpfman.LinkSummary, details 
 	return string(output) + "\n", nil
 }
 
-func formatLinkInfoJSONPath(bpfFunction string, summary bpfman.LinkSummary, details bpfman.LinkDetails, expr string) (string, error) {
+func formatLinkInfoJSONPath(bpfFunction string, record bpfman.LinkRecord, details bpfman.LinkDetails, expr string) (string, error) {
 	data := struct {
-		BPFFunction string             `json:"bpf_function,omitempty"`
-		Summary     bpfman.LinkSummary `json:"summary"`
+		BPFFunction string            `json:"bpf_function,omitempty"`
+		Record      bpfman.LinkRecord `json:"record"`
 		Details     bpfman.LinkDetails `json:"details,omitempty"`
 	}{
 		BPFFunction: bpfFunction,
-		Summary:     summary,
+		Record:      record,
 		Details:     details,
 	}
 	return executeJSONPath(data, expr)
 }
 
-func formatLinkInfoTable(bpfFunction string, summary bpfman.LinkSummary, details bpfman.LinkDetails) string {
+func formatLinkInfoTable(bpfFunction string, record bpfman.LinkRecord, details bpfman.LinkDetails) string {
 	var b strings.Builder
 	w := tabwriter.NewWriter(&b, 0, 0, 1, ' ', 0)
 
@@ -547,9 +546,8 @@ func formatLinkInfoTable(bpfFunction string, summary bpfman.LinkSummary, details
 	} else {
 		fmt.Fprintf(w, " BPF Function:\tNone\n")
 	}
-	fmt.Fprintf(w, " Link Type:\t%s\n", summary.LinkType)
-	fmt.Fprintf(w, " Program ID:\t%d\n", summary.KernelProgramID)
-	fmt.Fprintf(w, " Link ID:\t%d\n", summary.KernelLinkID)
+	fmt.Fprintf(w, " Link Type:\t%s\n", record.Kind)
+	fmt.Fprintf(w, " Link ID:\t%d\n", record.ID)
 
 	// Type-specific fields
 	switch d := details.(type) {

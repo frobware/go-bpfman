@@ -12,6 +12,7 @@ import (
 	"github.com/frobware/go-bpfman/bpffs"
 	"github.com/frobware/go-bpfman/inspect"
 	"github.com/frobware/go-bpfman/interpreter/store"
+	"github.com/frobware/go-bpfman/kernel"
 	pb "github.com/frobware/go-bpfman/server/pb"
 )
 
@@ -133,7 +134,7 @@ func (s *Server) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, 
 	}
 	linkIDs := make([]uint32, 0, len(links))
 	for _, link := range links {
-		linkIDs = append(linkIDs, link.KernelLinkID)
+		linkIDs = append(linkIDs, uint32(link.ID))
 	}
 
 	s.logger.InfoContext(ctx, "Get", "program_id", req.Id, "program_name", prog.Name, "links", len(linkIDs))
@@ -192,17 +193,29 @@ func (s *Server) ListLinks(ctx context.Context, req *pb.ListLinksRequest) (*pb.L
 	}
 
 	for _, row := range world.ManagedLinks() {
+		// Get kernel program ID if available
+		var kernelProgramID uint32
+		if row.Kernel != nil {
+			kernelProgramID = row.Kernel.ProgramID
+		}
+
 		// Filter by program ID if specified
-		if req.ProgramId != nil && row.KernelProgramID != *req.ProgramId {
+		if req.ProgramId != nil && kernelProgramID != *req.ProgramId {
 			continue
+		}
+
+		// Get kernel link ID if available
+		var kernelLinkID uint32
+		if klid := row.KernelLinkID(); klid != nil {
+			kernelLinkID = *klid
 		}
 
 		resp.Links = append(resp.Links, &pb.LinkInfo{
 			Summary: &pb.LinkSummary{
-				KernelLinkId:    row.KernelLinkID,
-				LinkType:        linkTypeStringToProto(row.LinkType),
-				KernelProgramId: row.KernelProgramID,
-				PinPath:         row.PinPath,
+				KernelLinkId:    kernelLinkID,
+				LinkType:        linkKindStringToProto(string(row.Kind())),
+				KernelProgramId: kernelProgramID,
+				PinPath:         row.PinPath(),
 			},
 		})
 	}
@@ -222,7 +235,8 @@ func (s *Server) GetLink(ctx context.Context, req *pb.GetLinkRequest) (*pb.GetLi
 	defer s.mu.RUnlock()
 
 	scanner := bpffs.NewScanner(s.dirs.ScannerDirs())
-	info, err := inspect.GetLink(ctx, s.store, s.kernel, scanner, req.KernelLinkId)
+	linkID := bpfman.LinkID(req.KernelLinkId)
+	info, err := inspect.GetLink(ctx, s.store, s.kernel, scanner, linkID)
 	if errors.Is(err, inspect.ErrNotFound) {
 		return nil, status.Errorf(codes.NotFound, "link with ID %d not found", req.KernelLinkId)
 	}
@@ -238,59 +252,72 @@ func (s *Server) GetLink(ctx context.Context, req *pb.GetLinkRequest) (*pb.GetLi
 		return nil, status.Errorf(codes.NotFound, "link %d not managed by bpfman", req.KernelLinkId)
 	}
 
-	s.logger.InfoContext(ctx, "GetLink", "link_id", req.KernelLinkId, "type", info.Summary.LinkType, "program_id", info.Summary.KernelProgramID)
+	// Get kernel program ID if available
+	var kernelProgramID uint32
+	if info.Kernel != nil {
+		kernelProgramID = info.Kernel.ProgramID
+	}
+
+	s.logger.InfoContext(ctx, "GetLink", "link_id", req.KernelLinkId, "type", info.Record.Kind, "program_id", kernelProgramID)
 
 	return &pb.GetLinkResponse{
 		Link: &pb.LinkInfo{
-			Summary: linkSummaryToProto(info.Summary),
-			Details: linkDetailsToProto(info.Details),
+			Summary: linkRecordToProtoSummary(info.Record, info.Kernel),
+			Details: linkDetailsToProto(info.Record.Details),
 		},
 	}, nil
 }
 
-// linkSummaryToProto converts a bpfman.LinkSummary to protobuf.
-func linkSummaryToProto(s bpfman.LinkSummary) *pb.LinkSummary {
+// linkRecordToProtoSummary converts a bpfman.LinkRecord to protobuf LinkSummary.
+func linkRecordToProtoSummary(r bpfman.LinkRecord, k *kernel.Link) *pb.LinkSummary {
+	var kernelLinkID, kernelProgramID uint32
+	if r.KernelLinkID != nil {
+		kernelLinkID = *r.KernelLinkID
+	}
+	if k != nil {
+		kernelProgramID = k.ProgramID
+	}
 	return &pb.LinkSummary{
-		KernelLinkId:    s.KernelLinkID,
-		LinkType:        linkTypeToProto(s.LinkType),
-		KernelProgramId: s.KernelProgramID,
-		PinPath:         s.PinPath,
-		CreatedAt:       s.CreatedAt.Format(time.RFC3339),
+		KernelLinkId:    kernelLinkID,
+		LinkType:        linkKindToProto(r.Kind),
+		KernelProgramId: kernelProgramID,
+		PinPath:         r.PinPath,
+		CreatedAt:       r.CreatedAt.Format(time.RFC3339),
 	}
 }
 
-// linkTypeToProto converts a bpfman.LinkType to protobuf.
-func linkTypeToProto(t bpfman.LinkType) pb.BpfmanLinkType {
-	switch t {
-	case bpfman.LinkTypeTracepoint:
+// linkKindToProto converts a bpfman.LinkKind to protobuf.
+func linkKindToProto(k bpfman.LinkKind) pb.BpfmanLinkType {
+	switch k {
+	case bpfman.LinkKindTracepoint:
 		return pb.BpfmanLinkType_LINK_TYPE_TRACEPOINT
-	case bpfman.LinkTypeKprobe:
+	case bpfman.LinkKindKprobe:
 		return pb.BpfmanLinkType_LINK_TYPE_KPROBE
-	case bpfman.LinkTypeKretprobe:
+	case bpfman.LinkKindKretprobe:
 		return pb.BpfmanLinkType_LINK_TYPE_KRETPROBE
-	case bpfman.LinkTypeUprobe:
+	case bpfman.LinkKindUprobe:
 		return pb.BpfmanLinkType_LINK_TYPE_UPROBE
-	case bpfman.LinkTypeUretprobe:
+	case bpfman.LinkKindUretprobe:
 		return pb.BpfmanLinkType_LINK_TYPE_URETPROBE
-	case bpfman.LinkTypeFentry:
+	case bpfman.LinkKindFentry:
 		return pb.BpfmanLinkType_LINK_TYPE_FENTRY
-	case bpfman.LinkTypeFexit:
+	case bpfman.LinkKindFexit:
 		return pb.BpfmanLinkType_LINK_TYPE_FEXIT
-	case bpfman.LinkTypeXDP:
+	case bpfman.LinkKindXDP:
 		return pb.BpfmanLinkType_LINK_TYPE_XDP
-	case bpfman.LinkTypeTC:
+	case bpfman.LinkKindTC:
 		return pb.BpfmanLinkType_LINK_TYPE_TC
-	case bpfman.LinkTypeTCX:
+	case bpfman.LinkKindTCX:
 		return pb.BpfmanLinkType_LINK_TYPE_TCX
 	default:
 		return pb.BpfmanLinkType_LINK_TYPE_UNSPECIFIED
 	}
 }
 
-// linkTypeStringToProto converts a link type string to protobuf.
-// Used when working with inspect.LinkRow which stores type as string.
-func linkTypeStringToProto(t string) pb.BpfmanLinkType {
-	return linkTypeToProto(bpfman.LinkType(t))
+// linkKindStringToProto converts a link kind string to protobuf.
+// Used when working with inspect.LinkRow which stores kind as string.
+func linkKindStringToProto(k string) pb.BpfmanLinkType {
+	return linkKindToProto(bpfman.LinkKind(k))
 }
 
 // linkDetailsToProto converts bpfman.LinkDetails to protobuf.

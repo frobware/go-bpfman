@@ -36,32 +36,12 @@ func (e *executor) Execute(ctx context.Context, a action.Action) error {
 	case action.DeleteProgram:
 		return e.store.Delete(ctx, a.KernelID)
 
+	case action.SaveLink:
+		_, err := e.store.SaveLink(ctx, a.Record, a.KernelProgramID, a.KernelLinkID)
+		return err
+
 	case action.DeleteLink:
-		return e.store.DeleteLink(ctx, a.KernelLinkID)
-
-	case action.SaveTracepointLink:
-		return e.store.SaveTracepointLink(ctx, a.Summary, a.Details)
-
-	case action.SaveXDPLink:
-		return e.store.SaveXDPLink(ctx, a.Summary, a.Details)
-
-	case action.SaveTCLink:
-		return e.store.SaveTCLink(ctx, a.Summary, a.Details)
-
-	case action.SaveTCXLink:
-		return e.store.SaveTCXLink(ctx, a.Summary, a.Details)
-
-	case action.SaveKprobeLink:
-		return e.store.SaveKprobeLink(ctx, a.Summary, a.Details)
-
-	case action.SaveUprobeLink:
-		return e.store.SaveUprobeLink(ctx, a.Summary, a.Details)
-
-	case action.SaveFentryLink:
-		return e.store.SaveFentryLink(ctx, a.Summary, a.Details)
-
-	case action.SaveFexitLink:
-		return e.store.SaveFexitLink(ctx, a.Summary, a.Details)
+		return e.store.DeleteLink(ctx, a.LinkID)
 
 	case action.LoadProgram:
 		_, err := e.kernel.Load(ctx, a.Spec)

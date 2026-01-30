@@ -175,42 +175,42 @@ func (e *ephemeralClient) Get(ctx context.Context, kernelID uint32) (manager.Pro
 }
 
 // AttachTracepoint attaches a program to a tracepoint via the ephemeral gRPC server.
-func (e *ephemeralClient) AttachTracepoint(ctx context.Context, spec bpfman.TracepointAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error) {
+func (e *ephemeralClient) AttachTracepoint(ctx context.Context, spec bpfman.TracepointAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkRecord, error) {
 	return e.remote.AttachTracepoint(ctx, spec, opts)
 }
 
 // AttachXDP attaches an XDP program to a network interface via the ephemeral gRPC server.
-func (e *ephemeralClient) AttachXDP(ctx context.Context, spec bpfman.XDPAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error) {
+func (e *ephemeralClient) AttachXDP(ctx context.Context, spec bpfman.XDPAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkRecord, error) {
 	return e.remote.AttachXDP(ctx, spec, opts)
 }
 
 // AttachTC attaches a TC program to a network interface via the ephemeral gRPC server.
-func (e *ephemeralClient) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error) {
+func (e *ephemeralClient) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkRecord, error) {
 	return e.remote.AttachTC(ctx, spec, opts)
 }
 
 // AttachTCX attaches a TCX program to a network interface via the ephemeral gRPC server.
-func (e *ephemeralClient) AttachTCX(ctx context.Context, spec bpfman.TCXAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error) {
+func (e *ephemeralClient) AttachTCX(ctx context.Context, spec bpfman.TCXAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkRecord, error) {
 	return e.remote.AttachTCX(ctx, spec, opts)
 }
 
 // AttachKprobe attaches a kprobe/kretprobe program to a kernel function via the ephemeral gRPC server.
-func (e *ephemeralClient) AttachKprobe(ctx context.Context, spec bpfman.KprobeAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error) {
+func (e *ephemeralClient) AttachKprobe(ctx context.Context, spec bpfman.KprobeAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkRecord, error) {
 	return e.remote.AttachKprobe(ctx, spec, opts)
 }
 
 // AttachUprobe attaches a uprobe/uretprobe program to a user-space function via the ephemeral gRPC server.
-func (e *ephemeralClient) AttachUprobe(ctx context.Context, spec bpfman.UprobeAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error) {
+func (e *ephemeralClient) AttachUprobe(ctx context.Context, spec bpfman.UprobeAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkRecord, error) {
 	return e.remote.AttachUprobe(ctx, spec, opts)
 }
 
 // AttachFentry attaches a fentry program to a kernel function via the ephemeral gRPC server.
-func (e *ephemeralClient) AttachFentry(ctx context.Context, spec bpfman.FentryAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error) {
+func (e *ephemeralClient) AttachFentry(ctx context.Context, spec bpfman.FentryAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkRecord, error) {
 	return e.remote.AttachFentry(ctx, spec, opts)
 }
 
 // AttachFexit attaches a fexit program to a kernel function via the ephemeral gRPC server.
-func (e *ephemeralClient) AttachFexit(ctx context.Context, spec bpfman.FexitAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkSummary, error) {
+func (e *ephemeralClient) AttachFexit(ctx context.Context, spec bpfman.FexitAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkRecord, error) {
 	return e.remote.AttachFexit(ctx, spec, opts)
 }
 
@@ -220,17 +220,17 @@ func (e *ephemeralClient) Detach(ctx context.Context, kernelLinkID uint32) error
 }
 
 // ListLinks returns all managed links via the ephemeral gRPC server.
-func (e *ephemeralClient) ListLinks(ctx context.Context) ([]bpfman.LinkSummary, error) {
+func (e *ephemeralClient) ListLinks(ctx context.Context) ([]bpfman.LinkRecord, error) {
 	return e.remote.ListLinks(ctx)
 }
 
 // ListLinksByProgram returns all links for a given program via the ephemeral gRPC server.
-func (e *ephemeralClient) ListLinksByProgram(ctx context.Context, programKernelID uint32) ([]bpfman.LinkSummary, error) {
+func (e *ephemeralClient) ListLinksByProgram(ctx context.Context, programKernelID uint32) ([]bpfman.LinkRecord, error) {
 	return e.remote.ListLinksByProgram(ctx, programKernelID)
 }
 
 // GetLink retrieves a link by kernel link ID via the ephemeral gRPC server.
-func (e *ephemeralClient) GetLink(ctx context.Context, kernelLinkID uint32) (bpfman.LinkSummary, bpfman.LinkDetails, error) {
+func (e *ephemeralClient) GetLink(ctx context.Context, kernelLinkID uint32) (bpfman.LinkRecord, bpfman.LinkDetails, error) {
 	return e.remote.GetLink(ctx, kernelLinkID)
 }
 

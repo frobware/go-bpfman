@@ -21,7 +21,7 @@ var ErrNotFound = errors.New("not found")
 // StoreLister is the subset of interpreter.Store needed by Snapshot.
 type StoreLister interface {
 	List(ctx context.Context) (map[uint32]bpfman.ProgramRecord, error)
-	ListLinks(ctx context.Context) ([]bpfman.LinkSummary, error)
+	ListLinks(ctx context.Context) ([]bpfman.LinkRecord, error)
 	ListDispatchers(ctx context.Context) ([]dispatcher.State, error)
 }
 
@@ -43,7 +43,7 @@ type KernelGetter interface {
 
 // LinkGetter is the subset of interpreter.Store needed by GetLink.
 type LinkGetter interface {
-	GetLink(ctx context.Context, kernelLinkID uint32) (bpfman.LinkSummary, bpfman.LinkDetails, error)
+	GetLink(ctx context.Context, linkID bpfman.LinkID) (bpfman.LinkRecord, error)
 }
 
 // KernelLinkGetter is the subset of interpreter.KernelSource needed by GetLink.
@@ -51,10 +51,10 @@ type KernelLinkGetter interface {
 	GetLinkByID(ctx context.Context, id uint32) (kernel.Link, error)
 }
 
-// LinkInfo is the result of GetLink, containing summary, details, and presence.
+// LinkInfo is the result of GetLink, containing record and presence.
 type LinkInfo struct {
-	Summary  bpfman.LinkSummary
-	Details  bpfman.LinkDetails // may be nil if not in store
+	Record   bpfman.LinkRecord
+	Kernel   *kernel.Link // may be nil if not in kernel
 	Presence Presence
 }
 
@@ -148,16 +148,64 @@ func (v ProgramView) PinPath() string {
 
 // LinkRow is a store-first view of a link with presence annotations.
 type LinkRow struct {
-	KernelLinkID    uint32
-	KernelProgramID uint32
-
 	// Store fields (valid when Presence.InStore is true)
-	LinkType   string
-	PinPath    string
-	HasPinPath bool
-	Synthetic  bool
+	Managed *bpfman.LinkRecord
+
+	// Kernel fields (valid when Presence.InKernel is true)
+	Kernel *kernel.Link
 
 	Presence Presence
+}
+
+// ID returns the link's durable bpfman ID.
+func (r LinkRow) ID() bpfman.LinkID {
+	if r.Managed != nil {
+		return r.Managed.ID
+	}
+	return 0
+}
+
+// KernelLinkID returns the kernel link ID if available.
+func (r LinkRow) KernelLinkID() *uint32 {
+	if r.Managed != nil {
+		return r.Managed.KernelLinkID
+	}
+	if r.Kernel != nil {
+		return &r.Kernel.ID
+	}
+	return nil
+}
+
+// Kind returns the link kind (from store if available).
+func (r LinkRow) Kind() bpfman.LinkKind {
+	if r.Managed != nil {
+		return r.Managed.Kind
+	}
+	return ""
+}
+
+// PinPath returns the pin path (from store if available).
+func (r LinkRow) PinPath() string {
+	if r.Managed != nil {
+		return r.Managed.PinPath
+	}
+	return ""
+}
+
+// IsSynthetic returns true if this is a synthetic link (no kernel link ID).
+func (r LinkRow) IsSynthetic() bool {
+	if r.Managed != nil {
+		return r.Managed.IsSynthetic()
+	}
+	return false
+}
+
+// HasPin returns true if this link has a pin path.
+func (r LinkRow) HasPin() bool {
+	if r.Managed != nil {
+		return r.Managed.HasPin()
+	}
+	return false
 }
 
 // DispatcherRow is a store-first view of a dispatcher with presence annotations.
@@ -378,29 +426,44 @@ func Snapshot(
 	}
 
 	// Phase 3: Build link rows (store-first)
+	// Also build kernel link map for correlation
+	kernelLinkMap := make(map[uint32]kernel.Link)
+	for kl, err := range kern.Links(ctx) {
+		if err != nil {
+			continue
+		}
+		kernelLinkMap[kl.ID] = kl
+	}
+
 	storeLinks, err := store.ListLinks(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	seenLinkIDs := make(map[uint32]bool)
+	seenKernelLinkIDs := make(map[uint32]bool)
 	for _, link := range storeLinks {
-		seenLinkIDs[link.KernelLinkID] = true
-		synthetic := bpfman.IsSyntheticLinkID(link.KernelLinkID)
-		inKernel := false
-		if !synthetic {
-			inKernel = kernelLinks[link.KernelLinkID]
+		linkCopy := link // copy to avoid address-of-loop-variable trap
+
+		// Track kernel link IDs we've seen from store
+		if link.KernelLinkID != nil {
+			seenKernelLinkIDs[*link.KernelLinkID] = true
 		}
+
+		// Check kernel presence
+		var kernelLink *kernel.Link
+		if link.KernelLinkID != nil && !link.IsSynthetic() {
+			if kl, ok := kernelLinkMap[*link.KernelLinkID]; ok {
+				klCopy := kl
+				kernelLink = &klCopy
+			}
+		}
+
 		row := LinkRow{
-			KernelLinkID:    link.KernelLinkID,
-			KernelProgramID: link.KernelProgramID,
-			LinkType:        string(link.LinkType),
-			PinPath:         link.PinPath,
-			HasPinPath:      link.PinPath != "",
-			Synthetic:       synthetic,
+			Managed: &linkCopy,
+			Kernel:  kernelLink,
 			Presence: Presence{
 				InStore:  true,
-				InKernel: inKernel,
+				InKernel: kernelLink != nil,
 				InFS:     link.PinPath != "" && scanner.PathExists(link.PinPath),
 			},
 		}
@@ -408,12 +471,13 @@ func Snapshot(
 	}
 
 	// Add kernel-only links (not in store)
-	for kernelLinkID := range kernelLinks {
-		if seenLinkIDs[kernelLinkID] {
+	for kernelLinkID, kl := range kernelLinkMap {
+		if seenKernelLinkIDs[kernelLinkID] {
 			continue
 		}
+		klCopy := kl
 		row := LinkRow{
-			KernelLinkID: kernelLinkID,
+			Kernel: &klCopy,
 			Presence: Presence{
 				InStore:  false,
 				InKernel: true,
@@ -547,7 +611,7 @@ func GetProgram(
 	return row, nil
 }
 
-// GetLink retrieves a single link by kernel link ID, correlating state
+// GetLink retrieves a single link by its durable bpfman ID, correlating state
 // from store, kernel, and filesystem. This is more efficient than Snapshot
 // for single-link lookups as it performs targeted queries rather than
 // enumerating everything.
@@ -558,39 +622,39 @@ func GetLink(
 	linkGetter LinkGetter,
 	kern KernelLinkGetter,
 	scanner *bpffs.Scanner,
-	kernelLinkID uint32,
+	linkID bpfman.LinkID,
 ) (LinkInfo, error) {
 	info := LinkInfo{}
 
-	// Try store - this returns both summary and details
-	summary, details, err := linkGetter.GetLink(ctx, kernelLinkID)
+	// Try store - this returns the full record with details
+	record, err := linkGetter.GetLink(ctx, linkID)
 	if err == nil {
-		info.Summary = summary
-		info.Details = details
+		info.Record = record
 		info.Presence.InStore = true
 	} else if !errors.Is(err, store.ErrNotFound) {
 		// Real error (not just "not found")
 		return LinkInfo{}, err
 	}
 
-	// Try kernel (skip for synthetic link IDs which don't exist in kernel)
-	if !bpfman.IsSyntheticLinkID(kernelLinkID) {
-		_, err := kern.GetLinkByID(ctx, kernelLinkID)
+	// Try kernel (skip for synthetic links which don't have kernel link IDs)
+	if info.Presence.InStore && record.KernelLinkID != nil && !record.IsSynthetic() {
+		kl, err := kern.GetLinkByID(ctx, *record.KernelLinkID)
 		if err == nil {
+			info.Kernel = &kl
 			info.Presence.InKernel = true
 		}
 		// Kernel errors (link not found) are not fatal - just means not in kernel
 	}
 
 	// Try filesystem - check if pin path exists
-	if info.Presence.InStore && info.Summary.PinPath != "" {
-		if scanner.PathExists(info.Summary.PinPath) {
+	if info.Presence.InStore && record.PinPath != "" {
+		if scanner.PathExists(record.PinPath) {
 			info.Presence.InFS = true
 		}
 	}
 
-	// If not found in any source, return error
-	if !info.Presence.InStore && !info.Presence.InKernel && !info.Presence.InFS {
+	// If not found in store, return error (links are store-first)
+	if !info.Presence.InStore {
 		return LinkInfo{}, ErrNotFound
 	}
 

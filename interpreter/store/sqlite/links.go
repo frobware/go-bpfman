@@ -15,13 +15,13 @@ import (
 // Link Registry Operations
 // ----------------------------------------------------------------------------
 
-// DeleteLink removes link metadata by kernel link ID.
+// DeleteLink removes link metadata by link ID.
 // Due to CASCADE, this also removes the corresponding detail table entry.
-func (s *sqliteStore) DeleteLink(ctx context.Context, kernelLinkID uint32) error {
+func (s *sqliteStore) DeleteLink(ctx context.Context, linkID bpfman.LinkID) error {
 	start := time.Now()
-	result, err := s.stmtDeleteLink.ExecContext(ctx, kernelLinkID)
+	result, err := s.stmtDeleteLink.ExecContext(ctx, uint32(linkID))
 	if err != nil {
-		s.logger.Debug("sql", "stmt", "DeleteLink", "args", []any{kernelLinkID}, "duration_ms", msec(time.Since(start)), "error", err)
+		s.logger.Debug("sql", "stmt", "DeleteLink", "args", []any{linkID}, "duration_ms", msec(time.Since(start)), "error", err)
 		return fmt.Errorf("failed to delete link: %w", err)
 	}
 
@@ -29,38 +29,39 @@ func (s *sqliteStore) DeleteLink(ctx context.Context, kernelLinkID uint32) error
 	if err != nil {
 		return err
 	}
-	s.logger.Debug("sql", "stmt", "DeleteLink", "args", []any{kernelLinkID}, "duration_ms", msec(time.Since(start)), "rows_affected", rows)
+	s.logger.Debug("sql", "stmt", "DeleteLink", "args", []any{linkID}, "duration_ms", msec(time.Since(start)), "rows_affected", rows)
 	if rows == 0 {
-		return fmt.Errorf("link %d: %w", kernelLinkID, store.ErrNotFound)
+		return fmt.Errorf("link %d: %w", linkID, store.ErrNotFound)
 	}
 
 	return nil
 }
 
-// GetLink retrieves link metadata by kernel link ID using two-phase lookup.
-func (s *sqliteStore) GetLink(ctx context.Context, kernelLinkID uint32) (bpfman.LinkSummary, bpfman.LinkDetails, error) {
+// GetLink retrieves link metadata by link ID using two-phase lookup.
+func (s *sqliteStore) GetLink(ctx context.Context, linkID bpfman.LinkID) (bpfman.LinkRecord, error) {
 	// Phase 1: Get summary from registry
 	start := time.Now()
-	row := s.stmtGetLinkRegistry.QueryRowContext(ctx, kernelLinkID)
+	row := s.stmtGetLinkRegistry.QueryRowContext(ctx, int64(linkID))
 
-	summary, err := s.scanLinkSummary(row)
+	record, err := s.scanLinkRecord(row)
 	if err != nil {
-		s.logger.Debug("sql", "stmt", "GetLinkRegistry", "args", []any{kernelLinkID}, "duration_ms", msec(time.Since(start)), "rows", 0)
-		return bpfman.LinkSummary{}, nil, err
+		s.logger.Debug("sql", "stmt", "GetLinkRegistry", "args", []any{linkID}, "duration_ms", msec(time.Since(start)), "rows", 0)
+		return bpfman.LinkRecord{}, err
 	}
-	s.logger.Debug("sql", "stmt", "GetLinkRegistry", "args", []any{kernelLinkID}, "duration_ms", msec(time.Since(start)), "rows", 1)
+	s.logger.Debug("sql", "stmt", "GetLinkRegistry", "args", []any{linkID}, "duration_ms", msec(time.Since(start)), "rows", 1)
 
-	// Phase 2: Get details based on link type
-	details, err := s.getLinkDetails(ctx, summary.LinkType, kernelLinkID)
+	// Phase 2: Get details based on link kind
+	details, err := s.getLinkDetails(ctx, record.Kind, record.ID)
 	if err != nil {
-		return bpfman.LinkSummary{}, nil, err
+		return bpfman.LinkRecord{}, err
 	}
+	record.Details = details
 
-	return summary, details, nil
+	return record, nil
 }
 
-// ListLinks returns all links (summary only).
-func (s *sqliteStore) ListLinks(ctx context.Context) ([]bpfman.LinkSummary, error) {
+// ListLinks returns all links.
+func (s *sqliteStore) ListLinks(ctx context.Context) ([]bpfman.LinkRecord, error) {
 	start := time.Now()
 	rows, err := s.stmtListLinks.QueryContext(ctx)
 	if err != nil {
@@ -69,7 +70,7 @@ func (s *sqliteStore) ListLinks(ctx context.Context) ([]bpfman.LinkSummary, erro
 	}
 	defer rows.Close()
 
-	result, err := s.scanLinkSummaries(rows)
+	result, err := s.scanLinkRecords(rows)
 	if err != nil {
 		return nil, err
 	}
@@ -78,7 +79,7 @@ func (s *sqliteStore) ListLinks(ctx context.Context) ([]bpfman.LinkSummary, erro
 }
 
 // ListLinksByProgram returns all links for a given program kernel ID.
-func (s *sqliteStore) ListLinksByProgram(ctx context.Context, programKernelID uint32) ([]bpfman.LinkSummary, error) {
+func (s *sqliteStore) ListLinksByProgram(ctx context.Context, programKernelID uint32) ([]bpfman.LinkRecord, error) {
 	start := time.Now()
 	rows, err := s.stmtListLinksByProgram.QueryContext(ctx, programKernelID)
 	if err != nil {
@@ -87,7 +88,7 @@ func (s *sqliteStore) ListLinksByProgram(ctx context.Context, programKernelID ui
 	}
 	defer rows.Close()
 
-	result, err := s.scanLinkSummaries(rows)
+	result, err := s.scanLinkRecords(rows)
 	if err != nil {
 		return nil, err
 	}
@@ -122,35 +123,61 @@ func (s *sqliteStore) ListTCXLinksByInterface(ctx context.Context, nsid uint64, 
 }
 
 // ----------------------------------------------------------------------------
-// Type-Specific Link Save Methods
+// SaveLink - Unified Link Save Method
 // ----------------------------------------------------------------------------
 
-// SaveTracepointLink saves a tracepoint link.
-// For atomicity with other operations, wrap in RunInTransaction.
-func (s *sqliteStore) SaveTracepointLink(ctx context.Context, summary bpfman.LinkSummary, details bpfman.TracepointDetails) error {
-	if err := s.insertLinkRegistry(ctx, summary); err != nil {
-		return err
+// SaveLink saves a link record with its details and returns the assigned LinkID.
+// Dispatches to the appropriate detail table based on record.Details.Kind().
+// kernelLinkID is nullable: present for real BPF links, absent for perf_event links.
+func (s *sqliteStore) SaveLink(ctx context.Context, record bpfman.LinkRecord, kernelProgramID uint32, kernelLinkID *uint32) (bpfman.LinkID, error) {
+	linkID, err := s.insertLinkRegistry(ctx, record, kernelProgramID, kernelLinkID)
+	if err != nil {
+		return 0, err
 	}
 
+	if record.Details == nil {
+		return linkID, nil
+	}
+
+	switch details := record.Details.(type) {
+	case bpfman.TracepointDetails:
+		return linkID, s.saveTracepointDetails(ctx, linkID, details)
+	case bpfman.KprobeDetails:
+		return linkID, s.saveKprobeDetails(ctx, linkID, details)
+	case bpfman.UprobeDetails:
+		return linkID, s.saveUprobeDetails(ctx, linkID, details)
+	case bpfman.FentryDetails:
+		return linkID, s.saveFentryDetails(ctx, linkID, details)
+	case bpfman.FexitDetails:
+		return linkID, s.saveFexitDetails(ctx, linkID, details)
+	case bpfman.XDPDetails:
+		return linkID, s.saveXDPDetails(ctx, linkID, details)
+	case bpfman.TCDetails:
+		return linkID, s.saveTCDetails(ctx, linkID, details)
+	case bpfman.TCXDetails:
+		return linkID, s.saveTCXDetails(ctx, linkID, details)
+	default:
+		return 0, fmt.Errorf("unknown link details type: %T", details)
+	}
+}
+
+// ----------------------------------------------------------------------------
+// Type-Specific Detail Save Methods (internal)
+// ----------------------------------------------------------------------------
+
+func (s *sqliteStore) saveTracepointDetails(ctx context.Context, linkID bpfman.LinkID, details bpfman.TracepointDetails) error {
 	start := time.Now()
 	_, err := s.stmtSaveTracepointDetails.ExecContext(ctx,
-		summary.KernelLinkID, details.Group, details.Name)
+		uint32(linkID), details.Group, details.Name)
 	if err != nil {
-		s.logger.Debug("sql", "stmt", "SaveTracepointDetails", "args", []any{summary.KernelLinkID, details.Group, details.Name}, "duration_ms", msec(time.Since(start)), "error", err)
+		s.logger.Debug("sql", "stmt", "SaveTracepointDetails", "args", []any{linkID, details.Group, details.Name}, "duration_ms", msec(time.Since(start)), "error", err)
 		return fmt.Errorf("failed to insert tracepoint details: %w", err)
 	}
-	s.logger.Debug("sql", "stmt", "SaveTracepointDetails", "args", []any{summary.KernelLinkID, details.Group, details.Name}, "duration_ms", msec(time.Since(start)), "rows_affected", 1)
-
+	s.logger.Debug("sql", "stmt", "SaveTracepointDetails", "args", []any{linkID, details.Group, details.Name}, "duration_ms", msec(time.Since(start)), "rows_affected", 1)
 	return nil
 }
 
-// SaveKprobeLink saves a kprobe/kretprobe link.
-// For atomicity with other operations, wrap in RunInTransaction.
-func (s *sqliteStore) SaveKprobeLink(ctx context.Context, summary bpfman.LinkSummary, details bpfman.KprobeDetails) error {
-	if err := s.insertLinkRegistry(ctx, summary); err != nil {
-		return err
-	}
-
+func (s *sqliteStore) saveKprobeDetails(ctx context.Context, linkID bpfman.LinkID, details bpfman.KprobeDetails) error {
 	retprobe := 0
 	if details.Retprobe {
 		retprobe = 1
@@ -158,23 +185,16 @@ func (s *sqliteStore) SaveKprobeLink(ctx context.Context, summary bpfman.LinkSum
 
 	start := time.Now()
 	_, err := s.stmtSaveKprobeDetails.ExecContext(ctx,
-		summary.KernelLinkID, details.FnName, details.Offset, retprobe)
+		uint32(linkID), details.FnName, details.Offset, retprobe)
 	if err != nil {
-		s.logger.Debug("sql", "stmt", "SaveKprobeDetails", "args", []any{summary.KernelLinkID, details.FnName, details.Offset, retprobe}, "duration_ms", msec(time.Since(start)), "error", err)
+		s.logger.Debug("sql", "stmt", "SaveKprobeDetails", "args", []any{linkID, details.FnName, details.Offset, retprobe}, "duration_ms", msec(time.Since(start)), "error", err)
 		return fmt.Errorf("failed to insert kprobe details: %w", err)
 	}
-	s.logger.Debug("sql", "stmt", "SaveKprobeDetails", "args", []any{summary.KernelLinkID, details.FnName, details.Offset, retprobe}, "duration_ms", msec(time.Since(start)), "rows_affected", 1)
-
+	s.logger.Debug("sql", "stmt", "SaveKprobeDetails", "args", []any{linkID, details.FnName, details.Offset, retprobe}, "duration_ms", msec(time.Since(start)), "rows_affected", 1)
 	return nil
 }
 
-// SaveUprobeLink saves a uprobe/uretprobe link.
-// For atomicity with other operations, wrap in RunInTransaction.
-func (s *sqliteStore) SaveUprobeLink(ctx context.Context, summary bpfman.LinkSummary, details bpfman.UprobeDetails) error {
-	if err := s.insertLinkRegistry(ctx, summary); err != nil {
-		return err
-	}
-
+func (s *sqliteStore) saveUprobeDetails(ctx context.Context, linkID bpfman.LinkID, details bpfman.UprobeDetails) error {
 	retprobe := 0
 	if details.Retprobe {
 		retprobe = 1
@@ -182,59 +202,38 @@ func (s *sqliteStore) SaveUprobeLink(ctx context.Context, summary bpfman.LinkSum
 
 	start := time.Now()
 	_, err := s.stmtSaveUprobeDetails.ExecContext(ctx,
-		summary.KernelLinkID, details.Target, details.FnName, details.Offset, details.PID, retprobe)
+		uint32(linkID), details.Target, details.FnName, details.Offset, details.PID, retprobe)
 	if err != nil {
-		s.logger.Debug("sql", "stmt", "SaveUprobeDetails", "args", []any{summary.KernelLinkID, details.Target, details.FnName, details.Offset, details.PID, retprobe}, "duration_ms", msec(time.Since(start)), "error", err)
+		s.logger.Debug("sql", "stmt", "SaveUprobeDetails", "args", []any{linkID, details.Target, details.FnName, details.Offset, details.PID, retprobe}, "duration_ms", msec(time.Since(start)), "error", err)
 		return fmt.Errorf("failed to insert uprobe details: %w", err)
 	}
-	s.logger.Debug("sql", "stmt", "SaveUprobeDetails", "args", []any{summary.KernelLinkID, details.Target, details.FnName, details.Offset, details.PID, retprobe}, "duration_ms", msec(time.Since(start)), "rows_affected", 1)
-
+	s.logger.Debug("sql", "stmt", "SaveUprobeDetails", "args", []any{linkID, details.Target, details.FnName, details.Offset, details.PID, retprobe}, "duration_ms", msec(time.Since(start)), "rows_affected", 1)
 	return nil
 }
 
-// SaveFentryLink saves a fentry link.
-// For atomicity with other operations, wrap in RunInTransaction.
-func (s *sqliteStore) SaveFentryLink(ctx context.Context, summary bpfman.LinkSummary, details bpfman.FentryDetails) error {
-	if err := s.insertLinkRegistry(ctx, summary); err != nil {
-		return err
-	}
-
+func (s *sqliteStore) saveFentryDetails(ctx context.Context, linkID bpfman.LinkID, details bpfman.FentryDetails) error {
 	start := time.Now()
-	_, err := s.stmtSaveFentryDetails.ExecContext(ctx, summary.KernelLinkID, details.FnName)
+	_, err := s.stmtSaveFentryDetails.ExecContext(ctx, uint32(linkID), details.FnName)
 	if err != nil {
-		s.logger.Debug("sql", "stmt", "SaveFentryDetails", "args", []any{summary.KernelLinkID, details.FnName}, "duration_ms", msec(time.Since(start)), "error", err)
+		s.logger.Debug("sql", "stmt", "SaveFentryDetails", "args", []any{linkID, details.FnName}, "duration_ms", msec(time.Since(start)), "error", err)
 		return fmt.Errorf("failed to insert fentry details: %w", err)
 	}
-	s.logger.Debug("sql", "stmt", "SaveFentryDetails", "args", []any{summary.KernelLinkID, details.FnName}, "duration_ms", msec(time.Since(start)), "rows_affected", 1)
-
+	s.logger.Debug("sql", "stmt", "SaveFentryDetails", "args", []any{linkID, details.FnName}, "duration_ms", msec(time.Since(start)), "rows_affected", 1)
 	return nil
 }
 
-// SaveFexitLink saves a fexit link.
-// For atomicity with other operations, wrap in RunInTransaction.
-func (s *sqliteStore) SaveFexitLink(ctx context.Context, summary bpfman.LinkSummary, details bpfman.FexitDetails) error {
-	if err := s.insertLinkRegistry(ctx, summary); err != nil {
-		return err
-	}
-
+func (s *sqliteStore) saveFexitDetails(ctx context.Context, linkID bpfman.LinkID, details bpfman.FexitDetails) error {
 	start := time.Now()
-	_, err := s.stmtSaveFexitDetails.ExecContext(ctx, summary.KernelLinkID, details.FnName)
+	_, err := s.stmtSaveFexitDetails.ExecContext(ctx, uint32(linkID), details.FnName)
 	if err != nil {
-		s.logger.Debug("sql", "stmt", "SaveFexitDetails", "args", []any{summary.KernelLinkID, details.FnName}, "duration_ms", msec(time.Since(start)), "error", err)
+		s.logger.Debug("sql", "stmt", "SaveFexitDetails", "args", []any{linkID, details.FnName}, "duration_ms", msec(time.Since(start)), "error", err)
 		return fmt.Errorf("failed to insert fexit details: %w", err)
 	}
-	s.logger.Debug("sql", "stmt", "SaveFexitDetails", "args", []any{summary.KernelLinkID, details.FnName}, "duration_ms", msec(time.Since(start)), "rows_affected", 1)
-
+	s.logger.Debug("sql", "stmt", "SaveFexitDetails", "args", []any{linkID, details.FnName}, "duration_ms", msec(time.Since(start)), "rows_affected", 1)
 	return nil
 }
 
-// SaveXDPLink saves an XDP link.
-// For atomicity with other operations, wrap in RunInTransaction.
-func (s *sqliteStore) SaveXDPLink(ctx context.Context, summary bpfman.LinkSummary, details bpfman.XDPDetails) error {
-	if err := s.insertLinkRegistry(ctx, summary); err != nil {
-		return err
-	}
-
+func (s *sqliteStore) saveXDPDetails(ctx context.Context, linkID bpfman.LinkID, details bpfman.XDPDetails) error {
 	proceedOnJSON, err := json.Marshal(details.ProceedOn)
 	if err != nil {
 		return fmt.Errorf("failed to marshal proceed_on: %w", err)
@@ -242,24 +241,17 @@ func (s *sqliteStore) SaveXDPLink(ctx context.Context, summary bpfman.LinkSummar
 
 	start := time.Now()
 	_, err = s.stmtSaveXDPDetails.ExecContext(ctx,
-		summary.KernelLinkID, details.Interface, details.Ifindex, details.Priority, details.Position,
+		uint32(linkID), details.Interface, details.Ifindex, details.Priority, details.Position,
 		string(proceedOnJSON), details.Netns, details.Nsid, details.DispatcherID, details.Revision)
 	if err != nil {
-		s.logger.Debug("sql", "stmt", "SaveXDPDetails", "args", []any{summary.KernelLinkID, details.Interface, details.Ifindex, details.Priority, details.Position, "(proceed_on)", details.Netns, details.Nsid, details.DispatcherID, details.Revision}, "duration_ms", msec(time.Since(start)), "error", err)
+		s.logger.Debug("sql", "stmt", "SaveXDPDetails", "args", []any{linkID, details.Interface, details.Ifindex, details.Priority, details.Position, "(proceed_on)", details.Netns, details.Nsid, details.DispatcherID, details.Revision}, "duration_ms", msec(time.Since(start)), "error", err)
 		return fmt.Errorf("failed to insert xdp details: %w", err)
 	}
-	s.logger.Debug("sql", "stmt", "SaveXDPDetails", "args", []any{summary.KernelLinkID, details.Interface, details.Ifindex, details.Priority, details.Position, "(proceed_on)", details.Netns, details.Nsid, details.DispatcherID, details.Revision}, "duration_ms", msec(time.Since(start)), "rows_affected", 1)
-
+	s.logger.Debug("sql", "stmt", "SaveXDPDetails", "args", []any{linkID, details.Interface, details.Ifindex, details.Priority, details.Position, "(proceed_on)", details.Netns, details.Nsid, details.DispatcherID, details.Revision}, "duration_ms", msec(time.Since(start)), "rows_affected", 1)
 	return nil
 }
 
-// SaveTCLink saves a TC link.
-// For atomicity with other operations, wrap in RunInTransaction.
-func (s *sqliteStore) SaveTCLink(ctx context.Context, summary bpfman.LinkSummary, details bpfman.TCDetails) error {
-	if err := s.insertLinkRegistry(ctx, summary); err != nil {
-		return err
-	}
-
+func (s *sqliteStore) saveTCDetails(ctx context.Context, linkID bpfman.LinkID, details bpfman.TCDetails) error {
 	proceedOnJSON, err := json.Marshal(details.ProceedOn)
 	if err != nil {
 		return fmt.Errorf("failed to marshal proceed_on: %w", err)
@@ -267,33 +259,25 @@ func (s *sqliteStore) SaveTCLink(ctx context.Context, summary bpfman.LinkSummary
 
 	start := time.Now()
 	_, err = s.stmtSaveTCDetails.ExecContext(ctx,
-		summary.KernelLinkID, details.Interface, details.Ifindex, details.Direction, details.Priority, details.Position,
+		uint32(linkID), details.Interface, details.Ifindex, details.Direction, details.Priority, details.Position,
 		string(proceedOnJSON), details.Netns, details.Nsid, details.DispatcherID, details.Revision)
 	if err != nil {
-		s.logger.Debug("sql", "stmt", "SaveTCDetails", "args", []any{summary.KernelLinkID, details.Interface, details.Ifindex, details.Direction, details.Priority, details.Position, "(proceed_on)", details.Netns, details.Nsid, details.DispatcherID, details.Revision}, "duration_ms", msec(time.Since(start)), "error", err)
+		s.logger.Debug("sql", "stmt", "SaveTCDetails", "args", []any{linkID, details.Interface, details.Ifindex, details.Direction, details.Priority, details.Position, "(proceed_on)", details.Netns, details.Nsid, details.DispatcherID, details.Revision}, "duration_ms", msec(time.Since(start)), "error", err)
 		return fmt.Errorf("failed to insert tc details: %w", err)
 	}
-	s.logger.Debug("sql", "stmt", "SaveTCDetails", "args", []any{summary.KernelLinkID, details.Interface, details.Ifindex, details.Direction, details.Priority, details.Position, "(proceed_on)", details.Netns, details.Nsid, details.DispatcherID, details.Revision}, "duration_ms", msec(time.Since(start)), "rows_affected", 1)
-
+	s.logger.Debug("sql", "stmt", "SaveTCDetails", "args", []any{linkID, details.Interface, details.Ifindex, details.Direction, details.Priority, details.Position, "(proceed_on)", details.Netns, details.Nsid, details.DispatcherID, details.Revision}, "duration_ms", msec(time.Since(start)), "rows_affected", 1)
 	return nil
 }
 
-// SaveTCXLink saves a TCX link.
-// For atomicity with other operations, wrap in RunInTransaction.
-func (s *sqliteStore) SaveTCXLink(ctx context.Context, summary bpfman.LinkSummary, details bpfman.TCXDetails) error {
-	if err := s.insertLinkRegistry(ctx, summary); err != nil {
-		return err
-	}
-
+func (s *sqliteStore) saveTCXDetails(ctx context.Context, linkID bpfman.LinkID, details bpfman.TCXDetails) error {
 	start := time.Now()
 	_, err := s.stmtSaveTCXDetails.ExecContext(ctx,
-		summary.KernelLinkID, details.Interface, details.Ifindex, details.Direction, details.Priority, details.Netns, details.Nsid)
+		uint32(linkID), details.Interface, details.Ifindex, details.Direction, details.Priority, details.Netns, details.Nsid)
 	if err != nil {
-		s.logger.Debug("sql", "stmt", "SaveTCXDetails", "args", []any{summary.KernelLinkID, details.Interface, details.Ifindex, details.Direction, details.Priority, details.Netns, details.Nsid}, "duration_ms", msec(time.Since(start)), "error", err)
+		s.logger.Debug("sql", "stmt", "SaveTCXDetails", "args", []any{linkID, details.Interface, details.Ifindex, details.Direction, details.Priority, details.Netns, details.Nsid}, "duration_ms", msec(time.Since(start)), "error", err)
 		return fmt.Errorf("failed to insert tcx details: %w", err)
 	}
-	s.logger.Debug("sql", "stmt", "SaveTCXDetails", "args", []any{summary.KernelLinkID, details.Interface, details.Ifindex, details.Direction, details.Priority, details.Netns, details.Nsid}, "duration_ms", msec(time.Since(start)), "rows_affected", 1)
-
+	s.logger.Debug("sql", "stmt", "SaveTCXDetails", "args", []any{linkID, details.Interface, details.Ifindex, details.Direction, details.Priority, details.Netns, details.Nsid}, "duration_ms", msec(time.Since(start)), "rows_affected", 1)
 	return nil
 }
 
@@ -301,144 +285,175 @@ func (s *sqliteStore) SaveTCXLink(ctx context.Context, summary bpfman.LinkSummar
 // Helper Functions
 // ----------------------------------------------------------------------------
 
-// insertLinkRegistry inserts a record into the link_registry table.
-func (s *sqliteStore) insertLinkRegistry(ctx context.Context, summary bpfman.LinkSummary) error {
+// insertLinkRegistry inserts a record into the links table and returns the assigned ID.
+func (s *sqliteStore) insertLinkRegistry(ctx context.Context, record bpfman.LinkRecord, kernelProgramID uint32, kernelLinkID *uint32) (bpfman.LinkID, error) {
 	start := time.Now()
-	_, err := s.stmtInsertLinkRegistry.ExecContext(ctx,
-		summary.KernelLinkID, string(summary.LinkType), summary.KernelProgramID,
-		summary.PinPath, summary.CreatedAt.Format(time.RFC3339))
-	if err != nil {
-		s.logger.Debug("sql", "stmt", "InsertLinkRegistry", "args", []any{summary.KernelLinkID, summary.LinkType, summary.KernelProgramID, summary.PinPath, "(timestamp)"}, "duration_ms", msec(time.Since(start)), "error", err)
-		return fmt.Errorf("failed to insert link registry: %w", err)
+
+	// Handle nullable kernel_link_id
+	var klID interface{}
+	if kernelLinkID != nil {
+		klID = *kernelLinkID
 	}
-	s.logger.Debug("sql", "stmt", "InsertLinkRegistry", "args", []any{summary.KernelLinkID, summary.LinkType, summary.KernelProgramID, summary.PinPath, "(timestamp)"}, "duration_ms", msec(time.Since(start)), "rows_affected", 1)
-	return nil
+
+	result, err := s.stmtInsertLinkRegistry.ExecContext(ctx,
+		string(record.Kind), klID, kernelProgramID,
+		record.PinPath, record.CreatedAt.Format(time.RFC3339))
+	if err != nil {
+		s.logger.Debug("sql", "stmt", "InsertLinkRegistry", "args", []any{record.Kind, klID, kernelProgramID, record.PinPath, "(timestamp)"}, "duration_ms", msec(time.Since(start)), "error", err)
+		return 0, fmt.Errorf("failed to insert link: %w", err)
+	}
+
+	// Get the autoincrement ID
+	id, err := result.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get last insert id: %w", err)
+	}
+
+	s.logger.Debug("sql", "stmt", "InsertLinkRegistry", "args", []any{record.Kind, klID, kernelProgramID, record.PinPath, "(timestamp)"}, "duration_ms", msec(time.Since(start)), "link_id", id)
+	return bpfman.LinkID(id), nil
 }
 
-// scanLinkSummary scans a single row into a LinkSummary.
-func (s *sqliteStore) scanLinkSummary(row *sql.Row) (bpfman.LinkSummary, error) {
-	var summary bpfman.LinkSummary
-	var linkType string
+// scanLinkRecord scans a single row into a LinkRecord (without details).
+// Row format: id, kind, kernel_link_id, pin_path, created_at
+func (s *sqliteStore) scanLinkRecord(row *sql.Row) (bpfman.LinkRecord, error) {
+	var record bpfman.LinkRecord
+	var id int64
+	var kindStr string
+	var kernelLinkID sql.NullInt64
 	var pinPath sql.NullString
 	var createdAtStr string
 
-	err := row.Scan(&summary.KernelLinkID, &linkType, &summary.KernelProgramID, &pinPath, &createdAtStr)
+	err := row.Scan(&id, &kindStr, &kernelLinkID, &pinPath, &createdAtStr)
 	if err == sql.ErrNoRows {
-		return bpfman.LinkSummary{}, fmt.Errorf("link: %w", store.ErrNotFound)
+		return bpfman.LinkRecord{}, fmt.Errorf("link: %w", store.ErrNotFound)
 	}
 	if err != nil {
-		return bpfman.LinkSummary{}, err
+		return bpfman.LinkRecord{}, err
 	}
 
-	summary.LinkType = bpfman.LinkType(linkType)
+	record.ID = bpfman.LinkID(id)
+	record.Kind = bpfman.LinkKind(kindStr)
+	if kernelLinkID.Valid {
+		klid := uint32(kernelLinkID.Int64)
+		record.KernelLinkID = &klid
+	}
 	if pinPath.Valid {
-		summary.PinPath = pinPath.String
+		record.PinPath = pinPath.String
 	}
 	createdAt, err := time.Parse(time.RFC3339, createdAtStr)
 	if err != nil {
-		return bpfman.LinkSummary{}, fmt.Errorf("invalid created_at timestamp for link %d: %q: %w", summary.KernelLinkID, createdAtStr, err)
+		return bpfman.LinkRecord{}, fmt.Errorf("invalid created_at timestamp for link %d: %q: %w", id, createdAtStr, err)
 	}
-	summary.CreatedAt = createdAt
+	record.CreatedAt = createdAt
 
-	return summary, nil
+	return record, nil
 }
 
-// scanLinkSummaries scans multiple rows into a slice of LinkSummary.
-func (s *sqliteStore) scanLinkSummaries(rows *sql.Rows) ([]bpfman.LinkSummary, error) {
-	var result []bpfman.LinkSummary
+// scanLinkRecords scans multiple rows into a slice of LinkRecord (without details).
+// Row format: id, kind, kernel_link_id, pin_path, created_at
+func (s *sqliteStore) scanLinkRecords(rows *sql.Rows) ([]bpfman.LinkRecord, error) {
+	var result []bpfman.LinkRecord
 
 	for rows.Next() {
-		var summary bpfman.LinkSummary
-		var linkType string
+		var id int64
+		var kindStr string
+		var kernelLinkID sql.NullInt64
 		var pinPath sql.NullString
 		var createdAtStr string
 
-		err := rows.Scan(&summary.KernelLinkID, &linkType, &summary.KernelProgramID, &pinPath, &createdAtStr)
+		err := rows.Scan(&id, &kindStr, &kernelLinkID, &pinPath, &createdAtStr)
 		if err != nil {
 			return nil, err
 		}
 
-		summary.LinkType = bpfman.LinkType(linkType)
+		record := bpfman.LinkRecord{
+			ID:   bpfman.LinkID(id),
+			Kind: bpfman.LinkKind(kindStr),
+		}
+		if kernelLinkID.Valid {
+			klid := uint32(kernelLinkID.Int64)
+			record.KernelLinkID = &klid
+		}
 		if pinPath.Valid {
-			summary.PinPath = pinPath.String
+			record.PinPath = pinPath.String
 		}
 		createdAt, err := time.Parse(time.RFC3339, createdAtStr)
 		if err != nil {
-			return nil, fmt.Errorf("invalid created_at timestamp for link %d: %q: %w", summary.KernelLinkID, createdAtStr, err)
+			return nil, fmt.Errorf("invalid created_at timestamp for link %d: %q: %w", id, createdAtStr, err)
 		}
-		summary.CreatedAt = createdAt
+		record.CreatedAt = createdAt
 
-		result = append(result, summary)
+		result = append(result, record)
 	}
 
 	return result, rows.Err()
 }
 
 // getLinkDetails retrieves the type-specific details for a link.
-func (s *sqliteStore) getLinkDetails(ctx context.Context, linkType bpfman.LinkType, kernelLinkID uint32) (bpfman.LinkDetails, error) {
-	switch linkType {
-	case bpfman.LinkTypeTracepoint:
-		return s.getTracepointDetails(ctx, kernelLinkID)
-	case bpfman.LinkTypeKprobe, bpfman.LinkTypeKretprobe:
-		return s.getKprobeDetails(ctx, kernelLinkID)
-	case bpfman.LinkTypeUprobe, bpfman.LinkTypeUretprobe:
-		return s.getUprobeDetails(ctx, kernelLinkID)
-	case bpfman.LinkTypeFentry:
-		return s.getFentryDetails(ctx, kernelLinkID)
-	case bpfman.LinkTypeFexit:
-		return s.getFexitDetails(ctx, kernelLinkID)
-	case bpfman.LinkTypeXDP:
-		return s.getXDPDetails(ctx, kernelLinkID)
-	case bpfman.LinkTypeTC:
-		return s.getTCDetails(ctx, kernelLinkID)
-	case bpfman.LinkTypeTCX:
-		return s.getTCXDetails(ctx, kernelLinkID)
+func (s *sqliteStore) getLinkDetails(ctx context.Context, kind bpfman.LinkKind, linkID bpfman.LinkID) (bpfman.LinkDetails, error) {
+	switch kind {
+	case bpfman.LinkKindTracepoint:
+		return s.getTracepointDetails(ctx, linkID)
+	case bpfman.LinkKindKprobe, bpfman.LinkKindKretprobe:
+		return s.getKprobeDetails(ctx, linkID)
+	case bpfman.LinkKindUprobe, bpfman.LinkKindUretprobe:
+		return s.getUprobeDetails(ctx, linkID)
+	case bpfman.LinkKindFentry:
+		return s.getFentryDetails(ctx, linkID)
+	case bpfman.LinkKindFexit:
+		return s.getFexitDetails(ctx, linkID)
+	case bpfman.LinkKindXDP:
+		return s.getXDPDetails(ctx, linkID)
+	case bpfman.LinkKindTC:
+		return s.getTCDetails(ctx, linkID)
+	case bpfman.LinkKindTCX:
+		return s.getTCXDetails(ctx, linkID)
 	default:
-		return nil, fmt.Errorf("unknown link type: %s", linkType)
+		return nil, fmt.Errorf("unknown link kind: %s", kind)
 	}
 }
 
-func (s *sqliteStore) getTracepointDetails(ctx context.Context, kernelLinkID uint32) (bpfman.TracepointDetails, error) {
+func (s *sqliteStore) getTracepointDetails(ctx context.Context, linkID bpfman.LinkID) (bpfman.TracepointDetails, error) {
 	start := time.Now()
-	row := s.stmtGetTracepointDetails.QueryRowContext(ctx, kernelLinkID)
+	row := s.stmtGetTracepointDetails.QueryRowContext(ctx, int64(linkID))
 
 	var details bpfman.TracepointDetails
 	err := row.Scan(&details.Group, &details.Name)
 	if err == sql.ErrNoRows {
-		s.logger.Debug("sql", "stmt", "GetTracepointDetails", "args", []any{kernelLinkID}, "duration_ms", msec(time.Since(start)), "rows", 0)
-		return bpfman.TracepointDetails{}, fmt.Errorf("tracepoint details for %d: %w", kernelLinkID, store.ErrNotFound)
+		s.logger.Debug("sql", "stmt", "GetTracepointDetails", "args", []any{linkID}, "duration_ms", msec(time.Since(start)), "rows", 0)
+		return bpfman.TracepointDetails{}, fmt.Errorf("tracepoint details for %d: %w", linkID, store.ErrNotFound)
 	}
 	if err != nil {
-		s.logger.Debug("sql", "stmt", "GetTracepointDetails", "args", []any{kernelLinkID}, "duration_ms", msec(time.Since(start)), "error", err)
+		s.logger.Debug("sql", "stmt", "GetTracepointDetails", "args", []any{linkID}, "duration_ms", msec(time.Since(start)), "error", err)
 		return bpfman.TracepointDetails{}, err
 	}
-	s.logger.Debug("sql", "stmt", "GetTracepointDetails", "args", []any{kernelLinkID}, "duration_ms", msec(time.Since(start)), "rows", 1)
+	s.logger.Debug("sql", "stmt", "GetTracepointDetails", "args", []any{linkID}, "duration_ms", msec(time.Since(start)), "rows", 1)
 	return details, nil
 }
 
-func (s *sqliteStore) getKprobeDetails(ctx context.Context, kernelLinkID uint32) (bpfman.KprobeDetails, error) {
+func (s *sqliteStore) getKprobeDetails(ctx context.Context, linkID bpfman.LinkID) (bpfman.KprobeDetails, error) {
 	start := time.Now()
-	row := s.stmtGetKprobeDetails.QueryRowContext(ctx, kernelLinkID)
+	row := s.stmtGetKprobeDetails.QueryRowContext(ctx, int64(linkID))
 
 	var details bpfman.KprobeDetails
 	var retprobe int
 	err := row.Scan(&details.FnName, &details.Offset, &retprobe)
 	if err == sql.ErrNoRows {
-		s.logger.Debug("sql", "stmt", "GetKprobeDetails", "args", []any{kernelLinkID}, "duration_ms", msec(time.Since(start)), "rows", 0)
-		return bpfman.KprobeDetails{}, fmt.Errorf("kprobe details for %d: %w", kernelLinkID, store.ErrNotFound)
+		s.logger.Debug("sql", "stmt", "GetKprobeDetails", "args", []any{linkID}, "duration_ms", msec(time.Since(start)), "rows", 0)
+		return bpfman.KprobeDetails{}, fmt.Errorf("kprobe details for %d: %w", linkID, store.ErrNotFound)
 	}
 	if err != nil {
-		s.logger.Debug("sql", "stmt", "GetKprobeDetails", "args", []any{kernelLinkID}, "duration_ms", msec(time.Since(start)), "error", err)
+		s.logger.Debug("sql", "stmt", "GetKprobeDetails", "args", []any{linkID}, "duration_ms", msec(time.Since(start)), "error", err)
 		return bpfman.KprobeDetails{}, err
 	}
-	s.logger.Debug("sql", "stmt", "GetKprobeDetails", "args", []any{kernelLinkID}, "duration_ms", msec(time.Since(start)), "rows", 1)
+	s.logger.Debug("sql", "stmt", "GetKprobeDetails", "args", []any{linkID}, "duration_ms", msec(time.Since(start)), "rows", 1)
 	details.Retprobe = retprobe == 1
 	return details, nil
 }
 
-func (s *sqliteStore) getUprobeDetails(ctx context.Context, kernelLinkID uint32) (bpfman.UprobeDetails, error) {
+func (s *sqliteStore) getUprobeDetails(ctx context.Context, linkID bpfman.LinkID) (bpfman.UprobeDetails, error) {
 	start := time.Now()
-	row := s.stmtGetUprobeDetails.QueryRowContext(ctx, kernelLinkID)
+	row := s.stmtGetUprobeDetails.QueryRowContext(ctx, int64(linkID))
 
 	var details bpfman.UprobeDetails
 	var fnName sql.NullString
@@ -446,14 +461,14 @@ func (s *sqliteStore) getUprobeDetails(ctx context.Context, kernelLinkID uint32)
 	var retprobe int
 	err := row.Scan(&details.Target, &fnName, &details.Offset, &pid, &retprobe)
 	if err == sql.ErrNoRows {
-		s.logger.Debug("sql", "stmt", "GetUprobeDetails", "args", []any{kernelLinkID}, "duration_ms", msec(time.Since(start)), "rows", 0)
-		return bpfman.UprobeDetails{}, fmt.Errorf("uprobe details for %d: %w", kernelLinkID, store.ErrNotFound)
+		s.logger.Debug("sql", "stmt", "GetUprobeDetails", "args", []any{linkID}, "duration_ms", msec(time.Since(start)), "rows", 0)
+		return bpfman.UprobeDetails{}, fmt.Errorf("uprobe details for %d: %w", linkID, store.ErrNotFound)
 	}
 	if err != nil {
-		s.logger.Debug("sql", "stmt", "GetUprobeDetails", "args", []any{kernelLinkID}, "duration_ms", msec(time.Since(start)), "error", err)
+		s.logger.Debug("sql", "stmt", "GetUprobeDetails", "args", []any{linkID}, "duration_ms", msec(time.Since(start)), "error", err)
 		return bpfman.UprobeDetails{}, err
 	}
-	s.logger.Debug("sql", "stmt", "GetUprobeDetails", "args", []any{kernelLinkID}, "duration_ms", msec(time.Since(start)), "rows", 1)
+	s.logger.Debug("sql", "stmt", "GetUprobeDetails", "args", []any{linkID}, "duration_ms", msec(time.Since(start)), "rows", 1)
 	if fnName.Valid {
 		details.FnName = fnName.String
 	}
@@ -464,45 +479,45 @@ func (s *sqliteStore) getUprobeDetails(ctx context.Context, kernelLinkID uint32)
 	return details, nil
 }
 
-func (s *sqliteStore) getFentryDetails(ctx context.Context, kernelLinkID uint32) (bpfman.FentryDetails, error) {
+func (s *sqliteStore) getFentryDetails(ctx context.Context, linkID bpfman.LinkID) (bpfman.FentryDetails, error) {
 	start := time.Now()
-	row := s.stmtGetFentryDetails.QueryRowContext(ctx, kernelLinkID)
+	row := s.stmtGetFentryDetails.QueryRowContext(ctx, int64(linkID))
 
 	var details bpfman.FentryDetails
 	err := row.Scan(&details.FnName)
 	if err == sql.ErrNoRows {
-		s.logger.Debug("sql", "stmt", "GetFentryDetails", "args", []any{kernelLinkID}, "duration_ms", msec(time.Since(start)), "rows", 0)
-		return bpfman.FentryDetails{}, fmt.Errorf("fentry details for %d: %w", kernelLinkID, store.ErrNotFound)
+		s.logger.Debug("sql", "stmt", "GetFentryDetails", "args", []any{linkID}, "duration_ms", msec(time.Since(start)), "rows", 0)
+		return bpfman.FentryDetails{}, fmt.Errorf("fentry details for %d: %w", linkID, store.ErrNotFound)
 	}
 	if err != nil {
-		s.logger.Debug("sql", "stmt", "GetFentryDetails", "args", []any{kernelLinkID}, "duration_ms", msec(time.Since(start)), "error", err)
+		s.logger.Debug("sql", "stmt", "GetFentryDetails", "args", []any{linkID}, "duration_ms", msec(time.Since(start)), "error", err)
 		return bpfman.FentryDetails{}, err
 	}
-	s.logger.Debug("sql", "stmt", "GetFentryDetails", "args", []any{kernelLinkID}, "duration_ms", msec(time.Since(start)), "rows", 1)
+	s.logger.Debug("sql", "stmt", "GetFentryDetails", "args", []any{linkID}, "duration_ms", msec(time.Since(start)), "rows", 1)
 	return details, nil
 }
 
-func (s *sqliteStore) getFexitDetails(ctx context.Context, kernelLinkID uint32) (bpfman.FexitDetails, error) {
+func (s *sqliteStore) getFexitDetails(ctx context.Context, linkID bpfman.LinkID) (bpfman.FexitDetails, error) {
 	start := time.Now()
-	row := s.stmtGetFexitDetails.QueryRowContext(ctx, kernelLinkID)
+	row := s.stmtGetFexitDetails.QueryRowContext(ctx, int64(linkID))
 
 	var details bpfman.FexitDetails
 	err := row.Scan(&details.FnName)
 	if err == sql.ErrNoRows {
-		s.logger.Debug("sql", "stmt", "GetFexitDetails", "args", []any{kernelLinkID}, "duration_ms", msec(time.Since(start)), "rows", 0)
-		return bpfman.FexitDetails{}, fmt.Errorf("fexit details for %d: %w", kernelLinkID, store.ErrNotFound)
+		s.logger.Debug("sql", "stmt", "GetFexitDetails", "args", []any{linkID}, "duration_ms", msec(time.Since(start)), "rows", 0)
+		return bpfman.FexitDetails{}, fmt.Errorf("fexit details for %d: %w", linkID, store.ErrNotFound)
 	}
 	if err != nil {
-		s.logger.Debug("sql", "stmt", "GetFexitDetails", "args", []any{kernelLinkID}, "duration_ms", msec(time.Since(start)), "error", err)
+		s.logger.Debug("sql", "stmt", "GetFexitDetails", "args", []any{linkID}, "duration_ms", msec(time.Since(start)), "error", err)
 		return bpfman.FexitDetails{}, err
 	}
-	s.logger.Debug("sql", "stmt", "GetFexitDetails", "args", []any{kernelLinkID}, "duration_ms", msec(time.Since(start)), "rows", 1)
+	s.logger.Debug("sql", "stmt", "GetFexitDetails", "args", []any{linkID}, "duration_ms", msec(time.Since(start)), "rows", 1)
 	return details, nil
 }
 
-func (s *sqliteStore) getXDPDetails(ctx context.Context, kernelLinkID uint32) (bpfman.XDPDetails, error) {
+func (s *sqliteStore) getXDPDetails(ctx context.Context, linkID bpfman.LinkID) (bpfman.XDPDetails, error) {
 	start := time.Now()
-	row := s.stmtGetXDPDetails.QueryRowContext(ctx, kernelLinkID)
+	row := s.stmtGetXDPDetails.QueryRowContext(ctx, int64(linkID))
 
 	var details bpfman.XDPDetails
 	var proceedOnJSON string
@@ -510,14 +525,14 @@ func (s *sqliteStore) getXDPDetails(ctx context.Context, kernelLinkID uint32) (b
 	err := row.Scan(&details.Interface, &details.Ifindex, &details.Priority, &details.Position,
 		&proceedOnJSON, &netns, &details.Nsid, &details.DispatcherID, &details.Revision)
 	if err == sql.ErrNoRows {
-		s.logger.Debug("sql", "stmt", "GetXDPDetails", "args", []any{kernelLinkID}, "duration_ms", msec(time.Since(start)), "rows", 0)
-		return bpfman.XDPDetails{}, fmt.Errorf("xdp details for %d: %w", kernelLinkID, store.ErrNotFound)
+		s.logger.Debug("sql", "stmt", "GetXDPDetails", "args", []any{linkID}, "duration_ms", msec(time.Since(start)), "rows", 0)
+		return bpfman.XDPDetails{}, fmt.Errorf("xdp details for %d: %w", linkID, store.ErrNotFound)
 	}
 	if err != nil {
-		s.logger.Debug("sql", "stmt", "GetXDPDetails", "args", []any{kernelLinkID}, "duration_ms", msec(time.Since(start)), "error", err)
+		s.logger.Debug("sql", "stmt", "GetXDPDetails", "args", []any{linkID}, "duration_ms", msec(time.Since(start)), "error", err)
 		return bpfman.XDPDetails{}, err
 	}
-	s.logger.Debug("sql", "stmt", "GetXDPDetails", "args", []any{kernelLinkID}, "duration_ms", msec(time.Since(start)), "rows", 1)
+	s.logger.Debug("sql", "stmt", "GetXDPDetails", "args", []any{linkID}, "duration_ms", msec(time.Since(start)), "rows", 1)
 
 	if err := json.Unmarshal([]byte(proceedOnJSON), &details.ProceedOn); err != nil {
 		return bpfman.XDPDetails{}, fmt.Errorf("failed to unmarshal proceed_on: %w", err)
@@ -528,9 +543,9 @@ func (s *sqliteStore) getXDPDetails(ctx context.Context, kernelLinkID uint32) (b
 	return details, nil
 }
 
-func (s *sqliteStore) getTCDetails(ctx context.Context, kernelLinkID uint32) (bpfman.TCDetails, error) {
+func (s *sqliteStore) getTCDetails(ctx context.Context, linkID bpfman.LinkID) (bpfman.TCDetails, error) {
 	start := time.Now()
-	row := s.stmtGetTCDetails.QueryRowContext(ctx, kernelLinkID)
+	row := s.stmtGetTCDetails.QueryRowContext(ctx, int64(linkID))
 
 	var details bpfman.TCDetails
 	var proceedOnJSON string
@@ -538,14 +553,14 @@ func (s *sqliteStore) getTCDetails(ctx context.Context, kernelLinkID uint32) (bp
 	err := row.Scan(&details.Interface, &details.Ifindex, &details.Direction, &details.Priority, &details.Position,
 		&proceedOnJSON, &netns, &details.Nsid, &details.DispatcherID, &details.Revision)
 	if err == sql.ErrNoRows {
-		s.logger.Debug("sql", "stmt", "GetTCDetails", "args", []any{kernelLinkID}, "duration_ms", msec(time.Since(start)), "rows", 0)
-		return bpfman.TCDetails{}, fmt.Errorf("tc details for %d: %w", kernelLinkID, store.ErrNotFound)
+		s.logger.Debug("sql", "stmt", "GetTCDetails", "args", []any{linkID}, "duration_ms", msec(time.Since(start)), "rows", 0)
+		return bpfman.TCDetails{}, fmt.Errorf("tc details for %d: %w", linkID, store.ErrNotFound)
 	}
 	if err != nil {
-		s.logger.Debug("sql", "stmt", "GetTCDetails", "args", []any{kernelLinkID}, "duration_ms", msec(time.Since(start)), "error", err)
+		s.logger.Debug("sql", "stmt", "GetTCDetails", "args", []any{linkID}, "duration_ms", msec(time.Since(start)), "error", err)
 		return bpfman.TCDetails{}, err
 	}
-	s.logger.Debug("sql", "stmt", "GetTCDetails", "args", []any{kernelLinkID}, "duration_ms", msec(time.Since(start)), "rows", 1)
+	s.logger.Debug("sql", "stmt", "GetTCDetails", "args", []any{linkID}, "duration_ms", msec(time.Since(start)), "rows", 1)
 
 	if err := json.Unmarshal([]byte(proceedOnJSON), &details.ProceedOn); err != nil {
 		return bpfman.TCDetails{}, fmt.Errorf("failed to unmarshal proceed_on: %w", err)
@@ -556,23 +571,23 @@ func (s *sqliteStore) getTCDetails(ctx context.Context, kernelLinkID uint32) (bp
 	return details, nil
 }
 
-func (s *sqliteStore) getTCXDetails(ctx context.Context, kernelLinkID uint32) (bpfman.TCXDetails, error) {
+func (s *sqliteStore) getTCXDetails(ctx context.Context, linkID bpfman.LinkID) (bpfman.TCXDetails, error) {
 	start := time.Now()
-	row := s.stmtGetTCXDetails.QueryRowContext(ctx, kernelLinkID)
+	row := s.stmtGetTCXDetails.QueryRowContext(ctx, int64(linkID))
 
 	var details bpfman.TCXDetails
 	var netns sql.NullString
 	var nsid sql.NullInt64
 	err := row.Scan(&details.Interface, &details.Ifindex, &details.Direction, &details.Priority, &netns, &nsid)
 	if err == sql.ErrNoRows {
-		s.logger.Debug("sql", "stmt", "GetTCXDetails", "args", []any{kernelLinkID}, "duration_ms", msec(time.Since(start)), "rows", 0)
-		return bpfman.TCXDetails{}, fmt.Errorf("tcx details for %d: %w", kernelLinkID, store.ErrNotFound)
+		s.logger.Debug("sql", "stmt", "GetTCXDetails", "args", []any{linkID}, "duration_ms", msec(time.Since(start)), "rows", 0)
+		return bpfman.TCXDetails{}, fmt.Errorf("tcx details for %d: %w", linkID, store.ErrNotFound)
 	}
 	if err != nil {
-		s.logger.Debug("sql", "stmt", "GetTCXDetails", "args", []any{kernelLinkID}, "duration_ms", msec(time.Since(start)), "error", err)
+		s.logger.Debug("sql", "stmt", "GetTCXDetails", "args", []any{linkID}, "duration_ms", msec(time.Since(start)), "error", err)
 		return bpfman.TCXDetails{}, err
 	}
-	s.logger.Debug("sql", "stmt", "GetTCXDetails", "args", []any{kernelLinkID}, "duration_ms", msec(time.Since(start)), "rows", 1)
+	s.logger.Debug("sql", "stmt", "GetTCXDetails", "args", []any{linkID}, "duration_ms", msec(time.Since(start)), "rows", 1)
 
 	if netns.Valid {
 		details.Netns = netns.String

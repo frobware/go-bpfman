@@ -117,6 +117,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/frobware/go-bpfman/interpreter"
@@ -200,6 +201,7 @@ type sqliteStore struct {
 }
 
 // New creates a new SQLite store at the given path.
+// If the schema version doesn't match, the database is deleted and recreated.
 func New(ctx context.Context, dbPath string, logger *slog.Logger) (interpreter.Store, error) {
 	if logger == nil {
 		logger = slog.Default()
@@ -219,6 +221,14 @@ func New(ctx context.Context, dbPath string, logger *slog.Logger) (interpreter.S
 	s := &sqliteStore{db: db, conn: db, logger: logger}
 	if err := s.migrate(ctx); err != nil {
 		db.Close()
+		// Schema version mismatch - delete and recreate
+		if strings.Contains(err.Error(), "schema version mismatch") {
+			logger.Warn("schema version mismatch, recreating database", "error", err)
+			if err := deleteDatabase(dbPath); err != nil {
+				return nil, fmt.Errorf("failed to delete old database: %w", err)
+			}
+			return New(ctx, dbPath, logger) // Recursive call with fresh DB
+		}
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
 	if err := s.prepareStatements(ctx); err != nil {
@@ -228,6 +238,23 @@ func New(ctx context.Context, dbPath string, logger *slog.Logger) (interpreter.S
 
 	logger.Info("opened database", "path", dbPath)
 	return s, nil
+}
+
+// deleteDatabase removes the SQLite database file and its WAL/SHM companions.
+func deleteDatabase(dbPath string) error {
+	// Remove main database file
+	if err := os.Remove(dbPath); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	// Remove WAL file if present
+	if err := os.Remove(dbPath + "-wal"); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	// Remove SHM file if present
+	if err := os.Remove(dbPath + "-shm"); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 // NewInMemory creates an in-memory SQLite store for testing.
@@ -315,11 +342,32 @@ func (s *sqliteStore) closeStatements() {
 	}
 }
 
+// schemaVersion is the current schema version. Increment this when the schema changes.
+// On mismatch, the database is deleted and recreated (no backwards compatibility).
+const schemaVersion = 2
+
 func (s *sqliteStore) migrate(ctx context.Context) error {
-	// Execute the embedded schema
+	// Check current schema version
+	var version int
+	if err := s.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
+		return fmt.Errorf("failed to read schema version: %w", err)
+	}
+
+	if version != 0 && version != schemaVersion {
+		// Version mismatch - caller needs to delete and recreate
+		return fmt.Errorf("schema version mismatch: have %d, want %d", version, schemaVersion)
+	}
+
+	// Execute the embedded schema (idempotent due to IF NOT EXISTS)
 	if _, err := s.db.ExecContext(ctx, schemaSQL); err != nil {
 		return fmt.Errorf("failed to execute schema: %w", err)
 	}
+
+	// Set schema version
+	if _, err := s.db.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
+		return fmt.Errorf("failed to set schema version: %w", err)
+	}
+
 	return nil
 }
 

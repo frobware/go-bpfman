@@ -21,8 +21,7 @@ import (
 // fakeStore implements StoreLister for testing.
 type fakeStore struct {
 	programs    map[uint32]bpfman.ProgramRecord
-	links       []bpfman.LinkSummary
-	linkDetails map[uint32]bpfman.LinkDetails // kernelLinkID -> details
+	links       []bpfman.LinkRecord
 	dispatchers []dispatcher.State
 }
 
@@ -37,18 +36,17 @@ func (s *fakeStore) Get(ctx context.Context, kernelID uint32) (bpfman.ProgramRec
 	return bpfman.ProgramRecord{}, store.ErrNotFound
 }
 
-func (s *fakeStore) ListLinks(ctx context.Context) ([]bpfman.LinkSummary, error) {
+func (s *fakeStore) ListLinks(ctx context.Context) ([]bpfman.LinkRecord, error) {
 	return s.links, nil
 }
 
-func (s *fakeStore) GetLink(ctx context.Context, kernelLinkID uint32) (bpfman.LinkSummary, bpfman.LinkDetails, error) {
+func (s *fakeStore) GetLink(ctx context.Context, linkID bpfman.LinkID) (bpfman.LinkRecord, error) {
 	for _, l := range s.links {
-		if l.KernelLinkID == kernelLinkID {
-			details := s.linkDetails[kernelLinkID]
-			return l, details, nil
+		if l.ID == linkID {
+			return l, nil
 		}
 	}
-	return bpfman.LinkSummary{}, nil, store.ErrNotFound
+	return bpfman.LinkRecord{}, store.ErrNotFound
 }
 
 func (s *fakeStore) ListDispatchers(ctx context.Context) ([]dispatcher.State, error) {
@@ -218,17 +216,19 @@ func TestSnapshot_Links(t *testing.T) {
 	dirs := testScannerDirs(t)
 	scanner := bpffs.NewScanner(dirs)
 
+	klid10 := uint32(10)
+	klid20 := uint32(20)
 	store := &fakeStore{
-		links: []bpfman.LinkSummary{
-			{KernelLinkID: 10, KernelProgramID: 100, LinkType: "xdp"},
-			{KernelLinkID: 20, KernelProgramID: 200, LinkType: "kprobe"},
+		links: []bpfman.LinkRecord{
+			{ID: 1, Kind: bpfman.LinkKindXDP, KernelLinkID: &klid10},
+			{ID: 2, Kind: bpfman.LinkKindKprobe, KernelLinkID: &klid20},
 		},
 	}
 
 	kern := &fakeKernelSource{
 		links: []kernel.Link{
-			{ID: 10},
-			{ID: 20},
+			{ID: 10, ProgramID: 100},
+			{ID: 20, ProgramID: 200},
 			{ID: 999}, // kernel-only link
 		},
 	}
@@ -250,7 +250,8 @@ func TestSnapshot_Links(t *testing.T) {
 		}
 	}
 	require.NotNil(t, kernelOnly)
-	assert.Equal(t, uint32(999), kernelOnly.KernelLinkID)
+	require.NotNil(t, kernelOnly.Kernel)
+	assert.Equal(t, uint32(999), kernelOnly.Kernel.ID)
 }
 
 func TestSnapshot_Dispatchers(t *testing.T) {
@@ -478,52 +479,60 @@ func TestGetLink_FullyPresent(t *testing.T) {
 
 	scanner := bpffs.NewScanner(dirs)
 
+	klid := uint32(10)
 	store := &fakeStore{
-		links: []bpfman.LinkSummary{
-			{KernelLinkID: 10, KernelProgramID: 100, LinkType: "kprobe", PinPath: pinPath},
-		},
-		linkDetails: map[uint32]bpfman.LinkDetails{
-			10: bpfman.KprobeDetails{FnName: "do_sys_open"},
+		links: []bpfman.LinkRecord{
+			{
+				ID:           1,
+				Kind:         bpfman.LinkKindKprobe,
+				KernelLinkID: &klid,
+				PinPath:      pinPath,
+				Details:      bpfman.KprobeDetails{FnName: "do_sys_open"},
+			},
 		},
 	}
 
 	kern := &fakeKernelSource{
-		links: []kernel.Link{{ID: 10}},
+		links: []kernel.Link{{ID: 10, ProgramID: 100}},
 	}
 
-	info, err := GetLink(context.Background(), store, kern, scanner, 10)
+	info, err := GetLink(context.Background(), store, kern, scanner, 1) // LinkID 1
 	require.NoError(t, err)
 
-	assert.Equal(t, uint32(10), info.Summary.KernelLinkID)
-	assert.Equal(t, uint32(100), info.Summary.KernelProgramID)
+	assert.Equal(t, bpfman.LinkID(1), info.Record.ID)
+	require.NotNil(t, info.Record.KernelLinkID)
+	assert.Equal(t, uint32(10), *info.Record.KernelLinkID)
 	assert.True(t, info.Presence.InStore)
 	assert.True(t, info.Presence.InKernel)
 	assert.True(t, info.Presence.InFS)
-	assert.NotNil(t, info.Details)
+	assert.NotNil(t, info.Record.Details)
 }
 
 func TestGetLink_StoreOnly(t *testing.T) {
 	dirs := testScannerDirs(t)
 	scanner := bpffs.NewScanner(dirs)
 
+	klid := uint32(20)
 	store := &fakeStore{
-		links: []bpfman.LinkSummary{
-			{KernelLinkID: 20, KernelProgramID: 200, LinkType: "tracepoint"},
+		links: []bpfman.LinkRecord{
+			{ID: 2, Kind: bpfman.LinkKindTracepoint, KernelLinkID: &klid},
 		},
 	}
 
 	kern := &fakeKernelSource{} // Link not in kernel
 
-	info, err := GetLink(context.Background(), store, kern, scanner, 20)
+	info, err := GetLink(context.Background(), store, kern, scanner, 2) // LinkID 2
 	require.NoError(t, err)
 
-	assert.Equal(t, uint32(20), info.Summary.KernelLinkID)
+	assert.Equal(t, bpfman.LinkID(2), info.Record.ID)
 	assert.True(t, info.Presence.InStore)
 	assert.False(t, info.Presence.InKernel)
 	assert.False(t, info.Presence.InFS)
 }
 
-func TestGetLink_KernelOnly(t *testing.T) {
+func TestGetLink_NotInStore(t *testing.T) {
+	// GetLink requires the link to be in the store (it takes a durable LinkID).
+	// If the link is not in the store, it returns ErrNotFound.
 	dirs := testScannerDirs(t)
 	scanner := bpffs.NewScanner(dirs)
 
@@ -533,12 +542,11 @@ func TestGetLink_KernelOnly(t *testing.T) {
 		links: []kernel.Link{{ID: 999}},
 	}
 
-	info, err := GetLink(context.Background(), store, kern, scanner, 999)
-	require.NoError(t, err)
-
-	assert.False(t, info.Presence.InStore)
-	assert.True(t, info.Presence.InKernel)
-	assert.False(t, info.Presence.InFS)
+	// Even though link 999 exists in kernel, we can't look it up by LinkID 999
+	// because LinkID is a store-assigned durable ID, not a kernel link ID.
+	_, err := GetLink(context.Background(), store, kern, scanner, 999)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrNotFound)
 }
 
 func TestGetLink_NotFound(t *testing.T) {

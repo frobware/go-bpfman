@@ -138,43 +138,45 @@ func (s *sqliteStore) prepareProgramStatements(ctx context.Context) error {
 func (s *sqliteStore) prepareLinkRegistryStatements(ctx context.Context) error {
 	var err error
 
-	const sqlDeleteLink = "DELETE FROM link_registry WHERE kernel_link_id = ?"
+	const sqlDeleteLink = "DELETE FROM links WHERE id = ?"
 	if s.stmtDeleteLink, err = s.db.PrepareContext(ctx, sqlDeleteLink); err != nil {
 		return fmt.Errorf("prepare DeleteLink: %w", err)
 	}
 
 	const sqlGetLinkRegistry = `
-		SELECT kernel_link_id, link_type, kernel_program_id, pin_path, created_at
-		FROM link_registry WHERE kernel_link_id = ?`
+		SELECT id, kind, kernel_link_id, pin_path, created_at
+		FROM links WHERE id = ?`
 	if s.stmtGetLinkRegistry, err = s.db.PrepareContext(ctx, sqlGetLinkRegistry); err != nil {
 		return fmt.Errorf("prepare GetLinkRegistry: %w", err)
 	}
 
 	const sqlListLinks = `
-		SELECT kernel_link_id, link_type, kernel_program_id, pin_path, created_at
-		FROM link_registry`
+		SELECT id, kind, kernel_link_id, pin_path, created_at
+		FROM links`
 	if s.stmtListLinks, err = s.db.PrepareContext(ctx, sqlListLinks); err != nil {
 		return fmt.Errorf("prepare ListLinks: %w", err)
 	}
 
 	const sqlListLinksByProgram = `
-		SELECT kernel_link_id, link_type, kernel_program_id, pin_path, created_at
-		FROM link_registry WHERE kernel_program_id = ?`
+		SELECT id, kind, kernel_link_id, pin_path, created_at
+		FROM links WHERE kernel_prog_id = ?`
 	if s.stmtListLinksByProgram, err = s.db.PrepareContext(ctx, sqlListLinksByProgram); err != nil {
 		return fmt.Errorf("prepare ListLinksByProgram: %w", err)
 	}
 
+	// Note: INSERT ... RETURNING requires SQLite 3.35+ (March 2021)
+	// We use ExecContext + LastInsertId instead for broader compatibility
 	const sqlInsertLinkRegistry = `
-		INSERT INTO link_registry (kernel_link_id, link_type, kernel_program_id, pin_path, created_at)
+		INSERT INTO links (kind, kernel_link_id, kernel_prog_id, pin_path, created_at)
 		VALUES (?, ?, ?, ?, ?)`
 	if s.stmtInsertLinkRegistry, err = s.db.PrepareContext(ctx, sqlInsertLinkRegistry); err != nil {
 		return fmt.Errorf("prepare InsertLinkRegistry: %w", err)
 	}
 
 	const sqlListTCXLinksByInterface = `
-		SELECT lr.kernel_link_id, lr.kernel_program_id, td.priority
-		FROM link_registry lr
-		JOIN tcx_link_details td ON lr.kernel_link_id = td.kernel_link_id
+		SELECT l.kernel_link_id, l.kernel_prog_id, td.priority
+		FROM links l
+		JOIN link_tcx_details td ON l.id = td.link_id
 		WHERE td.nsid = ? AND td.ifindex = ? AND td.direction = ?
 		ORDER BY td.priority ASC`
 	if s.stmtListTCXLinksByInterface, err = s.db.PrepareContext(ctx, sqlListTCXLinksByInterface); err != nil {
@@ -189,104 +191,104 @@ func (s *sqliteStore) prepareLinkDetailStatements(ctx context.Context) error {
 	var err error
 
 	// Get statements
-	const sqlGetTracepointDetails = "SELECT tracepoint_group, tracepoint_name FROM tracepoint_link_details WHERE kernel_link_id = ?"
+	const sqlGetTracepointDetails = "SELECT tp_group, tp_name FROM link_tracepoint_details WHERE link_id = ?"
 	if s.stmtGetTracepointDetails, err = s.db.PrepareContext(ctx, sqlGetTracepointDetails); err != nil {
 		return fmt.Errorf("prepare GetTracepointDetails: %w", err)
 	}
 
-	const sqlGetKprobeDetails = "SELECT fn_name, offset, retprobe FROM kprobe_link_details WHERE kernel_link_id = ?"
+	const sqlGetKprobeDetails = "SELECT fn_name, offset, retprobe FROM link_kprobe_details WHERE link_id = ?"
 	if s.stmtGetKprobeDetails, err = s.db.PrepareContext(ctx, sqlGetKprobeDetails); err != nil {
 		return fmt.Errorf("prepare GetKprobeDetails: %w", err)
 	}
 
-	const sqlGetUprobeDetails = "SELECT target, fn_name, offset, pid, retprobe FROM uprobe_link_details WHERE kernel_link_id = ?"
+	const sqlGetUprobeDetails = "SELECT target, fn_name, offset, pid, retprobe FROM link_uprobe_details WHERE link_id = ?"
 	if s.stmtGetUprobeDetails, err = s.db.PrepareContext(ctx, sqlGetUprobeDetails); err != nil {
 		return fmt.Errorf("prepare GetUprobeDetails: %w", err)
 	}
 
-	const sqlGetFentryDetails = "SELECT fn_name FROM fentry_link_details WHERE kernel_link_id = ?"
+	const sqlGetFentryDetails = "SELECT fn_name FROM link_fentry_details WHERE link_id = ?"
 	if s.stmtGetFentryDetails, err = s.db.PrepareContext(ctx, sqlGetFentryDetails); err != nil {
 		return fmt.Errorf("prepare GetFentryDetails: %w", err)
 	}
 
-	const sqlGetFexitDetails = "SELECT fn_name FROM fexit_link_details WHERE kernel_link_id = ?"
+	const sqlGetFexitDetails = "SELECT fn_name FROM link_fexit_details WHERE link_id = ?"
 	if s.stmtGetFexitDetails, err = s.db.PrepareContext(ctx, sqlGetFexitDetails); err != nil {
 		return fmt.Errorf("prepare GetFexitDetails: %w", err)
 	}
 
 	const sqlGetXDPDetails = `
 		SELECT interface, ifindex, priority, position, proceed_on, netns, nsid, dispatcher_kernel_id, revision
-		FROM xdp_link_details WHERE kernel_link_id = ?`
+		FROM link_xdp_details WHERE link_id = ?`
 	if s.stmtGetXDPDetails, err = s.db.PrepareContext(ctx, sqlGetXDPDetails); err != nil {
 		return fmt.Errorf("prepare GetXDPDetails: %w", err)
 	}
 
 	const sqlGetTCDetails = `
 		SELECT interface, ifindex, direction, priority, position, proceed_on, netns, nsid, dispatcher_kernel_id, revision
-		FROM tc_link_details WHERE kernel_link_id = ?`
+		FROM link_tc_details WHERE link_id = ?`
 	if s.stmtGetTCDetails, err = s.db.PrepareContext(ctx, sqlGetTCDetails); err != nil {
 		return fmt.Errorf("prepare GetTCDetails: %w", err)
 	}
 
 	const sqlGetTCXDetails = `
 		SELECT interface, ifindex, direction, priority, netns, nsid
-		FROM tcx_link_details WHERE kernel_link_id = ?`
+		FROM link_tcx_details WHERE link_id = ?`
 	if s.stmtGetTCXDetails, err = s.db.PrepareContext(ctx, sqlGetTCXDetails); err != nil {
 		return fmt.Errorf("prepare GetTCXDetails: %w", err)
 	}
 
 	// Save statements
 	const sqlSaveTracepointDetails = `
-		INSERT INTO tracepoint_link_details (kernel_link_id, tracepoint_group, tracepoint_name)
+		INSERT INTO link_tracepoint_details (link_id, tp_group, tp_name)
 		VALUES (?, ?, ?)`
 	if s.stmtSaveTracepointDetails, err = s.db.PrepareContext(ctx, sqlSaveTracepointDetails); err != nil {
 		return fmt.Errorf("prepare SaveTracepointDetails: %w", err)
 	}
 
 	const sqlSaveKprobeDetails = `
-		INSERT INTO kprobe_link_details (kernel_link_id, fn_name, offset, retprobe)
+		INSERT INTO link_kprobe_details (link_id, fn_name, offset, retprobe)
 		VALUES (?, ?, ?, ?)`
 	if s.stmtSaveKprobeDetails, err = s.db.PrepareContext(ctx, sqlSaveKprobeDetails); err != nil {
 		return fmt.Errorf("prepare SaveKprobeDetails: %w", err)
 	}
 
 	const sqlSaveUprobeDetails = `
-		INSERT INTO uprobe_link_details (kernel_link_id, target, fn_name, offset, pid, retprobe)
+		INSERT INTO link_uprobe_details (link_id, target, fn_name, offset, pid, retprobe)
 		VALUES (?, ?, ?, ?, ?, ?)`
 	if s.stmtSaveUprobeDetails, err = s.db.PrepareContext(ctx, sqlSaveUprobeDetails); err != nil {
 		return fmt.Errorf("prepare SaveUprobeDetails: %w", err)
 	}
 
 	const sqlSaveFentryDetails = `
-		INSERT INTO fentry_link_details (kernel_link_id, fn_name)
+		INSERT INTO link_fentry_details (link_id, fn_name)
 		VALUES (?, ?)`
 	if s.stmtSaveFentryDetails, err = s.db.PrepareContext(ctx, sqlSaveFentryDetails); err != nil {
 		return fmt.Errorf("prepare SaveFentryDetails: %w", err)
 	}
 
 	const sqlSaveFexitDetails = `
-		INSERT INTO fexit_link_details (kernel_link_id, fn_name)
+		INSERT INTO link_fexit_details (link_id, fn_name)
 		VALUES (?, ?)`
 	if s.stmtSaveFexitDetails, err = s.db.PrepareContext(ctx, sqlSaveFexitDetails); err != nil {
 		return fmt.Errorf("prepare SaveFexitDetails: %w", err)
 	}
 
 	const sqlSaveXDPDetails = `
-		INSERT INTO xdp_link_details (kernel_link_id, interface, ifindex, priority, position, proceed_on, netns, nsid, dispatcher_kernel_id, revision)
+		INSERT INTO link_xdp_details (link_id, interface, ifindex, priority, position, proceed_on, netns, nsid, dispatcher_kernel_id, revision)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	if s.stmtSaveXDPDetails, err = s.db.PrepareContext(ctx, sqlSaveXDPDetails); err != nil {
 		return fmt.Errorf("prepare SaveXDPDetails: %w", err)
 	}
 
 	const sqlSaveTCDetails = `
-		INSERT INTO tc_link_details (kernel_link_id, interface, ifindex, direction, priority, position, proceed_on, netns, nsid, dispatcher_kernel_id, revision)
+		INSERT INTO link_tc_details (link_id, interface, ifindex, direction, priority, position, proceed_on, netns, nsid, dispatcher_kernel_id, revision)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	if s.stmtSaveTCDetails, err = s.db.PrepareContext(ctx, sqlSaveTCDetails); err != nil {
 		return fmt.Errorf("prepare SaveTCDetails: %w", err)
 	}
 
 	const sqlSaveTCXDetails = `
-		INSERT INTO tcx_link_details (kernel_link_id, interface, ifindex, direction, priority, netns, nsid)
+		INSERT INTO link_tcx_details (link_id, interface, ifindex, direction, priority, netns, nsid)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`
 	if s.stmtSaveTCXDetails, err = s.db.PrepareContext(ctx, sqlSaveTCXDetails); err != nil {
 		return fmt.Errorf("prepare SaveTCXDetails: %w", err)
@@ -347,8 +349,8 @@ func (s *sqliteStore) prepareDispatcherStatements(ctx context.Context) error {
 
 	const sqlCountDispatcherLinks = `
 		SELECT
-			(SELECT COUNT(*) FROM tc_link_details WHERE dispatcher_kernel_id = ?) +
-			(SELECT COUNT(*) FROM xdp_link_details WHERE dispatcher_kernel_id = ?)`
+			(SELECT COUNT(*) FROM link_tc_details WHERE dispatcher_kernel_id = ?) +
+			(SELECT COUNT(*) FROM link_xdp_details WHERE dispatcher_kernel_id = ?)`
 	if s.stmtCountDispatcherLinks, err = s.db.PrepareContext(ctx, sqlCountDispatcherLinks); err != nil {
 		return fmt.Errorf("prepare CountDispatcherLinks: %w", err)
 	}

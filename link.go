@@ -1,7 +1,6 @@
 package bpfman
 
 import (
-	"encoding/json"
 	"math"
 	"time"
 
@@ -55,65 +54,6 @@ func IsSyntheticLinkID(id uint32) bool {
 	return id >= SyntheticLinkIDBase
 }
 
-// LinkType represents the type of BPF link/attachment.
-type LinkType string
-
-const (
-	LinkTypeTracepoint LinkType = "tracepoint"
-	LinkTypeKprobe     LinkType = "kprobe"
-	LinkTypeKretprobe  LinkType = "kretprobe"
-	LinkTypeUprobe     LinkType = "uprobe"
-	LinkTypeUretprobe  LinkType = "uretprobe"
-	LinkTypeFentry     LinkType = "fentry"
-	LinkTypeFexit      LinkType = "fexit"
-	LinkTypeXDP        LinkType = "xdp"
-	LinkTypeTC         LinkType = "tc"
-	LinkTypeTCX        LinkType = "tcx"
-)
-
-// ParseLinkType parses a string into a LinkType.
-// Returns the LinkType and true if valid, or empty string and false if invalid.
-func ParseLinkType(s string) (LinkType, bool) {
-	switch s {
-	case "tracepoint":
-		return LinkTypeTracepoint, true
-	case "kprobe":
-		return LinkTypeKprobe, true
-	case "kretprobe":
-		return LinkTypeKretprobe, true
-	case "uprobe":
-		return LinkTypeUprobe, true
-	case "uretprobe":
-		return LinkTypeUretprobe, true
-	case "fentry":
-		return LinkTypeFentry, true
-	case "fexit":
-		return LinkTypeFexit, true
-	case "xdp":
-		return LinkTypeXDP, true
-	case "tc":
-		return LinkTypeTC, true
-	case "tcx":
-		return LinkTypeTCX, true
-	default:
-		return "", false
-	}
-}
-
-// ToAttachType converts LinkType to AttachType for backward compatibility.
-func (t LinkType) ToAttachType() AttachType {
-	switch t {
-	case LinkTypeTracepoint:
-		return AttachTracepoint
-	case LinkTypeKprobe:
-		return AttachKprobe
-	case LinkTypeKretprobe:
-		return AttachKretprobe
-	default:
-		return AttachType(t)
-	}
-}
-
 // TCXAttachOrder specifies where to insert a TCX program in the chain.
 // Programs are ordered by priority, with lower priority values running first.
 // This type maps to cilium/ebpf's link.Anchor for kernel attachment.
@@ -148,18 +88,6 @@ func TCXAttachBefore(progID uint32) TCXAttachOrder {
 // TCXAttachAfter returns an order that attaches after the given program.
 func TCXAttachAfter(progID uint32) TCXAttachOrder {
 	return TCXAttachOrder{AfterProgID: progID}
-}
-
-// LinkSummary contains the common fields from link_registry.
-// This is the primary polymorphic type for links - most operations
-// only need these fields without type-specific details.
-// KernelLinkID is the primary identifier (kernel-assigned link ID).
-type LinkSummary struct {
-	KernelLinkID    uint32    `json:"kernel_link_id"`
-	LinkType        LinkType  `json:"link_type"`
-	KernelProgramID uint32    `json:"kernel_program_id"`
-	PinPath         string    `json:"pin_path,omitempty"`
-	CreatedAt       time.Time `json:"created_at"`
 }
 
 // LinkDetails is a sealed interface for type-specific link details.
@@ -283,38 +211,6 @@ type TCXLinkInfo struct {
 	Priority        int32  `json:"priority"`
 }
 
-// LinkInfo holds what bpfman tracks about a link.
-type LinkInfo struct {
-	KernelLinkID    uint32      `json:"kernel_link_id"`
-	KernelProgramID uint32      `json:"kernel_program_id"`
-	Type            LinkType    `json:"link_type"`
-	PinPath         string      `json:"pin_path,omitempty"`
-	CreatedAt       time.Time   `json:"created_at,omitempty"`
-	Details         LinkDetails `json:"details,omitempty"`
-}
-
-// ManagedLink combines bpfman-managed state with kernel-reported info for a link.
-type ManagedLink struct {
-	Managed *LinkInfo
-	Kernel  *kernel.Link
-}
-
-// MarshalJSON implements json.Marshaler for ManagedLink.
-// The kernel.Link is serialized directly as it has JSON tags.
-func (l ManagedLink) MarshalJSON() ([]byte, error) {
-	return json.Marshal(struct {
-		Managed *LinkInfo    `json:"managed"`
-		Kernel  *kernel.Link `json:"kernel"`
-	}{
-		Managed: l.Managed,
-		Kernel:  l.Kernel,
-	})
-}
-
-// ----------------------------------------------------------------------------
-// New domain types (Commit 1 refactoring)
-// ----------------------------------------------------------------------------
-
 // LinkKind is bpfman's discriminator for link types.
 // Distinct from kernel.Link.LinkType which is kernel-reported.
 type LinkKind string
@@ -361,12 +257,6 @@ func ParseLinkKind(s string) (LinkKind, bool) {
 	}
 }
 
-// LinkTypeToKind converts a LinkType to a LinkKind.
-// This provides a migration path from the old LinkType to the new LinkKind.
-func LinkTypeToKind(t LinkType) LinkKind {
-	return LinkKind(t)
-}
-
 // LinkID is bpfman's identifier for a link.
 // Opaque to callers; currently backed by kernel/synthetic link ID.
 // uint64 to accommodate a future independent autoincrement id.
@@ -387,20 +277,21 @@ func (id LinkID) IsSynthetic() bool {
 }
 
 // LinkRecord is what bpfman persists/manages about a link.
-// NO kernel IDs - those are ephemeral. Use composite Link for kernel state.
+// The durable identity is ID (autoincrement), not kernel link ID.
+// KernelLinkID is an optional attribute for correlation with kernel state.
 type LinkRecord struct {
-	ID        LinkID      `json:"id"`
-	Kind      LinkKind    `json:"kind"`
-	PinPath   string      `json:"pin_path,omitempty"`
-	CreatedAt time.Time   `json:"created_at"`
-	Details   LinkDetails `json:"details,omitempty"`
+	ID           LinkID      `json:"id"`
+	Kind         LinkKind    `json:"kind"`
+	KernelLinkID *uint32     `json:"kernel_link_id,omitempty"` // nil for perf_event-based links
+	PinPath      string      `json:"pin_path,omitempty"`
+	CreatedAt    time.Time   `json:"created_at"`
+	Details      LinkDetails `json:"details,omitempty"`
 	// owner, metadata, etc. as needed
-	// Note: Synthetic is derived via ID.IsSynthetic(), not stored
 	// Note: When Details is non-nil, Kind must equal Details.Kind(); constructors enforce this
 }
 
 // IsSynthetic returns true if this is a synthetic link (perf_event-based, no kernel link).
-func (r LinkRecord) IsSynthetic() bool { return r.ID.IsSynthetic() }
+func (r LinkRecord) IsSynthetic() bool { return r.KernelLinkID == nil }
 
 // HasPin returns true if this link has a pin path.
 func (r LinkRecord) HasPin() bool { return r.PinPath != "" }

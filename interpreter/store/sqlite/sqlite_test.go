@@ -45,18 +45,14 @@ func TestForeignKey_LinkRequiresProgram(t *testing.T) {
 	ctx := context.Background()
 
 	// Attempt to create a link referencing a non-existent program.
-	summary := bpfman.LinkSummary{
-		LinkType:        bpfman.LinkTypeTracepoint,
-		KernelProgramID: 999, // does not exist
-		KernelLinkID:    1,
-		CreatedAt:       time.Now(),
-	}
 	details := bpfman.TracepointDetails{
 		Group: "syscalls",
 		Name:  "sys_enter_openat",
 	}
+	record := bpfman.NewLinkRecord(0, details, "", time.Now())
+	kernelLinkID := uint32(1)
 
-	err = store.SaveTracepointLink(ctx, summary, details)
+	_, err = store.SaveLink(ctx, record, 999, &kernelLinkID) // program 999 does not exist
 	require.Error(t, err, "expected FK constraint violation")
 	assert.True(t, strings.Contains(err.Error(), "FOREIGN KEY constraint failed"), "expected FK constraint error, got: %v", err)
 }
@@ -76,18 +72,15 @@ func TestForeignKey_CascadeDeleteRemovesLinks(t *testing.T) {
 
 	// Create two links for that program.
 	for i := 0; i < 2; i++ {
-		summary := bpfman.LinkSummary{
-			LinkType:        bpfman.LinkTypeKprobe,
-			KernelProgramID: kernelID,
-			KernelLinkID:    uint32(100 + i),
-			CreatedAt:       time.Now(),
-		}
 		details := bpfman.KprobeDetails{
 			FnName:   "test_fn",
 			Offset:   0,
 			Retprobe: false,
 		}
-		require.NoError(t, store.SaveKprobeLink(ctx, summary, details), "SaveKprobeLink failed")
+		record := bpfman.NewLinkRecord(0, details, "", time.Now())
+		kernelLinkID := uint32(100 + i)
+		_, err := store.SaveLink(ctx, record, kernelID, &kernelLinkID)
+		require.NoError(t, err, "SaveLink failed")
 	}
 
 	// Verify links exist.
@@ -231,30 +224,25 @@ func TestLinkRegistry_TracepointRoundTrip(t *testing.T) {
 
 	// Create a tracepoint link
 	kernelLinkID := uint32(100)
-	summary := bpfman.LinkSummary{
-		LinkType:        bpfman.LinkTypeTracepoint,
-		KernelProgramID: 42,
-		KernelLinkID:    kernelLinkID,
-		PinPath:         "/sys/fs/bpf/bpfman/test/link",
-		CreatedAt:       time.Now(),
-	}
 	details := bpfman.TracepointDetails{
 		Group: "syscalls",
 		Name:  "sys_enter_openat",
 	}
+	record := bpfman.NewLinkRecord(0, details, "/sys/fs/bpf/bpfman/test/link", time.Now())
 
-	require.NoError(t, store.SaveTracepointLink(ctx, summary, details), "SaveTracepointLink failed")
+	linkID, err := store.SaveLink(ctx, record, 42, &kernelLinkID)
+	require.NoError(t, err, "SaveLink failed")
 
 	// Retrieve and verify
-	gotSummary, gotDetails, err := store.GetLink(ctx, kernelLinkID)
+	gotRecord, err := store.GetLink(ctx, linkID)
 	require.NoError(t, err, "GetLink failed")
 
-	assert.Equal(t, summary.LinkType, gotSummary.LinkType)
-	assert.Equal(t, summary.KernelProgramID, gotSummary.KernelProgramID)
-	assert.Equal(t, summary.KernelLinkID, gotSummary.KernelLinkID)
-	assert.Equal(t, summary.PinPath, gotSummary.PinPath)
+	assert.Equal(t, bpfman.LinkKindTracepoint, gotRecord.Kind)
+	require.NotNil(t, gotRecord.KernelLinkID)
+	assert.Equal(t, kernelLinkID, *gotRecord.KernelLinkID)
+	assert.Equal(t, record.PinPath, gotRecord.PinPath)
 
-	tpDetails, ok := gotDetails.(bpfman.TracepointDetails)
+	tpDetails, ok := gotRecord.Details.(bpfman.TracepointDetails)
 	require.True(t, ok, "expected TracepointDetails")
 	assert.Equal(t, details.Group, tpDetails.Group)
 	assert.Equal(t, details.Name, tpDetails.Name)
@@ -273,28 +261,19 @@ func TestLinkRegistry_KernelLinkIDUniqueness(t *testing.T) {
 
 	// Create first link
 	kernelLinkID := uint32(100)
-	summary := bpfman.LinkSummary{
-		LinkType:        bpfman.LinkTypeTracepoint,
-		KernelProgramID: 42,
-		KernelLinkID:    kernelLinkID,
-		CreatedAt:       time.Now(),
-	}
 	details := bpfman.TracepointDetails{Group: "syscalls", Name: "sys_enter_openat"}
+	record := bpfman.NewLinkRecord(0, details, "", time.Now())
 
-	require.NoError(t, store.SaveTracepointLink(ctx, summary, details), "first SaveTracepointLink failed")
+	_, err = store.SaveLink(ctx, record, 42, &kernelLinkID)
+	require.NoError(t, err, "first SaveLink failed")
 
 	// Try to create another link with same kernel_link_id
-	summary2 := bpfman.LinkSummary{
-		LinkType:        bpfman.LinkTypeKprobe,
-		KernelProgramID: 42,
-		KernelLinkID:    kernelLinkID, // same kernel_link_id
-		CreatedAt:       time.Now(),
-	}
 	kprobeDetails := bpfman.KprobeDetails{FnName: "test_fn"}
+	record2 := bpfman.NewLinkRecord(0, kprobeDetails, "", time.Now())
 
-	err = store.SaveKprobeLink(ctx, summary2, kprobeDetails)
+	_, err = store.SaveLink(ctx, record2, 42, &kernelLinkID) // same kernel_link_id
 	require.Error(t, err, "expected kernel_link_id uniqueness violation")
-	assert.True(t, strings.Contains(err.Error(), "UNIQUE constraint failed") || strings.Contains(err.Error(), "PRIMARY KEY"),
+	assert.True(t, strings.Contains(err.Error(), "UNIQUE constraint failed"),
 		"expected uniqueness error, got: %v", err)
 }
 
@@ -311,21 +290,17 @@ func TestLinkRegistry_CascadeDeleteFromRegistry(t *testing.T) {
 
 	// Create a tracepoint link
 	kernelLinkID := uint32(100)
-	summary := bpfman.LinkSummary{
-		LinkType:        bpfman.LinkTypeTracepoint,
-		KernelProgramID: 42,
-		KernelLinkID:    kernelLinkID,
-		CreatedAt:       time.Now(),
-	}
 	details := bpfman.TracepointDetails{Group: "syscalls", Name: "sys_enter_openat"}
+	record := bpfman.NewLinkRecord(0, details, "", time.Now())
 
-	require.NoError(t, store.SaveTracepointLink(ctx, summary, details), "SaveTracepointLink failed")
+	linkID, err := store.SaveLink(ctx, record, 42, &kernelLinkID)
+	require.NoError(t, err, "SaveLink failed")
 
 	// Delete the link via registry
-	require.NoError(t, store.DeleteLink(ctx, kernelLinkID), "DeleteLink failed")
+	require.NoError(t, store.DeleteLink(ctx, linkID), "DeleteLink failed")
 
 	// Verify link is gone
-	_, _, err = store.GetLink(ctx, kernelLinkID)
+	_, err = store.GetLink(ctx, linkID)
 	require.Error(t, err, "expected link to be deleted")
 }
 
@@ -739,13 +714,6 @@ func TestListTCXLinksByInterface_OrderByPriority(t *testing.T) {
 	}
 
 	for _, link := range linksToCreate {
-		summary := bpfman.LinkSummary{
-			KernelLinkID:    link.linkID,
-			LinkType:        bpfman.LinkTypeTCX,
-			KernelProgramID: progID,
-			PinPath:         "/sys/fs/bpf/link_" + string(rune(link.linkID)),
-			CreatedAt:       time.Now(),
-		}
 		details := bpfman.TCXDetails{
 			Interface: "eth0",
 			Ifindex:   ifindex,
@@ -753,8 +721,10 @@ func TestListTCXLinksByInterface_OrderByPriority(t *testing.T) {
 			Priority:  link.priority,
 			Nsid:      nsid,
 		}
-		require.NoError(t, store.SaveTCXLink(ctx, summary, details),
-			"SaveTCXLink failed for link %d", link.linkID)
+		record := bpfman.NewLinkRecord(0, details, "/sys/fs/bpf/link_"+string(rune(link.linkID)), time.Now())
+		kernelLinkID := link.linkID
+		_, err := store.SaveLink(ctx, record, progID, &kernelLinkID)
+		require.NoError(t, err, "SaveLink failed for link %d", link.linkID)
 	}
 
 	// Query links - they should be ordered by priority ASC.
@@ -769,10 +739,10 @@ func TestListTCXLinksByInterface_OrderByPriority(t *testing.T) {
 			"link at position %d has wrong priority", i)
 	}
 
-	// Verify the correct link IDs are in order
-	expectedLinkIDs := []uint32{1002, 1004, 1001, 1003}
+	// Verify the correct kernel link IDs are in order
+	expectedKernelLinkIDs := []uint32{1002, 1004, 1001, 1003}
 	for i, link := range links {
-		assert.Equal(t, expectedLinkIDs[i], link.KernelLinkID,
+		assert.Equal(t, expectedKernelLinkIDs[i], link.KernelLinkID,
 			"link at position %d has wrong kernel_link_id", i)
 	}
 }
@@ -808,12 +778,6 @@ func TestListTCXLinksByInterface_FiltersByInterfaceAndDirection(t *testing.T) {
 	}
 
 	for _, link := range testLinks {
-		summary := bpfman.LinkSummary{
-			KernelLinkID:    link.linkID,
-			LinkType:        bpfman.LinkTypeTCX,
-			KernelProgramID: progID,
-			CreatedAt:       time.Now(),
-		}
 		details := bpfman.TCXDetails{
 			Interface: "eth0",
 			Ifindex:   link.ifindex,
@@ -821,8 +785,10 @@ func TestListTCXLinksByInterface_FiltersByInterfaceAndDirection(t *testing.T) {
 			Priority:  link.priority,
 			Nsid:      nsid,
 		}
-		require.NoError(t, store.SaveTCXLink(ctx, summary, details),
-			"SaveTCXLink failed for link %d", link.linkID)
+		record := bpfman.NewLinkRecord(0, details, "", time.Now())
+		kernelLinkID := link.linkID
+		_, err := store.SaveLink(ctx, record, progID, &kernelLinkID)
+		require.NoError(t, err, "SaveLink failed for link %d", link.linkID)
 	}
 
 	// Query for ifindex=2, ingress - should return only 2 links.
@@ -1035,24 +1001,16 @@ func TestGC_StaleLinks(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create links
-	summary1 := bpfman.LinkSummary{
-		LinkType:        bpfman.LinkTypeTracepoint,
-		KernelProgramID: 100,
-		KernelLinkID:    200,
-		CreatedAt:       time.Now(),
-	}
 	details1 := bpfman.TracepointDetails{Group: "syscalls", Name: "sys_enter_openat"}
-	err = store.SaveTracepointLink(ctx, summary1, details1)
+	record1 := bpfman.NewLinkRecord(0, details1, "", time.Now())
+	klid200 := uint32(200)
+	_, err = store.SaveLink(ctx, record1, 100, &klid200)
 	require.NoError(t, err)
 
-	summary2 := bpfman.LinkSummary{
-		LinkType:        bpfman.LinkTypeTracepoint,
-		KernelProgramID: 100,
-		KernelLinkID:    201,
-		CreatedAt:       time.Now(),
-	}
 	details2 := bpfman.TracepointDetails{Group: "syscalls", Name: "sys_exit_openat"}
-	err = store.SaveTracepointLink(ctx, summary2, details2)
+	record2 := bpfman.NewLinkRecord(0, details2, "", time.Now())
+	klid201 := uint32(201)
+	_, err = store.SaveLink(ctx, record2, 100, &klid201)
 	require.NoError(t, err)
 
 	// GC with program in kernel but only link 200 in kernel
@@ -1065,7 +1023,8 @@ func TestGC_StaleLinks(t *testing.T) {
 	links, err := store.ListLinks(ctx)
 	require.NoError(t, err)
 	require.Len(t, links, 1)
-	assert.Equal(t, uint32(200), links[0].KernelLinkID)
+	require.NotNil(t, links[0].KernelLinkID)
+	assert.Equal(t, uint32(200), *links[0].KernelLinkID)
 }
 
 func TestGC_Comprehensive(t *testing.T) {
@@ -1116,22 +1075,16 @@ func TestGC_Comprehensive(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create links: one alive, one stale
-	aliveLink := bpfman.LinkSummary{
-		LinkType:        bpfman.LinkTypeTracepoint,
-		KernelProgramID: 100,
-		KernelLinkID:    400,
-		CreatedAt:       time.Now(),
-	}
-	err = store.SaveTracepointLink(ctx, aliveLink, bpfman.TracepointDetails{Group: "syscalls", Name: "test"})
+	aliveDetails := bpfman.TracepointDetails{Group: "syscalls", Name: "test"}
+	aliveRecord := bpfman.NewLinkRecord(0, aliveDetails, "", time.Now())
+	klid400 := uint32(400)
+	_, err = store.SaveLink(ctx, aliveRecord, 100, &klid400)
 	require.NoError(t, err)
 
-	staleLink := bpfman.LinkSummary{
-		LinkType:        bpfman.LinkTypeTracepoint,
-		KernelProgramID: 100,
-		KernelLinkID:    401,
-		CreatedAt:       time.Now(),
-	}
-	err = store.SaveTracepointLink(ctx, staleLink, bpfman.TracepointDetails{Group: "syscalls", Name: "test2"})
+	staleDetails := bpfman.TracepointDetails{Group: "syscalls", Name: "test2"}
+	staleRecord := bpfman.NewLinkRecord(0, staleDetails, "", time.Now())
+	klid401 := uint32(401)
+	_, err = store.SaveLink(ctx, staleRecord, 100, &klid401)
 	require.NoError(t, err)
 
 	// GC with only program 100 and link 400 in kernel
@@ -1160,11 +1113,12 @@ func TestGC_Comprehensive(t *testing.T) {
 	links, err := store.ListLinks(ctx)
 	require.NoError(t, err)
 	assert.Len(t, links, 1, "should have 1 link remaining")
-	assert.Equal(t, uint32(400), links[0].KernelLinkID)
+	require.NotNil(t, links[0].KernelLinkID)
+	assert.Equal(t, uint32(400), *links[0].KernelLinkID)
 }
 
 func TestGC_SyntheticLinkIDsSkipped(t *testing.T) {
-	// Test that GC skips links with synthetic IDs (>= 0x80000000).
+	// Test that GC skips links with nil kernel_link_id.
 	// These are used for perf_event-based links (e.g., container uprobes)
 	// that cannot be enumerated via the kernel's link iterator.
 	store, err := sqlite.NewInMemory(context.Background(), testLogger())
@@ -1178,28 +1132,18 @@ func TestGC_SyntheticLinkIDsSkipped(t *testing.T) {
 	err = store.Save(ctx, 100, prog)
 	require.NoError(t, err)
 
-	// Create a real kernel link (ID 200)
-	realLink := bpfman.LinkSummary{
-		LinkType:        bpfman.LinkTypeUprobe,
-		KernelProgramID: 100,
-		KernelLinkID:    200,
-		CreatedAt:       time.Now(),
-	}
+	// Create a real kernel link (kernel_link_id = 200)
 	realDetails := bpfman.UprobeDetails{Target: "/usr/bin/test", FnName: "main"}
-	err = store.SaveUprobeLink(ctx, realLink, realDetails)
+	realRecord := bpfman.NewLinkRecord(0, realDetails, "", time.Now())
+	klid200 := uint32(200)
+	realLinkID, err := store.SaveLink(ctx, realRecord, 100, &klid200)
 	require.NoError(t, err)
 
-	// Create a synthetic link (ID >= 0x80000000)
+	// Create a synthetic link (kernel_link_id = nil)
 	// This simulates a container uprobe with perf_event-based link
-	syntheticID := uint32(bpfman.SyntheticLinkIDBase | 0x12345678)
-	syntheticLink := bpfman.LinkSummary{
-		LinkType:        bpfman.LinkTypeUprobe,
-		KernelProgramID: 100,
-		KernelLinkID:    syntheticID,
-		CreatedAt:       time.Now(),
-	}
 	syntheticDetails := bpfman.UprobeDetails{Target: "/app/binary", FnName: "handler", ContainerPid: 12345}
-	err = store.SaveUprobeLink(ctx, syntheticLink, syntheticDetails)
+	syntheticRecord := bpfman.NewLinkRecord(0, syntheticDetails, "", time.Now())
+	syntheticLinkID, err := store.SaveLink(ctx, syntheticRecord, 100, nil) // nil = synthetic
 	require.NoError(t, err)
 
 	// Verify both links exist
@@ -1208,7 +1152,7 @@ func TestGC_SyntheticLinkIDsSkipped(t *testing.T) {
 	require.Len(t, links, 2)
 
 	// GC with program in kernel but only real link 200 in kernel
-	// (synthetic link cannot be in kernelLinkIDs since it's not a real kernel ID)
+	// (synthetic link cannot be in kernelLinkIDs since it has no kernel ID)
 	result, err := store.GC(ctx, map[uint32]bool{100: true}, map[uint32]bool{200: true})
 	require.NoError(t, err)
 
@@ -1224,10 +1168,13 @@ func TestGC_SyntheticLinkIDsSkipped(t *testing.T) {
 	// Find both links by ID
 	var foundReal, foundSynthetic bool
 	for _, link := range links {
-		if link.KernelLinkID == 200 {
+		if link.ID == realLinkID {
+			require.NotNil(t, link.KernelLinkID, "real link should have kernel_link_id")
+			assert.Equal(t, uint32(200), *link.KernelLinkID)
 			foundReal = true
 		}
-		if link.KernelLinkID == syntheticID {
+		if link.ID == syntheticLinkID {
+			assert.Nil(t, link.KernelLinkID, "synthetic link should have nil kernel_link_id")
 			foundSynthetic = true
 		}
 	}
