@@ -126,6 +126,7 @@ type Client interface {
 	GC(ctx context.Context) (manager.GCResult, error)
 	GCWithRules(ctx context.Context, rules []string) (manager.GCResult, error)
 	Doctor(ctx context.Context) (manager.DoctorReport, error)
+	ListPrograms(ctx context.Context) ([]bpfman.Program, error)
 
 	// Image operations
 	PullImage(ctx context.Context, ref interpreter.ImageRef) (interpreter.PulledImage, error)

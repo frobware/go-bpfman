@@ -250,6 +250,12 @@ func (e *ephemeralClient) Doctor(ctx context.Context) (manager.DoctorReport, err
 	return e.env.Manager.Doctor(ctx)
 }
 
+// ListPrograms returns all managed programs with full spec and status.
+// This bypasses gRPC and returns the canonical domain type directly.
+func (e *ephemeralClient) ListPrograms(ctx context.Context) ([]bpfman.Program, error) {
+	return e.env.Manager.ListPrograms(ctx)
+}
+
 // SetImagePuller configures the image puller for OCI operations.
 func (e *ephemeralClient) SetImagePuller(p interpreter.ImagePuller) {
 	e.puller = p

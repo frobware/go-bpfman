@@ -405,6 +405,11 @@ func (c *remoteClient) Doctor(ctx context.Context) (manager.DoctorReport, error)
 	return manager.DoctorReport{}, fmt.Errorf("Doctor: %w", ErrNotSupported)
 }
 
+// ListPrograms is a local-only operation (requires direct store access).
+func (c *remoteClient) ListPrograms(ctx context.Context) ([]bpfman.Program, error) {
+	return nil, fmt.Errorf("ListPrograms: %w", ErrNotSupported)
+}
+
 // SetImagePuller configures the image puller for OCI operations.
 func (c *remoteClient) SetImagePuller(p interpreter.ImagePuller) {
 	c.puller = p

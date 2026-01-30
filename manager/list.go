@@ -219,3 +219,22 @@ func (m *Manager) FindLoadedProgramByMetadata(ctx context.Context, key, value st
 		}
 	}
 }
+
+// ListPrograms returns all managed programs with full spec and status.
+// This returns the canonical bpfman.Program type with both Spec (from store)
+// and Status (from kernel enumeration + filesystem checks).
+func (m *Manager) ListPrograms(ctx context.Context) ([]bpfman.Program, error) {
+	scanner := bpffs.NewScanner(m.dirs.ScannerDirs())
+	world, err := inspect.Snapshot(ctx, m.store, m.kernel, scanner)
+	if err != nil {
+		return nil, fmt.Errorf("snapshot: %w", err)
+	}
+
+	var result []bpfman.Program
+	for _, row := range world.ManagedPrograms() {
+		if prog, ok := row.AsProgram(); ok {
+			result = append(result, prog)
+		}
+	}
+	return result, nil
+}

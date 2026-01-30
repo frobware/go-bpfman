@@ -19,6 +19,7 @@ type ListCmd struct {
 // ListProgramsCmd lists managed BPF programs.
 type ListProgramsCmd struct {
 	OutputFlags
+	Local bool `help:"Return full spec/status composite (local only, requires --json)." default:"false"`
 }
 
 // Run executes the list programs command.
@@ -29,6 +30,35 @@ func (c *ListProgramsCmd) Run(cli *CLI, ctx context.Context) error {
 	}
 	defer b.Close()
 
+	if c.Local {
+		return c.runLocal(cli, ctx, b)
+	}
+	return c.runRemote(cli, ctx, b)
+}
+
+// runLocal returns the full Program composite with spec and status.
+func (c *ListProgramsCmd) runLocal(cli *CLI, ctx context.Context, b client.Client) error {
+	programs, err := b.ListPrograms(ctx)
+	if errors.Is(err, client.ErrNotSupported) {
+		return fmt.Errorf("--local requires local mode (not available with remote daemon)")
+	}
+	if err != nil {
+		return err
+	}
+
+	if len(programs) == 0 {
+		return cli.PrintOut("No managed programs found\n")
+	}
+
+	output, err := FormatProgramsComposite(programs, &c.OutputFlags)
+	if err != nil {
+		return err
+	}
+	return cli.PrintOut(output)
+}
+
+// runRemote returns the traditional list view via gRPC.
+func (c *ListProgramsCmd) runRemote(cli *CLI, ctx context.Context, b client.Client) error {
 	programs, err := b.List(ctx)
 	if err != nil {
 		return err

@@ -770,3 +770,26 @@ func formatLoadedProgramsTable(programs []bpfman.ManagedProgram) string {
 
 	return b.String()
 }
+
+// FormatProgramsComposite formats []bpfman.Program with full spec/status.
+// This returns the canonical domain type with both Spec and Status.
+func FormatProgramsComposite(programs []bpfman.Program, flags *OutputFlags) (string, error) {
+	format, err := flags.Format()
+	if err != nil {
+		return "", err
+	}
+	switch format {
+	case OutputFormatJSON:
+		output, err := json.MarshalIndent(programs, "", "  ")
+		if err != nil {
+			return "", fmt.Errorf("failed to marshal: %w", err)
+		}
+		return string(output) + "\n", nil
+	case OutputFormatJSONPath:
+		return executeJSONPath(programs, flags.JSONPathExpr())
+	case OutputFormatTable:
+		return "", fmt.Errorf("--local requires --json output")
+	default:
+		return "", fmt.Errorf("unsupported format for --local: %v", format)
+	}
+}

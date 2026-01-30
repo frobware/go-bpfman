@@ -155,18 +155,18 @@ type ProgramSpec struct {
 // ProgramStatus is observed state (kernel + filesystem).
 // This is "what actually exists right now".
 type ProgramStatus struct {
-	Kernel      *kernel.Program // nil if not in kernel
-	KernelSeen  bool            // true if kernel enumeration succeeded
-	PinPresent  bool            // true if Spec.PinPath exists on filesystem
-	MapsPresent bool            // true if Spec.MapPinPath dir exists
+	Kernel      *kernel.Program `json:"kernel,omitempty"`
+	KernelSeen  bool            `json:"kernel_seen"`
+	PinPresent  bool            `json:"pin_present"`
+	MapsPresent bool            `json:"maps_present"`
 }
 
 // Program is the canonical domain object combining spec and status.
 // Spec comes from the store (what bpfman manages).
 // Status comes from observation (kernel enumeration + filesystem checks).
 type Program struct {
-	Spec   ProgramSpec
-	Status ProgramStatus
+	Spec   ProgramSpec   `json:"spec"`
+	Status ProgramStatus `json:"status"`
 }
 
 // ProgramRecord is an alias for ProgramSpec for backwards compatibility.
