@@ -56,7 +56,7 @@ func (c *ListLinksCmd) Run(cli *CLI, ctx context.Context) error {
 	}
 	defer runtime.Close()
 
-	var links []bpfman.LinkRecord
+	var links []bpfman.LinkSpec
 	if c.ProgramID != nil {
 		links, err = runtime.Manager.ListLinksByProgram(ctx, c.ProgramID.Value)
 	} else {

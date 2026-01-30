@@ -22,7 +22,7 @@ var ErrNotFound = errors.New("not found")
 // StoreLister is the subset of interpreter.Store needed by Snapshot.
 type StoreLister interface {
 	List(ctx context.Context) (map[uint32]bpfman.ProgramSpec, error)
-	ListLinks(ctx context.Context) ([]bpfman.LinkRecord, error)
+	ListLinks(ctx context.Context) ([]bpfman.LinkSpec, error)
 	ListDispatchers(ctx context.Context) ([]dispatcher.State, error)
 }
 
@@ -44,7 +44,7 @@ type KernelGetter interface {
 
 // LinkGetter is the subset of interpreter.Store needed by GetLink.
 type LinkGetter interface {
-	GetLink(ctx context.Context, linkID bpfman.LinkID) (bpfman.LinkRecord, error)
+	GetLink(ctx context.Context, linkID bpfman.LinkID) (bpfman.LinkSpec, error)
 }
 
 // KernelLinkGetter is the subset of interpreter.KernelSource needed by GetLink.
@@ -54,7 +54,7 @@ type KernelLinkGetter interface {
 
 // LinkInfo is the result of GetLink, containing record and presence.
 type LinkInfo struct {
-	Record   bpfman.LinkRecord
+	Record   bpfman.LinkSpec
 	Kernel   *kernel.Link // may be nil if not in kernel
 	Presence Presence
 }
@@ -160,7 +160,7 @@ func (v ProgramView) PinPath() string {
 // LinkRow is a store-first view of a link with presence annotations.
 type LinkRow struct {
 	// Store fields (valid when Presence.InStore is true)
-	Managed *bpfman.LinkRecord
+	Managed *bpfman.LinkSpec
 
 	// Kernel fields (valid when Presence.InKernel is true)
 	Kernel *kernel.Link
@@ -200,8 +200,8 @@ func (r LinkRow) Kind() bpfman.LinkKind {
 
 // PinPath returns the pin path (from store if available).
 func (r LinkRow) PinPath() string {
-	if r.Managed != nil {
-		return r.Managed.PinPath
+	if r.Managed != nil && r.Managed.PinPath != nil {
+		return r.Managed.PinPath.String()
 	}
 	return ""
 }
@@ -475,13 +475,17 @@ func Snapshot(
 			}
 		}
 
+		var inFS bool
+		if link.PinPath != nil {
+			inFS = scanner.PathExists(link.PinPath.String())
+		}
 		row := LinkRow{
 			Managed: &link,
 			Kernel:  kernelLink,
 			Presence: Presence{
 				InStore:  true,
 				InKernel: kernelLink != nil,
-				InFS:     link.PinPath != "" && scanner.PathExists(link.PinPath),
+				InFS:     inFS,
 			},
 		}
 		w.Links = append(w.Links, row)
@@ -664,8 +668,8 @@ func GetLink(
 	}
 
 	// Try filesystem - check if pin path exists
-	if info.Presence.InStore && record.PinPath != "" {
-		if scanner.PathExists(record.PinPath) {
+	if info.Presence.InStore && record.PinPath != nil {
+		if scanner.PathExists(record.PinPath.String()) {
 			info.Presence.InFS = true
 		}
 	}

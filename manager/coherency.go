@@ -99,10 +99,10 @@ type ProgramState struct {
 // LinkState correlates a link across DB and kernel.
 // Primary key: bpfman link ID.
 type LinkState struct {
-	DB        *bpfman.LinkRecord // nil = no DB record
-	Kernel    bool               // true = kernel link alive
-	Synthetic bool               // true = perf_event synthetic ID (no kernel link)
-	PinExist  *bool              // nil = not checked
+	DB        *bpfman.LinkSpec // nil = no DB record
+	Kernel    bool             // true = kernel link alive
+	Synthetic bool             // true = perf_event synthetic ID (no kernel link)
+	PinExist  *bool            // nil = not checked
 }
 
 // DispatcherState correlates a dispatcher across all three sources.
@@ -172,7 +172,7 @@ type Rule struct {
 type ObservedState struct {
 	// DB facts.
 	dbPrograms    map[uint32]bpfman.ProgramSpec
-	dbLinks       []bpfman.LinkRecord
+	dbLinks       []bpfman.LinkSpec
 	dbDispatchers []dispatcher.State
 
 	// Kernel facts.
@@ -329,8 +329,8 @@ func GatherState(ctx context.Context, store interpreter.Store, kernel interprete
 	// Link pin paths from DB (non-synthetic only).
 	for i := range s.dbLinks {
 		link := &s.dbLinks[i]
-		if link.PinPath != "" && !link.IsSynthetic() {
-			pathsToStat[link.PinPath] = struct{}{}
+		if link.PinPath != nil && !link.IsSynthetic() {
+			pathsToStat[link.PinPath.String()] = struct{}{}
 		}
 	}
 
@@ -540,8 +540,8 @@ func (s *ObservedState) Links() []LinkState {
 			Synthetic: synthetic,
 			Kernel:    inKernel,
 		}
-		if link.PinPath != "" && !synthetic {
-			if exists, ok := s.fsPinExists[link.PinPath]; ok {
+		if link.PinPath != nil && !synthetic {
+			if exists, found := s.fsPinExists[link.PinPath.String()]; found {
 				ls.PinExist = &exists
 			}
 		}
@@ -918,10 +918,14 @@ Category: db-vs-fs`,
 						continue
 					}
 					if l.PinExist != nil && !*l.PinExist {
+						pinStr := ""
+						if l.DB.PinPath != nil {
+							pinStr = l.DB.PinPath.String()
+						}
 						out = append(out, Violation{
 							Severity:    SeverityWarning,
 							Category:    "db-vs-fs",
-							Description: fmt.Sprintf("Link %d: pin path missing: %s", l.DB.ID, l.DB.PinPath),
+							Description: fmt.Sprintf("Link %d: pin path missing: %s", l.DB.ID, pinStr),
 						})
 					}
 				}

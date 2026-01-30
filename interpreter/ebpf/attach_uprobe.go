@@ -14,6 +14,7 @@ import (
 	"github.com/cilium/ebpf/link"
 
 	"github.com/frobware/go-bpfman"
+	"github.com/frobware/go-bpfman/bpffs"
 	"github.com/frobware/go-bpfman/kernel"
 	"github.com/frobware/go-bpfman/lock"
 	"github.com/frobware/go-bpfman/nsenter"
@@ -64,7 +65,7 @@ func (k *kernelAdapter) AttachUprobeLocal(ctx context.Context, progPinPath, targ
 		Spec: bpfman.LinkSpec{
 			ID:        bpfman.LinkID(linkID),
 			Kind:      linkKind,
-			PinPath:   linkPinPath,
+			PinPath:   bpffs.NewLinkPath(linkPinPath),
 			CreatedAt: time.Now(),
 			Details:   bpfman.UprobeDetails{Target: target, FnName: fnName, Offset: offset, Retprobe: retprobe, ContainerPid: 0},
 			// ProgramID is set by the manager after this call
@@ -118,7 +119,7 @@ func (k *kernelAdapter) AttachUprobeContainer(ctx context.Context, scope lock.Wr
 		Spec: bpfman.LinkSpec{
 			ID:        bpfman.LinkID(syntheticID), // Store the synthetic ID
 			Kind:      linkKind,
-			PinPath:   linkPinPath,
+			PinPath:   bpffs.NewLinkPath(linkPinPath),
 			CreatedAt: time.Now(),
 			Details:   bpfman.UprobeDetails{Target: target, FnName: fnName, Offset: offset, Retprobe: retprobe, ContainerPid: containerPid},
 			// ProgramID is set by the manager after this call

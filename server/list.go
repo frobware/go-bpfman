@@ -268,8 +268,8 @@ func (s *Server) GetLink(ctx context.Context, req *pb.GetLinkRequest) (*pb.GetLi
 	}, nil
 }
 
-// linkRecordToProtoSummary converts a bpfman.LinkRecord to protobuf LinkSummary.
-func linkRecordToProtoSummary(r bpfman.LinkRecord, k *kernel.Link) *pb.LinkSummary {
+// linkRecordToProtoSummary converts a bpfman.LinkSpec to protobuf LinkSummary.
+func linkRecordToProtoSummary(r bpfman.LinkSpec, k *kernel.Link) *pb.LinkSummary {
 	// For non-synthetic links, ID is the kernel link ID
 	var kernelLinkID uint32
 	if !r.IsSynthetic() {
@@ -280,11 +280,15 @@ func linkRecordToProtoSummary(r bpfman.LinkRecord, k *kernel.Link) *pb.LinkSumma
 	if k != nil && kernelProgramID == 0 {
 		kernelProgramID = k.ProgramID
 	}
+	var pinPath string
+	if r.PinPath != nil {
+		pinPath = r.PinPath.String()
+	}
 	return &pb.LinkSummary{
 		KernelLinkId:    kernelLinkID,
 		LinkType:        linkKindToProto(r.Kind),
 		KernelProgramId: kernelProgramID,
-		PinPath:         r.PinPath,
+		PinPath:         pinPath,
 		CreatedAt:       r.CreatedAt.Format(time.RFC3339),
 	}
 }

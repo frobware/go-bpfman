@@ -12,6 +12,7 @@ import (
 	"github.com/cilium/ebpf/link"
 
 	"github.com/frobware/go-bpfman"
+	"github.com/frobware/go-bpfman/bpffs"
 	"github.com/frobware/go-bpfman/dispatcher"
 	"github.com/frobware/go-bpfman/interpreter"
 	"github.com/frobware/go-bpfman/netns"
@@ -54,7 +55,7 @@ func (k *kernelAdapter) AttachXDP(ctx context.Context, progPinPath string, ifind
 		Spec: bpfman.LinkSpec{
 			ID:        bpfman.LinkID(kernelLinkID),
 			Kind:      bpfman.LinkKindXDP,
-			PinPath:   linkPinPath,
+			PinPath:   bpffs.NewLinkPath(linkPinPath),
 			CreatedAt: time.Now(),
 			Details:   bpfman.XDPDetails{Ifindex: uint32(ifindex)},
 			// ProgramID is set by the manager after this call
@@ -400,7 +401,7 @@ func (k *kernelAdapter) AttachXDPExtension(ctx context.Context, dispatcherPinPat
 		Spec: bpfman.LinkSpec{
 			ID:        bpfman.LinkID(kernelLinkID),
 			Kind:      bpfman.LinkKindXDP, // XDP extension
-			PinPath:   linkPinPath,
+			PinPath:   bpffs.NewLinkPath(linkPinPath),
 			CreatedAt: time.Now(),
 			Details:   bpfman.XDPDetails{Position: int32(position)},
 			// ProgramID is set by the manager after this call

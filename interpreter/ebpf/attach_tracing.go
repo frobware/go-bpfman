@@ -9,6 +9,7 @@ import (
 	"github.com/cilium/ebpf/link"
 
 	"github.com/frobware/go-bpfman"
+	"github.com/frobware/go-bpfman/bpffs"
 )
 
 // AttachTracepoint attaches a pinned program to a tracepoint.
@@ -45,7 +46,7 @@ func (k *kernelAdapter) AttachTracepoint(ctx context.Context, progPinPath, group
 		Spec: bpfman.LinkSpec{
 			ID:        bpfman.LinkID(kernelLinkID),
 			Kind:      bpfman.LinkKindTracepoint,
-			PinPath:   linkPinPath,
+			PinPath:   bpffs.NewLinkPath(linkPinPath),
 			CreatedAt: time.Now(),
 			Details:   bpfman.TracepointDetails{Group: group, Name: name},
 			// ProgramID is set by the manager after this call
@@ -110,7 +111,7 @@ func (k *kernelAdapter) AttachKprobe(ctx context.Context, progPinPath, fnName st
 		Spec: bpfman.LinkSpec{
 			ID:        bpfman.LinkID(kernelLinkID),
 			Kind:      linkKind,
-			PinPath:   linkPinPath,
+			PinPath:   bpffs.NewLinkPath(linkPinPath),
 			CreatedAt: time.Now(),
 			Details:   bpfman.KprobeDetails{FnName: fnName, Offset: offset, Retprobe: retprobe},
 			// ProgramID is set by the manager after this call
@@ -181,7 +182,7 @@ func (k *kernelAdapter) attachTracing(ctx context.Context, progPinPath, fnName, 
 		Spec: bpfman.LinkSpec{
 			ID:        bpfman.LinkID(kernelLinkID),
 			Kind:      linkKind,
-			PinPath:   linkPinPath,
+			PinPath:   bpffs.NewLinkPath(linkPinPath),
 			CreatedAt: time.Now(),
 			Details:   details,
 			// ProgramID is set by the manager after this call

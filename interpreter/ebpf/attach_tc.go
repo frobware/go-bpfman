@@ -15,6 +15,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/frobware/go-bpfman"
+	"github.com/frobware/go-bpfman/bpffs"
 	"github.com/frobware/go-bpfman/dispatcher"
 	"github.com/frobware/go-bpfman/interpreter"
 	"github.com/frobware/go-bpfman/netns"
@@ -325,7 +326,7 @@ func (k *kernelAdapter) AttachTCExtension(ctx context.Context, dispatcherPinPath
 		Spec: bpfman.LinkSpec{
 			ID:        bpfman.LinkID(kernelLinkID),
 			Kind:      bpfman.LinkKindTC,
-			PinPath:   linkPinPath,
+			PinPath:   bpffs.NewLinkPath(linkPinPath),
 			CreatedAt: time.Now(),
 			Details:   bpfman.TCDetails{Position: int32(position)},
 			// ProgramID is set by the manager after this call
@@ -415,7 +416,7 @@ func (k *kernelAdapter) AttachTCX(ctx context.Context, ifindex int, direction, p
 			Spec: bpfman.LinkSpec{
 				ID:        bpfman.LinkID(kernelLinkID),
 				Kind:      bpfman.LinkKindTCX,
-				PinPath:   linkPinPath,
+				PinPath:   bpffs.NewLinkPath(linkPinPath),
 				CreatedAt: time.Now(),
 				// ProgramID is set by the manager after this call
 			},

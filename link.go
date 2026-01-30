@@ -5,6 +5,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/frobware/go-bpfman/bpffs"
 	"github.com/frobware/go-bpfman/kernel"
 )
 
@@ -306,12 +307,12 @@ func (id LinkID) IsSynthetic() bool {
 // ID is the user-facing identity: kernel-assigned for real BPF links,
 // or bpfman-assigned (0x80000000+) for synthetic/perf_event links.
 type LinkSpec struct {
-	ID        LinkID      `json:"id"`
-	ProgramID uint32      `json:"program_id"` // program this attaches to
-	Kind      LinkKind    `json:"kind"`
-	PinPath   string      `json:"pin_path,omitempty"`
-	Details   LinkDetails `json:"details,omitempty"`
-	CreatedAt time.Time   `json:"created_at"`
+	ID        LinkID          `json:"id"`
+	ProgramID uint32          `json:"program_id"` // program this attaches to
+	Kind      LinkKind        `json:"kind"`
+	PinPath   *bpffs.LinkPath `json:"pin_path,omitempty"` // nil == ephemeral
+	Details   LinkDetails     `json:"details,omitempty"`
+	CreatedAt time.Time       `json:"created_at"`
 	// Note: When Details is non-nil, Kind must equal Details.Kind(); constructors enforce this
 }
 
@@ -319,7 +320,7 @@ type LinkSpec struct {
 func (s LinkSpec) IsSynthetic() bool { return s.ID.IsSynthetic() }
 
 // HasPin returns true if this link has a pin path.
-func (s LinkSpec) HasPin() bool { return s.PinPath != "" }
+func (s LinkSpec) HasPin() bool { return s.PinPath != nil }
 
 // LinkStatus is observed state (kernel + fs).
 // This is "what actually exists right now".
@@ -337,43 +338,26 @@ type Link struct {
 	Status LinkStatus
 }
 
-// LinkRecord is an alias for LinkSpec for backwards compatibility.
-// Deprecated: Use LinkSpec instead.
-type LinkRecord = LinkSpec
-
-// NewLinkSpec creates a fully-detailed spec.
+// NewPinnedLinkSpec creates a fully-detailed spec for a pinned link.
 // Kind is derived from details to enforce the invariant.
-func NewLinkSpec(id LinkID, programID uint32, details LinkDetails, pinPath string, createdAt time.Time) LinkSpec {
+func NewPinnedLinkSpec(id LinkID, programID uint32, details LinkDetails, pin bpffs.LinkPath, createdAt time.Time) LinkSpec {
 	return LinkSpec{
 		ID:        id,
 		ProgramID: programID,
 		Kind:      details.Kind(),
-		PinPath:   pinPath,
+		PinPath:   &pin,
 		Details:   details,
 		CreatedAt: createdAt,
 	}
 }
 
-// NewLinkSpecSummary creates a summary-only spec (no details).
-// Used by inspect when details are loaded lazily.
-func NewLinkSpecSummary(id LinkID, programID uint32, kind LinkKind, pinPath string, createdAt time.Time) LinkSpec {
-	return LinkSpec{
-		ID:        id,
-		ProgramID: programID,
-		Kind:      kind,
-		PinPath:   pinPath,
-		CreatedAt: createdAt,
-	}
-}
-
-// NewLinkRecord creates a fully-detailed spec.
-// Deprecated: Use NewLinkSpec instead.
-func NewLinkRecord(id LinkID, programID uint32, details LinkDetails, pinPath string, createdAt time.Time) LinkSpec {
+// NewEphemeralLinkSpec creates a fully-detailed spec for an ephemeral (unpinned) link.
+// Kind is derived from details to enforce the invariant.
+func NewEphemeralLinkSpec(id LinkID, programID uint32, details LinkDetails, createdAt time.Time) LinkSpec {
 	return LinkSpec{
 		ID:        id,
 		ProgramID: programID,
 		Kind:      details.Kind(),
-		PinPath:   pinPath,
 		Details:   details,
 		CreatedAt: createdAt,
 	}

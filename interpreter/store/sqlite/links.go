@@ -8,6 +8,7 @@ import (
 	"time"
 
 	bpfman "github.com/frobware/go-bpfman"
+	"github.com/frobware/go-bpfman/bpffs"
 	"github.com/frobware/go-bpfman/interpreter/store"
 )
 
@@ -295,15 +296,21 @@ func (s *sqliteStore) insertLinkRegistry(ctx context.Context, spec bpfman.LinkSp
 		isSynthetic = 1
 	}
 
+	// Convert pin to nullable string for DB storage
+	var pinPath sql.NullString
+	if spec.PinPath != nil {
+		pinPath = sql.NullString{String: spec.PinPath.String(), Valid: true}
+	}
+
 	_, err := s.stmtInsertLinkRegistry.ExecContext(ctx,
 		uint32(spec.ID), string(spec.Kind), spec.ProgramID,
-		spec.PinPath, isSynthetic, spec.CreatedAt.Format(time.RFC3339))
+		pinPath, isSynthetic, spec.CreatedAt.Format(time.RFC3339))
 	if err != nil {
-		s.logger.Debug("sql", "stmt", "InsertLinkRegistry", "args", []any{spec.ID, spec.Kind, spec.ProgramID, spec.PinPath, isSynthetic, "(timestamp)"}, "duration_ms", msec(time.Since(start)), "error", err)
+		s.logger.Debug("sql", "stmt", "InsertLinkRegistry", "args", []any{spec.ID, spec.Kind, spec.ProgramID, pinPath, isSynthetic, "(timestamp)"}, "duration_ms", msec(time.Since(start)), "error", err)
 		return fmt.Errorf("failed to insert link: %w", err)
 	}
 
-	s.logger.Debug("sql", "stmt", "InsertLinkRegistry", "args", []any{spec.ID, spec.Kind, spec.ProgramID, spec.PinPath, isSynthetic, "(timestamp)"}, "duration_ms", msec(time.Since(start)))
+	s.logger.Debug("sql", "stmt", "InsertLinkRegistry", "args", []any{spec.ID, spec.Kind, spec.ProgramID, pinPath, isSynthetic, "(timestamp)"}, "duration_ms", msec(time.Since(start)))
 	return nil
 }
 
@@ -330,7 +337,8 @@ func (s *sqliteStore) scanLinkRecord(row *sql.Row) (bpfman.LinkSpec, error) {
 	record.Kind = bpfman.LinkKind(kindStr)
 	record.ProgramID = programID
 	if pinPath.Valid {
-		record.PinPath = pinPath.String
+		pin := bpffs.LinkPath(pinPath.String)
+		record.PinPath = &pin
 	}
 	createdAt, err := time.Parse(time.RFC3339, createdAtStr)
 	if err != nil {
@@ -365,7 +373,8 @@ func (s *sqliteStore) scanLinkRecords(rows *sql.Rows) ([]bpfman.LinkSpec, error)
 			ProgramID: programID,
 		}
 		if pinPath.Valid {
-			record.PinPath = pinPath.String
+			pin := bpffs.LinkPath(pinPath.String)
+			record.PinPath = &pin
 		}
 		createdAt, err := time.Parse(time.RFC3339, createdAtStr)
 		if err != nil {

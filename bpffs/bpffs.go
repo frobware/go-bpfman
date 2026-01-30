@@ -28,6 +28,24 @@ type Root string
 // String returns the path as a string.
 func (r Root) String() string { return string(r) }
 
+// LinkPath represents a pinned link path within a bpffs.
+// This is a newtype to prevent accidentally passing arbitrary strings
+// where a validated link pin path is expected.
+type LinkPath string
+
+// String returns the path as a string.
+func (p LinkPath) String() string { return string(p) }
+
+// NewLinkPath creates a *LinkPath from a string, returning nil if empty.
+// This is a convenience function for converting optional string pin paths.
+func NewLinkPath(s string) *LinkPath {
+	if s == "" {
+		return nil
+	}
+	p := LinkPath(s)
+	return &p
+}
+
 // IsMounted reports whether a bpffs is mounted at mountPoint by
 // parsing mountInfoPath (e.g. /proc/self/mountinfo).
 //

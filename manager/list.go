@@ -37,7 +37,7 @@ type KernelInfo struct {
 // BpfmanInfo contains managed metadata.
 type BpfmanInfo struct {
 	Program *bpfman.ProgramSpec `json:"program,omitempty"`
-	Links   []bpfman.LinkRecord `json:"links,omitempty"`
+	Links   []bpfman.LinkSpec   `json:"links,omitempty"`
 }
 
 // HostInfo contains system information about the observed host.
@@ -116,7 +116,7 @@ func (m *Manager) Get(ctx context.Context, kernelID uint32) (ProgramInfo, error)
 
 	// Fetch complete records with details, and kernel info
 	var kernelLinks []kernel.Link
-	var linksWithDetails []bpfman.LinkRecord
+	var linksWithDetails []bpfman.LinkSpec
 	for _, sl := range storedLinks {
 		// Fetch full record with details for this link
 		record, err := m.store.GetLink(ctx, sl.ID)
@@ -166,17 +166,17 @@ func (m *Manager) Get(ctx context.Context, kernelID uint32) (ProgramInfo, error)
 }
 
 // ListLinks returns all managed links (records only).
-func (m *Manager) ListLinks(ctx context.Context) ([]bpfman.LinkRecord, error) {
+func (m *Manager) ListLinks(ctx context.Context) ([]bpfman.LinkSpec, error) {
 	return m.store.ListLinks(ctx)
 }
 
 // ListLinksByProgram returns all links for a given program.
-func (m *Manager) ListLinksByProgram(ctx context.Context, programKernelID uint32) ([]bpfman.LinkRecord, error) {
+func (m *Manager) ListLinksByProgram(ctx context.Context, programKernelID uint32) ([]bpfman.LinkSpec, error) {
 	return m.store.ListLinksByProgram(ctx, programKernelID)
 }
 
 // GetLink retrieves a link by link ID, returning the full record with details.
-func (m *Manager) GetLink(ctx context.Context, linkID bpfman.LinkID) (bpfman.LinkRecord, error) {
+func (m *Manager) GetLink(ctx context.Context, linkID bpfman.LinkID) (bpfman.LinkSpec, error) {
 	return m.store.GetLink(ctx, linkID)
 }
 

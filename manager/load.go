@@ -164,13 +164,13 @@ func (m *Manager) Unload(ctx context.Context, kernelID uint32) error {
 // 2. UnloadProgram (program pin)
 // 3. UnloadProgram (maps directory)
 // 4. DeleteProgram
-func computeUnloadActions(kernelID uint32, progPinPath, mapsDir, linksDir string, links []bpfman.LinkRecord) []action.Action {
+func computeUnloadActions(kernelID uint32, progPinPath, mapsDir, linksDir string, links []bpfman.LinkSpec) []action.Action {
 	var actions []action.Action
 
 	// Detach links first, then remove the links directory.
 	for _, link := range links {
-		if link.PinPath != "" {
-			actions = append(actions, action.DetachLink{PinPath: link.PinPath})
+		if link.PinPath != nil {
+			actions = append(actions, action.DetachLink{PinPath: link.PinPath.String()})
 		}
 	}
 	actions = append(actions, action.RemovePin{Path: linksDir})

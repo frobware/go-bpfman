@@ -118,7 +118,7 @@ func ReconcileDispatcherActions(
 // kernel link IDs.
 // Pure function - no I/O.
 func ReconcileLinkActions(
-	links []bpfman.LinkRecord,
+	links []bpfman.LinkSpec,
 	kernelLinks []kernel.Link,
 ) []action.Action {
 	// Build set of kernel link IDs

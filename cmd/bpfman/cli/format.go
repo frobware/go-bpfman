@@ -303,7 +303,7 @@ func formatProgramListTable(programs []manager.ManagedProgram) string {
 }
 
 // FormatLinkList formats a list of LinkRecord according to the specified output flags.
-func FormatLinkList(links []bpfman.LinkRecord, flags *OutputFlags) (string, error) {
+func FormatLinkList(links []bpfman.LinkSpec, flags *OutputFlags) (string, error) {
 	format, err := flags.Format()
 	if err != nil {
 		return "", err
@@ -320,7 +320,7 @@ func FormatLinkList(links []bpfman.LinkRecord, flags *OutputFlags) (string, erro
 	}
 }
 
-func formatLinkListJSON(links []bpfman.LinkRecord) (string, error) {
+func formatLinkListJSON(links []bpfman.LinkSpec) (string, error) {
 	output, err := json.MarshalIndent(links, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal result: %w", err)
@@ -328,18 +328,22 @@ func formatLinkListJSON(links []bpfman.LinkRecord) (string, error) {
 	return string(output) + "\n", nil
 }
 
-func formatLinkListJSONPath(links []bpfman.LinkRecord, expr string) (string, error) {
+func formatLinkListJSONPath(links []bpfman.LinkSpec, expr string) (string, error) {
 	return executeJSONPath(links, expr)
 }
 
-func formatLinkListTable(links []bpfman.LinkRecord) string {
+func formatLinkListTable(links []bpfman.LinkSpec) string {
 	var b strings.Builder
 	w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
 
 	fmt.Fprintln(w, "LINK ID\tTYPE\tPIN PATH")
 
 	for _, l := range links {
-		fmt.Fprintf(w, "%d\t%s\t%s\n", l.ID, l.Kind, l.PinPath)
+		var pinPath string
+		if l.PinPath != nil {
+			pinPath = l.PinPath.String()
+		}
+		fmt.Fprintf(w, "%d\t%s\t%s\n", l.ID, l.Kind, pinPath)
 	}
 
 	w.Flush()
@@ -348,7 +352,7 @@ func formatLinkListTable(links []bpfman.LinkRecord) string {
 
 // FormatLinkResult formats a link result (from attach command) according to
 // the specified output flags. The bpfFunction is the name of the BPF function.
-func FormatLinkResult(bpfFunction string, record bpfman.LinkRecord, details bpfman.LinkDetails, flags *OutputFlags) (string, error) {
+func FormatLinkResult(bpfFunction string, record bpfman.LinkSpec, details bpfman.LinkDetails, flags *OutputFlags) (string, error) {
 	format, err := flags.Format()
 	if err != nil {
 		return "", err
@@ -368,11 +372,11 @@ func FormatLinkResult(bpfFunction string, record bpfman.LinkRecord, details bpfm
 // linkResultData combines record, details, and bpf function for JSON serialisation.
 type linkResultData struct {
 	BPFFunction string             `json:"bpf_function,omitempty"`
-	Record      bpfman.LinkRecord  `json:"record"`
+	Record      bpfman.LinkSpec    `json:"record"`
 	Details     bpfman.LinkDetails `json:"details"`
 }
 
-func formatLinkResultJSON(bpfFunction string, record bpfman.LinkRecord, details bpfman.LinkDetails) (string, error) {
+func formatLinkResultJSON(bpfFunction string, record bpfman.LinkSpec, details bpfman.LinkDetails) (string, error) {
 	data := linkResultData{
 		BPFFunction: bpfFunction,
 		Record:      record,
@@ -385,7 +389,7 @@ func formatLinkResultJSON(bpfFunction string, record bpfman.LinkRecord, details 
 	return string(output) + "\n", nil
 }
 
-func formatLinkResultJSONPath(bpfFunction string, record bpfman.LinkRecord, details bpfman.LinkDetails, expr string) (string, error) {
+func formatLinkResultJSONPath(bpfFunction string, record bpfman.LinkSpec, details bpfman.LinkDetails, expr string) (string, error) {
 	data := linkResultData{
 		BPFFunction: bpfFunction,
 		Record:      record,
@@ -394,7 +398,7 @@ func formatLinkResultJSONPath(bpfFunction string, record bpfman.LinkRecord, deta
 	return executeJSONPath(data, expr)
 }
 
-func formatLinkResultTable(bpfFunction string, record bpfman.LinkRecord, details bpfman.LinkDetails) string {
+func formatLinkResultTable(bpfFunction string, record bpfman.LinkSpec, details bpfman.LinkDetails) string {
 	var b strings.Builder
 	w := tabwriter.NewWriter(&b, 0, 0, 1, ' ', 0)
 
@@ -487,7 +491,7 @@ type LinkInfo struct {
 }
 
 // FormatLinkInfo formats link info for the get link command according to the specified output flags.
-func FormatLinkInfo(bpfFunction string, record bpfman.LinkRecord, details bpfman.LinkDetails, flags *OutputFlags) (string, error) {
+func FormatLinkInfo(bpfFunction string, record bpfman.LinkSpec, details bpfman.LinkDetails, flags *OutputFlags) (string, error) {
 	format, err := flags.Format()
 	if err != nil {
 		return "", err
@@ -504,10 +508,10 @@ func FormatLinkInfo(bpfFunction string, record bpfman.LinkRecord, details bpfman
 	}
 }
 
-func formatLinkInfoJSON(bpfFunction string, record bpfman.LinkRecord, details bpfman.LinkDetails) (string, error) {
+func formatLinkInfoJSON(bpfFunction string, record bpfman.LinkSpec, details bpfman.LinkDetails) (string, error) {
 	data := struct {
 		BPFFunction string             `json:"bpf_function,omitempty"`
-		Record      bpfman.LinkRecord  `json:"record"`
+		Record      bpfman.LinkSpec    `json:"record"`
 		Details     bpfman.LinkDetails `json:"details,omitempty"`
 	}{
 		BPFFunction: bpfFunction,
@@ -521,10 +525,10 @@ func formatLinkInfoJSON(bpfFunction string, record bpfman.LinkRecord, details bp
 	return string(output) + "\n", nil
 }
 
-func formatLinkInfoJSONPath(bpfFunction string, record bpfman.LinkRecord, details bpfman.LinkDetails, expr string) (string, error) {
+func formatLinkInfoJSONPath(bpfFunction string, record bpfman.LinkSpec, details bpfman.LinkDetails, expr string) (string, error) {
 	data := struct {
 		BPFFunction string             `json:"bpf_function,omitempty"`
-		Record      bpfman.LinkRecord  `json:"record"`
+		Record      bpfman.LinkSpec    `json:"record"`
 		Details     bpfman.LinkDetails `json:"details,omitempty"`
 	}{
 		BPFFunction: bpfFunction,
@@ -534,7 +538,7 @@ func formatLinkInfoJSONPath(bpfFunction string, record bpfman.LinkRecord, detail
 	return executeJSONPath(data, expr)
 }
 
-func formatLinkInfoTable(bpfFunction string, record bpfman.LinkRecord, details bpfman.LinkDetails) string {
+func formatLinkInfoTable(bpfFunction string, record bpfman.LinkSpec, details bpfman.LinkDetails) string {
 	var b strings.Builder
 	w := tabwriter.NewWriter(&b, 0, 0, 1, ' ', 0)
 

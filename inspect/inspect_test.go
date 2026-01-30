@@ -21,7 +21,7 @@ import (
 // fakeStore implements StoreLister for testing.
 type fakeStore struct {
 	programs    map[uint32]bpfman.ProgramSpec
-	links       []bpfman.LinkRecord
+	links       []bpfman.LinkSpec
 	dispatchers []dispatcher.State
 }
 
@@ -36,17 +36,17 @@ func (s *fakeStore) Get(ctx context.Context, kernelID uint32) (bpfman.ProgramSpe
 	return bpfman.ProgramSpec{}, store.ErrNotFound
 }
 
-func (s *fakeStore) ListLinks(ctx context.Context) ([]bpfman.LinkRecord, error) {
+func (s *fakeStore) ListLinks(ctx context.Context) ([]bpfman.LinkSpec, error) {
 	return s.links, nil
 }
 
-func (s *fakeStore) GetLink(ctx context.Context, linkID bpfman.LinkID) (bpfman.LinkRecord, error) {
+func (s *fakeStore) GetLink(ctx context.Context, linkID bpfman.LinkID) (bpfman.LinkSpec, error) {
 	for _, l := range s.links {
 		if l.ID == linkID {
 			return l, nil
 		}
 	}
-	return bpfman.LinkRecord{}, store.ErrNotFound
+	return bpfman.LinkSpec{}, store.ErrNotFound
 }
 
 func (s *fakeStore) ListDispatchers(ctx context.Context) ([]dispatcher.State, error) {
@@ -217,7 +217,7 @@ func TestSnapshot_Links(t *testing.T) {
 	scanner := bpffs.NewScanner(dirs)
 
 	store := &fakeStore{
-		links: []bpfman.LinkRecord{
+		links: []bpfman.LinkSpec{
 			// ID is now the kernel link ID for non-synthetic links
 			{ID: bpfman.LinkID(10), Kind: bpfman.LinkKindXDP},
 			{ID: bpfman.LinkID(20), Kind: bpfman.LinkKindKprobe},
@@ -480,11 +480,11 @@ func TestGetLink_FullyPresent(t *testing.T) {
 
 	// ID is now the kernel link ID for non-synthetic links
 	store := &fakeStore{
-		links: []bpfman.LinkRecord{
+		links: []bpfman.LinkSpec{
 			{
 				ID:      bpfman.LinkID(10), // kernel link ID
 				Kind:    bpfman.LinkKindKprobe,
-				PinPath: pinPath,
+				PinPath: bpffs.NewLinkPath(pinPath),
 				Details: bpfman.KprobeDetails{FnName: "do_sys_open"},
 			},
 		},
@@ -510,7 +510,7 @@ func TestGetLink_StoreOnly(t *testing.T) {
 
 	// ID is now the kernel link ID for non-synthetic links
 	store := &fakeStore{
-		links: []bpfman.LinkRecord{
+		links: []bpfman.LinkSpec{
 			{ID: bpfman.LinkID(20), Kind: bpfman.LinkKindTracepoint},
 		},
 	}

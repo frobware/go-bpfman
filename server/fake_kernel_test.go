@@ -389,7 +389,7 @@ func (f *fakeKernel) AttachTracepoint(_ context.Context, progPinPath, group, nam
 		Spec: bpfman.LinkSpec{
 			ID:        bpfman.LinkID(id),
 			Kind:      bpfman.LinkKindTracepoint,
-			PinPath:   linkPinPath,
+			PinPath:   bpffs.NewLinkPath(linkPinPath),
 			CreatedAt: time.Now(),
 			Details:   bpfman.TracepointDetails{Group: group, Name: name},
 		},
@@ -414,7 +414,7 @@ func (f *fakeKernel) AttachXDP(_ context.Context, progPinPath string, ifindex in
 		Spec: bpfman.LinkSpec{
 			ID:        bpfman.LinkID(id),
 			Kind:      bpfman.LinkKindXDP,
-			PinPath:   linkPinPath,
+			PinPath:   bpffs.NewLinkPath(linkPinPath),
 			CreatedAt: time.Now(),
 			Details:   bpfman.XDPDetails{Ifindex: uint32(ifindex)},
 		},
@@ -445,7 +445,7 @@ func (f *fakeKernel) AttachKprobe(_ context.Context, progPinPath, fnName string,
 		Spec: bpfman.LinkSpec{
 			ID:        bpfman.LinkID(id),
 			Kind:      linkKind,
-			PinPath:   linkPinPath,
+			PinPath:   bpffs.NewLinkPath(linkPinPath),
 			CreatedAt: time.Now(),
 			Details:   bpfman.KprobeDetails{FnName: fnName, Offset: offset, Retprobe: retprobe},
 		},
@@ -476,7 +476,7 @@ func (f *fakeKernel) AttachUprobeLocal(_ context.Context, progPinPath, target, f
 		Spec: bpfman.LinkSpec{
 			ID:        bpfman.LinkID(id),
 			Kind:      linkKind,
-			PinPath:   linkPinPath,
+			PinPath:   bpffs.NewLinkPath(linkPinPath),
 			CreatedAt: time.Now(),
 			Details:   bpfman.UprobeDetails{Target: target, FnName: fnName, Offset: offset, Retprobe: retprobe, ContainerPid: 0},
 		},
@@ -507,7 +507,7 @@ func (f *fakeKernel) AttachUprobeContainer(_ context.Context, _ lock.WriterScope
 		Spec: bpfman.LinkSpec{
 			ID:        bpfman.LinkID(id),
 			Kind:      linkKind,
-			PinPath:   linkPinPath,
+			PinPath:   bpffs.NewLinkPath(linkPinPath),
 			CreatedAt: time.Now(),
 			Details:   bpfman.UprobeDetails{Target: target, FnName: fnName, Offset: offset, Retprobe: retprobe, ContainerPid: containerPid},
 		},
@@ -532,7 +532,7 @@ func (f *fakeKernel) AttachFentry(_ context.Context, progPinPath, fnName, linkPi
 		Spec: bpfman.LinkSpec{
 			ID:        bpfman.LinkID(id),
 			Kind:      bpfman.LinkKindFentry,
-			PinPath:   linkPinPath,
+			PinPath:   bpffs.NewLinkPath(linkPinPath),
 			CreatedAt: time.Now(),
 			Details:   bpfman.FentryDetails{FnName: fnName},
 		},
@@ -557,7 +557,7 @@ func (f *fakeKernel) AttachFexit(_ context.Context, progPinPath, fnName, linkPin
 		Spec: bpfman.LinkSpec{
 			ID:        bpfman.LinkID(id),
 			Kind:      bpfman.LinkKindFexit,
-			PinPath:   linkPinPath,
+			PinPath:   bpffs.NewLinkPath(linkPinPath),
 			CreatedAt: time.Now(),
 			Details:   bpfman.FexitDetails{FnName: fnName},
 		},
@@ -634,7 +634,7 @@ func (f *fakeKernel) AttachXDPExtension(_ context.Context, dispatcherPinPath, ob
 		Spec: bpfman.LinkSpec{
 			ID:        bpfman.LinkID(id),
 			Kind:      bpfman.LinkKindXDP,
-			PinPath:   linkPinPath,
+			PinPath:   bpffs.NewLinkPath(linkPinPath),
 			CreatedAt: time.Now(),
 			Details:   bpfman.XDPDetails{Position: int32(position)},
 		},
@@ -714,7 +714,7 @@ func (f *fakeKernel) AttachTCExtension(_ context.Context, dispatcherPinPath, obj
 		Spec: bpfman.LinkSpec{
 			ID:        bpfman.LinkID(id),
 			Kind:      bpfman.LinkKindTC,
-			PinPath:   linkPinPath,
+			PinPath:   bpffs.NewLinkPath(linkPinPath),
 			CreatedAt: time.Now(),
 			Details:   bpfman.TCDetails{Position: int32(position)},
 		},
@@ -740,7 +740,7 @@ func (f *fakeKernel) AttachTCX(_ context.Context, ifindex int, direction, progra
 		Spec: bpfman.LinkSpec{
 			ID:        bpfman.LinkID(id),
 			Kind:      bpfman.LinkKindTCX,
-			PinPath:   linkPinPath,
+			PinPath:   bpffs.NewLinkPath(linkPinPath),
 			CreatedAt: time.Now(),
 		},
 		Status: bpfman.LinkStatus{
