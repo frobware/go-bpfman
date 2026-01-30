@@ -14,26 +14,25 @@ import (
 )
 
 // LinkWriter writes link metadata to the store.
-// SaveLink dispatches to the appropriate detail table based on record.Details.Kind().
+// SaveLink dispatches to the appropriate detail table based on spec.Details.Kind().
 type LinkWriter interface {
-	// SaveLink saves a link record with its details.
-	// linkID is the primary key (kernel-assigned for real BPF links,
+	// SaveLink saves a link spec with its details.
+	// spec.ID is the primary key (kernel-assigned for real BPF links,
 	// or bpfman-assigned synthetic ID for perf_event-based links).
-	// kernelProgramID is stored for queries but not part of LinkRecord (ephemeral).
-	SaveLink(ctx context.Context, linkID bpfman.LinkID, record bpfman.LinkRecord, kernelProgramID uint32) error
+	SaveLink(ctx context.Context, spec bpfman.LinkSpec) error
 	DeleteLink(ctx context.Context, linkID bpfman.LinkID) error
 }
 
 // LinkReader reads link metadata from the store.
 // GetLink performs a two-phase lookup: registry then type-specific details.
 type LinkReader interface {
-	GetLink(ctx context.Context, linkID bpfman.LinkID) (bpfman.LinkRecord, error)
+	GetLink(ctx context.Context, linkID bpfman.LinkID) (bpfman.LinkSpec, error)
 }
 
 // LinkLister lists links from the store.
 type LinkLister interface {
-	ListLinks(ctx context.Context) ([]bpfman.LinkRecord, error)
-	ListLinksByProgram(ctx context.Context, programKernelID uint32) ([]bpfman.LinkRecord, error)
+	ListLinks(ctx context.Context) ([]bpfman.LinkSpec, error)
+	ListLinksByProgram(ctx context.Context, programKernelID uint32) ([]bpfman.LinkSpec, error)
 	// ListTCXLinksByInterface returns all TCX links for a given interface/direction/namespace.
 	// Used for computing attach order based on priority.
 	ListTCXLinksByInterface(ctx context.Context, nsid uint64, ifindex uint32, direction string) ([]bpfman.TCXLinkInfo, error)

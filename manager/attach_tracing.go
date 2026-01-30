@@ -49,7 +49,9 @@ func (m *Manager) AttachTracepoint(ctx context.Context, spec bpfman.TracepointAt
 
 	// EXECUTE: Save link metadata directly to store
 	// The link ID is populated by the kernel attach function (kernel-assigned for real links)
-	if err := m.store.SaveLink(ctx, link.Managed.ID, link.Managed, programKernelID); err != nil {
+	// Set the program ID before saving (kernel adapter doesn't know it)
+	link.Spec.ProgramID = programKernelID
+	if err := m.store.SaveLink(ctx, link.Spec); err != nil {
 		m.logger.ErrorContext(ctx, "persist failed, rolling back", "program_id", programKernelID, "error", err)
 		if rbErr := undo.rollback(ctx, m.logger); rbErr != nil {
 			return bpfman.Link{}, errors.Join(fmt.Errorf("save link metadata: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
@@ -58,7 +60,7 @@ func (m *Manager) AttachTracepoint(ctx context.Context, spec bpfman.TracepointAt
 	}
 
 	m.logger.InfoContext(ctx, "attached tracepoint",
-		"link_id", link.Managed.ID,
+		"link_id", link.Spec.ID,
 		"program_id", programKernelID,
 		"tracepoint", group+"/"+name,
 		"pin_path", linkPinPath)
@@ -112,7 +114,9 @@ func (m *Manager) AttachKprobe(ctx context.Context, spec bpfman.KprobeAttachSpec
 
 	// EXECUTE: Save link metadata directly to store
 	// The link ID is populated by the kernel attach function (kernel-assigned for real links)
-	if err := m.store.SaveLink(ctx, link.Managed.ID, link.Managed, programKernelID); err != nil {
+	// Set the program ID before saving (kernel adapter doesn't know it)
+	link.Spec.ProgramID = programKernelID
+	if err := m.store.SaveLink(ctx, link.Spec); err != nil {
 		m.logger.ErrorContext(ctx, "persist failed, rolling back", "program_id", programKernelID, "error", err)
 		if rbErr := undo.rollback(ctx, m.logger); rbErr != nil {
 			return bpfman.Link{}, errors.Join(fmt.Errorf("save link metadata: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
@@ -125,7 +129,7 @@ func (m *Manager) AttachKprobe(ctx context.Context, spec bpfman.KprobeAttachSpec
 		probeType = "kretprobe"
 	}
 	m.logger.InfoContext(ctx, "attached "+probeType,
-		"link_id", link.Managed.ID,
+		"link_id", link.Spec.ID,
 		"program_id", programKernelID,
 		"fn_name", fnName,
 		"offset", offset,
@@ -196,7 +200,9 @@ func (m *Manager) AttachUprobe(ctx context.Context, scope lock.WriterScope, spec
 
 	// EXECUTE: Save link metadata directly to store
 	// The link ID is populated by the kernel attach function (kernel-assigned or synthetic)
-	if err := m.store.SaveLink(ctx, link.Managed.ID, link.Managed, programKernelID); err != nil {
+	// Set the program ID before saving (kernel adapter doesn't know it)
+	link.Spec.ProgramID = programKernelID
+	if err := m.store.SaveLink(ctx, link.Spec); err != nil {
 		m.logger.ErrorContext(ctx, "persist failed, rolling back", "program_id", programKernelID, "error", err)
 		if rbErr := undo.rollback(ctx, m.logger); rbErr != nil {
 			return bpfman.Link{}, errors.Join(fmt.Errorf("save link metadata: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
@@ -209,7 +215,7 @@ func (m *Manager) AttachUprobe(ctx context.Context, scope lock.WriterScope, spec
 		probeType = "uretprobe"
 	}
 	m.logger.InfoContext(ctx, "attached "+probeType,
-		"link_id", link.Managed.ID,
+		"link_id", link.Spec.ID,
 		"program_id", programKernelID,
 		"target", target,
 		"fn_name", fnName,
@@ -263,7 +269,9 @@ func (m *Manager) AttachFentry(ctx context.Context, spec bpfman.FentryAttachSpec
 
 	// EXECUTE: Save link metadata directly to store
 	// The link ID is populated by the kernel attach function (kernel-assigned for real links)
-	if err := m.store.SaveLink(ctx, link.Managed.ID, link.Managed, programKernelID); err != nil {
+	// Set the program ID before saving (kernel adapter doesn't know it)
+	link.Spec.ProgramID = programKernelID
+	if err := m.store.SaveLink(ctx, link.Spec); err != nil {
 		m.logger.ErrorContext(ctx, "persist failed, rolling back", "program_id", programKernelID, "error", err)
 		if rbErr := undo.rollback(ctx, m.logger); rbErr != nil {
 			return bpfman.Link{}, errors.Join(fmt.Errorf("save link metadata: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
@@ -272,7 +280,7 @@ func (m *Manager) AttachFentry(ctx context.Context, spec bpfman.FentryAttachSpec
 	}
 
 	m.logger.InfoContext(ctx, "attached fentry",
-		"link_id", link.Managed.ID,
+		"link_id", link.Spec.ID,
 		"program_id", programKernelID,
 		"fn_name", fnName,
 		"pin_path", linkPinPath)
@@ -323,7 +331,9 @@ func (m *Manager) AttachFexit(ctx context.Context, spec bpfman.FexitAttachSpec, 
 
 	// EXECUTE: Save link metadata directly to store
 	// The link ID is populated by the kernel attach function (kernel-assigned for real links)
-	if err := m.store.SaveLink(ctx, link.Managed.ID, link.Managed, programKernelID); err != nil {
+	// Set the program ID before saving (kernel adapter doesn't know it)
+	link.Spec.ProgramID = programKernelID
+	if err := m.store.SaveLink(ctx, link.Spec); err != nil {
 		m.logger.ErrorContext(ctx, "persist failed, rolling back", "program_id", programKernelID, "error", err)
 		if rbErr := undo.rollback(ctx, m.logger); rbErr != nil {
 			return bpfman.Link{}, errors.Join(fmt.Errorf("save link metadata: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
@@ -332,7 +342,7 @@ func (m *Manager) AttachFexit(ctx context.Context, spec bpfman.FexitAttachSpec, 
 	}
 
 	m.logger.InfoContext(ctx, "attached fexit",
-		"link_id", link.Managed.ID,
+		"link_id", link.Spec.ID,
 		"program_id", programKernelID,
 		"fn_name", fnName,
 		"pin_path", linkPinPath)

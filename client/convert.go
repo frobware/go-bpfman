@@ -331,18 +331,12 @@ func protoLinkSummaryToRecord(s *pb.LinkSummary) bpfman.LinkRecord {
 
 	createdAt, _ := time.Parse(time.RFC3339, s.CreatedAt)
 
-	var kernelLinkID *uint32
-	if s.KernelLinkId != 0 {
-		kernelLinkID = &s.KernelLinkId
-	}
-
 	return bpfman.LinkRecord{
-		ID:              bpfman.LinkID(s.KernelLinkId),
-		Kind:            protoLinkKindToManaged(s.LinkType),
-		KernelLinkID:    kernelLinkID,
-		KernelProgramID: s.KernelProgramId,
-		PinPath:         s.PinPath,
-		CreatedAt:       createdAt,
+		ID:        bpfman.LinkID(s.KernelLinkId),
+		Kind:      protoLinkKindToManaged(s.LinkType),
+		ProgramID: s.KernelProgramId,
+		PinPath:   s.PinPath,
+		CreatedAt: createdAt,
 	}
 }
 

@@ -48,7 +48,6 @@ func (m *Manager) Detach(ctx context.Context, linkID bpfman.LinkID) error {
 	// Log before executing
 	m.logger.InfoContext(ctx, "detaching link",
 		"link_id", linkID,
-		"kernel_link_id", record.KernelLinkID,
 		"kind", record.Kind,
 		"pin_path", record.PinPath)
 

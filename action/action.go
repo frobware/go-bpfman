@@ -33,12 +33,10 @@ func (DeleteProgram) isAction() {}
 // Link actions - operations on link metadata
 
 // SaveLink saves a link to the store.
-// LinkID is the primary key: kernel-assigned for real BPF links,
+// Spec.ID is the primary key: kernel-assigned for real BPF links,
 // or bpfman-assigned synthetic ID (0x80000000+) for perf_event-based links.
 type SaveLink struct {
-	LinkID          bpfman.LinkID
-	Record          bpfman.LinkRecord
-	KernelProgramID uint32
+	Spec bpfman.LinkSpec
 }
 
 func (SaveLink) isAction() {}

@@ -156,10 +156,9 @@ func (c *remoteClient) AttachTracepoint(ctx context.Context, spec bpfman.Tracepo
 
 	linkID := resp.LinkId
 	return bpfman.LinkRecord{
-		ID:           bpfman.LinkID(linkID),
-		Kind:         bpfman.LinkKindTracepoint,
-		KernelLinkID: &linkID,
-		PinPath:      opts.LinkPinPath,
+		ID:      bpfman.LinkID(linkID),
+		Kind:    bpfman.LinkKindTracepoint,
+		PinPath: opts.LinkPinPath,
 	}, nil
 }
 
@@ -184,10 +183,9 @@ func (c *remoteClient) AttachXDP(ctx context.Context, spec bpfman.XDPAttachSpec,
 
 	linkID := resp.LinkId
 	return bpfman.LinkRecord{
-		ID:           bpfman.LinkID(linkID),
-		Kind:         bpfman.LinkKindXDP,
-		KernelLinkID: &linkID,
-		PinPath:      opts.LinkPinPath,
+		ID:      bpfman.LinkID(linkID),
+		Kind:    bpfman.LinkKindXDP,
+		PinPath: opts.LinkPinPath,
 	}, nil
 }
 
@@ -214,10 +212,9 @@ func (c *remoteClient) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, o
 
 	linkID := resp.LinkId
 	return bpfman.LinkRecord{
-		ID:           bpfman.LinkID(linkID),
-		Kind:         bpfman.LinkKindTC,
-		KernelLinkID: &linkID,
-		PinPath:      opts.LinkPinPath,
+		ID:      bpfman.LinkID(linkID),
+		Kind:    bpfman.LinkKindTC,
+		PinPath: opts.LinkPinPath,
 	}, nil
 }
 
@@ -243,10 +240,9 @@ func (c *remoteClient) AttachTCX(ctx context.Context, spec bpfman.TCXAttachSpec,
 
 	linkID := resp.LinkId
 	return bpfman.LinkRecord{
-		ID:           bpfman.LinkID(linkID),
-		Kind:         bpfman.LinkKindTCX,
-		KernelLinkID: &linkID,
-		PinPath:      opts.LinkPinPath,
+		ID:      bpfman.LinkID(linkID),
+		Kind:    bpfman.LinkKindTCX,
+		PinPath: opts.LinkPinPath,
 	}, nil
 }
 
@@ -271,10 +267,9 @@ func (c *remoteClient) AttachKprobe(ctx context.Context, spec bpfman.KprobeAttac
 
 	linkID := resp.LinkId
 	return bpfman.LinkRecord{
-		ID:           bpfman.LinkID(linkID),
-		Kind:         bpfman.LinkKindKprobe,
-		KernelLinkID: &linkID,
-		PinPath:      opts.LinkPinPath,
+		ID:      bpfman.LinkID(linkID),
+		Kind:    bpfman.LinkKindKprobe,
+		PinPath: opts.LinkPinPath,
 	}, nil
 }
 
@@ -305,10 +300,9 @@ func (c *remoteClient) AttachUprobe(ctx context.Context, spec bpfman.UprobeAttac
 
 	linkID := resp.LinkId
 	return bpfman.LinkRecord{
-		ID:           bpfman.LinkID(linkID),
-		Kind:         bpfman.LinkKindUprobe,
-		KernelLinkID: &linkID,
-		PinPath:      opts.LinkPinPath,
+		ID:      bpfman.LinkID(linkID),
+		Kind:    bpfman.LinkKindUprobe,
+		PinPath: opts.LinkPinPath,
 	}, nil
 }
 
@@ -330,10 +324,9 @@ func (c *remoteClient) AttachFentry(ctx context.Context, spec bpfman.FentryAttac
 
 	linkID := resp.LinkId
 	return bpfman.LinkRecord{
-		ID:           bpfman.LinkID(linkID),
-		Kind:         bpfman.LinkKindFentry,
-		KernelLinkID: &linkID,
-		PinPath:      opts.LinkPinPath,
+		ID:      bpfman.LinkID(linkID),
+		Kind:    bpfman.LinkKindFentry,
+		PinPath: opts.LinkPinPath,
 	}, nil
 }
 
@@ -355,10 +348,9 @@ func (c *remoteClient) AttachFexit(ctx context.Context, spec bpfman.FexitAttachS
 
 	linkID := resp.LinkId
 	return bpfman.LinkRecord{
-		ID:           bpfman.LinkID(linkID),
-		Kind:         bpfman.LinkKindFexit,
-		KernelLinkID: &linkID,
-		PinPath:      opts.LinkPinPath,
+		ID:      bpfman.LinkID(linkID),
+		Kind:    bpfman.LinkKindFexit,
+		PinPath: opts.LinkPinPath,
 	}, nil
 }
 

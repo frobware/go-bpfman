@@ -40,16 +40,21 @@ func (k *kernelAdapter) AttachTracepoint(ctx context.Context, progPinPath, group
 	}
 
 	kernelLinkID := uint32(linkInfo.ID)
+	kernelLink := ToKernelLink(linkInfo)
 	return bpfman.Link{
-		Managed: bpfman.LinkRecord{
-			ID:           bpfman.LinkID(kernelLinkID),
-			Kind:         bpfman.LinkKindTracepoint,
-			KernelLinkID: &kernelLinkID,
-			PinPath:      linkPinPath,
-			CreatedAt:    time.Now(),
-			Details:      bpfman.TracepointDetails{Group: group, Name: name},
+		Spec: bpfman.LinkSpec{
+			ID:        bpfman.LinkID(kernelLinkID),
+			Kind:      bpfman.LinkKindTracepoint,
+			PinPath:   linkPinPath,
+			CreatedAt: time.Now(),
+			Details:   bpfman.TracepointDetails{Group: group, Name: name},
+			// ProgramID is set by the manager after this call
 		},
-		Kernel: *ToKernelLink(linkInfo),
+		Status: bpfman.LinkStatus{
+			Kernel:     kernelLink,
+			KernelSeen: true,
+			PinPresent: linkPinPath != "",
+		},
 	}, nil
 }
 
@@ -100,16 +105,21 @@ func (k *kernelAdapter) AttachKprobe(ctx context.Context, progPinPath, fnName st
 	}
 
 	kernelLinkID := uint32(linkInfo.ID)
+	kernelLink := ToKernelLink(linkInfo)
 	return bpfman.Link{
-		Managed: bpfman.LinkRecord{
-			ID:           bpfman.LinkID(kernelLinkID),
-			Kind:         linkKind,
-			KernelLinkID: &kernelLinkID,
-			PinPath:      linkPinPath,
-			CreatedAt:    time.Now(),
-			Details:      bpfman.KprobeDetails{FnName: fnName, Offset: offset, Retprobe: retprobe},
+		Spec: bpfman.LinkSpec{
+			ID:        bpfman.LinkID(kernelLinkID),
+			Kind:      linkKind,
+			PinPath:   linkPinPath,
+			CreatedAt: time.Now(),
+			Details:   bpfman.KprobeDetails{FnName: fnName, Offset: offset, Retprobe: retprobe},
+			// ProgramID is set by the manager after this call
 		},
-		Kernel: *ToKernelLink(linkInfo),
+		Status: bpfman.LinkStatus{
+			Kernel:     kernelLink,
+			KernelSeen: true,
+			PinPresent: linkPinPath != "",
+		},
 	}, nil
 }
 
@@ -166,15 +176,20 @@ func (k *kernelAdapter) attachTracing(ctx context.Context, progPinPath, fnName, 
 	}
 
 	kernelLinkID := uint32(linkInfo.ID)
+	kernelLink := ToKernelLink(linkInfo)
 	return bpfman.Link{
-		Managed: bpfman.LinkRecord{
-			ID:           bpfman.LinkID(kernelLinkID),
-			Kind:         linkKind,
-			KernelLinkID: &kernelLinkID,
-			PinPath:      linkPinPath,
-			CreatedAt:    time.Now(),
-			Details:      details,
+		Spec: bpfman.LinkSpec{
+			ID:        bpfman.LinkID(kernelLinkID),
+			Kind:      linkKind,
+			PinPath:   linkPinPath,
+			CreatedAt: time.Now(),
+			Details:   details,
+			// ProgramID is set by the manager after this call
 		},
-		Kernel: *ToKernelLink(linkInfo),
+		Status: bpfman.LinkStatus{
+			Kernel:     kernelLink,
+			KernelSeen: true,
+			PinPresent: linkPinPath != "",
+		},
 	}, nil
 }

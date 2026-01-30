@@ -167,9 +167,9 @@ func (m *Manager) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts b
 	})
 
 	// COMPUTE: Update link record with TC details
-	// The kernel attach function populates ID, Kind, KernelLinkID, PinPath, CreatedAt
+	// The kernel attach function populates ID, Kind, PinPath, CreatedAt
 	// We need to add the TC-specific details
-	link.Managed.Details = bpfman.TCDetails{
+	link.Spec.Details = bpfman.TCDetails{
 		Interface:    ifname,
 		Ifindex:      uint32(ifindex),
 		Direction:    direction,
@@ -183,7 +183,9 @@ func (m *Manager) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts b
 
 	// EXECUTE: Save link metadata directly to store
 	// The link ID is populated by the kernel attach function (kernel-assigned for real links)
-	if err := m.store.SaveLink(ctx, link.Managed.ID, link.Managed, programKernelID); err != nil {
+	// Set the program ID before saving (kernel adapter doesn't know it)
+	link.Spec.ProgramID = programKernelID
+	if err := m.store.SaveLink(ctx, link.Spec); err != nil {
 		m.logger.ErrorContext(ctx, "persist failed, rolling back", "program_id", programKernelID, "error", err)
 		if rbErr := undo.rollback(ctx, m.logger); rbErr != nil {
 			return bpfman.Link{}, errors.Join(fmt.Errorf("save link metadata: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
@@ -192,7 +194,7 @@ func (m *Manager) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts b
 	}
 
 	m.logger.InfoContext(ctx, "attached TC via dispatcher",
-		"link_id", link.Managed.ID,
+		"link_id", link.Spec.ID,
 		"program_id", programKernelID,
 		"interface", ifname,
 		"direction", direction,
@@ -288,9 +290,9 @@ func (m *Manager) AttachTCX(ctx context.Context, spec bpfman.TCXAttachSpec, opts
 	})
 
 	// COMPUTE: Update link record with TCX details
-	// The kernel attach function populates ID, Kind, KernelLinkID, PinPath, CreatedAt
+	// The kernel attach function populates ID, Kind, PinPath, CreatedAt
 	// We need to add the TCX-specific details
-	link.Managed.Details = bpfman.TCXDetails{
+	link.Spec.Details = bpfman.TCXDetails{
 		Interface: ifname,
 		Ifindex:   uint32(ifindex),
 		Direction: direction,
@@ -300,7 +302,9 @@ func (m *Manager) AttachTCX(ctx context.Context, spec bpfman.TCXAttachSpec, opts
 
 	// EXECUTE: Save link metadata directly to store
 	// The link ID is populated by the kernel attach function (kernel-assigned for real links)
-	if err := m.store.SaveLink(ctx, link.Managed.ID, link.Managed, programKernelID); err != nil {
+	// Set the program ID before saving (kernel adapter doesn't know it)
+	link.Spec.ProgramID = programKernelID
+	if err := m.store.SaveLink(ctx, link.Spec); err != nil {
 		m.logger.ErrorContext(ctx, "persist failed, rolling back", "program_id", programKernelID, "error", err)
 		if rbErr := undo.rollback(ctx, m.logger); rbErr != nil {
 			return bpfman.Link{}, errors.Join(fmt.Errorf("save TCX link metadata: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
@@ -309,7 +313,7 @@ func (m *Manager) AttachTCX(ctx context.Context, spec bpfman.TCXAttachSpec, opts
 	}
 
 	m.logger.InfoContext(ctx, "attached TCX program",
-		"link_id", link.Managed.ID,
+		"link_id", link.Spec.ID,
 		"program_id", programKernelID,
 		"interface", ifname,
 		"direction", direction,

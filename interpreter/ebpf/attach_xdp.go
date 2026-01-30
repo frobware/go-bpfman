@@ -49,16 +49,21 @@ func (k *kernelAdapter) AttachXDP(ctx context.Context, progPinPath string, ifind
 	}
 
 	kernelLinkID := uint32(linkInfo.ID)
+	kernelLink := ToKernelLink(linkInfo)
 	return bpfman.Link{
-		Managed: bpfman.LinkRecord{
-			ID:           bpfman.LinkID(kernelLinkID),
-			Kind:         bpfman.LinkKindXDP,
-			KernelLinkID: &kernelLinkID,
-			PinPath:      linkPinPath,
-			CreatedAt:    time.Now(),
-			Details:      bpfman.XDPDetails{Ifindex: uint32(ifindex)},
+		Spec: bpfman.LinkSpec{
+			ID:        bpfman.LinkID(kernelLinkID),
+			Kind:      bpfman.LinkKindXDP,
+			PinPath:   linkPinPath,
+			CreatedAt: time.Now(),
+			Details:   bpfman.XDPDetails{Ifindex: uint32(ifindex)},
+			// ProgramID is set by the manager after this call
 		},
-		Kernel: *ToKernelLink(linkInfo),
+		Status: bpfman.LinkStatus{
+			Kernel:     kernelLink,
+			KernelSeen: true,
+			PinPresent: linkPinPath != "",
+		},
 	}, nil
 }
 
@@ -390,15 +395,20 @@ func (k *kernelAdapter) AttachXDPExtension(ctx context.Context, dispatcherPinPat
 	}
 
 	kernelLinkID := uint32(linkInfo.ID)
+	kernelLink := ToKernelLink(linkInfo)
 	return bpfman.Link{
-		Managed: bpfman.LinkRecord{
-			ID:           bpfman.LinkID(kernelLinkID),
-			Kind:         bpfman.LinkKindXDP, // XDP extension
-			KernelLinkID: &kernelLinkID,
-			PinPath:      linkPinPath,
-			CreatedAt:    time.Now(),
-			Details:      bpfman.XDPDetails{Position: int32(position)},
+		Spec: bpfman.LinkSpec{
+			ID:        bpfman.LinkID(kernelLinkID),
+			Kind:      bpfman.LinkKindXDP, // XDP extension
+			PinPath:   linkPinPath,
+			CreatedAt: time.Now(),
+			Details:   bpfman.XDPDetails{Position: int32(position)},
+			// ProgramID is set by the manager after this call
 		},
-		Kernel: *ToKernelLink(linkInfo),
+		Status: bpfman.LinkStatus{
+			Kernel:     kernelLink,
+			KernelSeen: true,
+			PinPresent: linkPinPath != "",
+		},
 	}, nil
 }

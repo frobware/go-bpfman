@@ -320,16 +320,21 @@ func (k *kernelAdapter) AttachTCExtension(ctx context.Context, dispatcherPinPath
 	}
 
 	kernelLinkID := uint32(linkInfo.ID)
+	kernelLink := ToKernelLink(linkInfo)
 	return bpfman.Link{
-		Managed: bpfman.LinkRecord{
-			ID:           bpfman.LinkID(kernelLinkID),
-			Kind:         bpfman.LinkKindTC,
-			KernelLinkID: &kernelLinkID,
-			PinPath:      linkPinPath,
-			CreatedAt:    time.Now(),
-			Details:      bpfman.TCDetails{Position: int32(position)},
+		Spec: bpfman.LinkSpec{
+			ID:        bpfman.LinkID(kernelLinkID),
+			Kind:      bpfman.LinkKindTC,
+			PinPath:   linkPinPath,
+			CreatedAt: time.Now(),
+			Details:   bpfman.TCDetails{Position: int32(position)},
+			// ProgramID is set by the manager after this call
 		},
-		Kernel: *ToKernelLink(linkInfo),
+		Status: bpfman.LinkStatus{
+			Kernel:     kernelLink,
+			KernelSeen: true,
+			PinPresent: linkPinPath != "",
+		},
 	}, nil
 }
 
@@ -405,15 +410,20 @@ func (k *kernelAdapter) AttachTCX(ctx context.Context, ifindex int, direction, p
 		}
 
 		kernelLinkID := uint32(linkInfo.ID)
+		kernelLink := ToKernelLink(linkInfo)
 		result = bpfman.Link{
-			Managed: bpfman.LinkRecord{
-				ID:           bpfman.LinkID(kernelLinkID),
-				Kind:         bpfman.LinkKindTCX,
-				KernelLinkID: &kernelLinkID,
-				PinPath:      linkPinPath,
-				CreatedAt:    time.Now(),
+			Spec: bpfman.LinkSpec{
+				ID:        bpfman.LinkID(kernelLinkID),
+				Kind:      bpfman.LinkKindTCX,
+				PinPath:   linkPinPath,
+				CreatedAt: time.Now(),
+				// ProgramID is set by the manager after this call
 			},
-			Kernel: *ToKernelLink(linkInfo),
+			Status: bpfman.LinkStatus{
+				Kernel:     kernelLink,
+				KernelSeen: true,
+				PinPresent: linkPinPath != "",
+			},
 		}
 		return nil
 	})

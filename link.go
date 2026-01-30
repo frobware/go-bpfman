@@ -276,53 +276,80 @@ func (id LinkID) IsSynthetic() bool {
 	return IsSyntheticLinkID(uint32(id))
 }
 
-// LinkRecord is what bpfman persists/manages about a link.
-// The durable identity is ID (autoincrement), not kernel link ID.
-// KernelLinkID is an optional attribute for correlation with kernel state.
-type LinkRecord struct {
-	ID              LinkID      `json:"id"`
-	Kind            LinkKind    `json:"kind"`
-	KernelLinkID    *uint32     `json:"kernel_link_id,omitempty"` // nil for perf_event-based links
-	KernelProgramID uint32      `json:"kernel_program_id"`        // program this link is attached to
-	PinPath         string      `json:"pin_path,omitempty"`
-	CreatedAt       time.Time   `json:"created_at"`
-	Details         LinkDetails `json:"details,omitempty"`
-	// owner, metadata, etc. as needed
+// LinkSpec is what bpfman intends to manage (DB-backed).
+// This is the "desired state" - what the user asked for.
+// ID is the user-facing identity: kernel-assigned for real BPF links,
+// or bpfman-assigned (0x80000000+) for synthetic/perf_event links.
+type LinkSpec struct {
+	ID        LinkID      `json:"id"`
+	ProgramID uint32      `json:"program_id"` // program this attaches to
+	Kind      LinkKind    `json:"kind"`
+	PinPath   string      `json:"pin_path,omitempty"`
+	Details   LinkDetails `json:"details,omitempty"`
+	CreatedAt time.Time   `json:"created_at"`
 	// Note: When Details is non-nil, Kind must equal Details.Kind(); constructors enforce this
 }
 
 // IsSynthetic returns true if this is a synthetic link (perf_event-based, no kernel link).
-func (r LinkRecord) IsSynthetic() bool { return r.KernelLinkID == nil }
+func (s LinkSpec) IsSynthetic() bool { return s.ID.IsSynthetic() }
 
 // HasPin returns true if this link has a pin path.
-func (r LinkRecord) HasPin() bool { return r.PinPath != "" }
+func (s LinkSpec) HasPin() bool { return s.PinPath != "" }
 
-// Link is the canonical domain object - managed state + kernel state.
-// Kernel.ID, Kernel.ProgramID come from kernel.Link.
-type Link struct {
-	Managed LinkRecord
-	Kernel  kernel.Link
+// LinkStatus is observed state (kernel + fs).
+// This is "what actually exists right now".
+type LinkStatus struct {
+	Kernel     *kernel.Link // nil if not in kernel or synthetic
+	KernelSeen bool         // true if kernel enumeration succeeded (distinguishes "not found" from "unknown")
+	PinPresent bool         // true if pin path exists on filesystem
 }
 
-// NewLinkRecordSummary creates a summary-only record (no details).
-// Used by inspect when details are loaded lazily.
-func NewLinkRecordSummary(id LinkID, kind LinkKind, pinPath string, createdAt time.Time) LinkRecord {
-	return LinkRecord{
+// Link is the canonical domain object combining spec and status.
+// Spec comes from the store (what bpfman manages).
+// Status comes from observation (kernel enumeration + filesystem checks).
+type Link struct {
+	Spec   LinkSpec
+	Status LinkStatus
+}
+
+// LinkRecord is an alias for LinkSpec for backwards compatibility.
+// Deprecated: Use LinkSpec instead.
+type LinkRecord = LinkSpec
+
+// NewLinkSpec creates a fully-detailed spec.
+// Kind is derived from details to enforce the invariant.
+func NewLinkSpec(id LinkID, programID uint32, details LinkDetails, pinPath string, createdAt time.Time) LinkSpec {
+	return LinkSpec{
 		ID:        id,
+		ProgramID: programID,
+		Kind:      details.Kind(),
+		PinPath:   pinPath,
+		Details:   details,
+		CreatedAt: createdAt,
+	}
+}
+
+// NewLinkSpecSummary creates a summary-only spec (no details).
+// Used by inspect when details are loaded lazily.
+func NewLinkSpecSummary(id LinkID, programID uint32, kind LinkKind, pinPath string, createdAt time.Time) LinkSpec {
+	return LinkSpec{
+		ID:        id,
+		ProgramID: programID,
 		Kind:      kind,
 		PinPath:   pinPath,
 		CreatedAt: createdAt,
 	}
 }
 
-// NewLinkRecord creates a fully-detailed record.
-// Kind is derived from details to enforce the invariant.
-func NewLinkRecord(id LinkID, details LinkDetails, pinPath string, createdAt time.Time) LinkRecord {
-	return LinkRecord{
+// NewLinkRecord creates a fully-detailed spec.
+// Deprecated: Use NewLinkSpec instead.
+func NewLinkRecord(id LinkID, programID uint32, details LinkDetails, pinPath string, createdAt time.Time) LinkSpec {
+	return LinkSpec{
 		ID:        id,
+		ProgramID: programID,
 		Kind:      details.Kind(),
 		PinPath:   pinPath,
-		CreatedAt: createdAt,
 		Details:   details,
+		CreatedAt: createdAt,
 	}
 }

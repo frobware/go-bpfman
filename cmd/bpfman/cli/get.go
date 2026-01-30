@@ -64,8 +64,8 @@ func (c *GetLinkCmd) Run(cli *CLI, ctx context.Context) error {
 
 	// Look up program to get the BPF function name
 	var bpfFunction string
-	if record.KernelProgramID != 0 {
-		progInfo, err := b.Get(ctx, record.KernelProgramID)
+	if record.ProgramID != 0 {
+		progInfo, err := b.Get(ctx, record.ProgramID)
 		if err == nil && progInfo.Kernel != nil && progInfo.Kernel.Program != nil {
 			bpfFunction = progInfo.Kernel.Program.Name
 		}

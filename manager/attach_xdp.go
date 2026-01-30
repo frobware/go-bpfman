@@ -158,10 +158,12 @@ func (m *Manager) AttachXDP(ctx context.Context, spec bpfman.XDPAttachSpec, opts
 		Revision:     dispState.Revision,
 	}
 	// Use the ID from the kernel-returned link, rebuild record with enriched details
-	link.Managed.Details = details
+	link.Spec.Details = details
 
 	// EXECUTE: Save link metadata directly to store
-	if err := m.store.SaveLink(ctx, link.Managed.ID, link.Managed, programKernelID); err != nil {
+	// Set the program ID before saving (kernel adapter doesn't know it)
+	link.Spec.ProgramID = programKernelID
+	if err := m.store.SaveLink(ctx, link.Spec); err != nil {
 		m.logger.ErrorContext(ctx, "persist failed, rolling back", "program_id", programKernelID, "error", err)
 		if rbErr := undo.rollback(ctx, m.logger); rbErr != nil {
 			return bpfman.Link{}, errors.Join(fmt.Errorf("save link metadata: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
@@ -170,7 +172,7 @@ func (m *Manager) AttachXDP(ctx context.Context, spec bpfman.XDPAttachSpec, opts
 	}
 
 	m.logger.InfoContext(ctx, "attached XDP via dispatcher",
-		"link_id", link.Managed.ID,
+		"link_id", link.Spec.ID,
 		"program_id", programKernelID,
 		"interface", ifname,
 		"ifindex", ifindex,

@@ -61,15 +61,19 @@ func (k *kernelAdapter) AttachUprobeLocal(ctx context.Context, progPinPath, targ
 	}
 
 	return bpfman.Link{
-		Managed: bpfman.LinkRecord{
-			ID:           bpfman.LinkID(linkID),
-			Kind:         linkKind,
-			KernelLinkID: &linkID,
-			PinPath:      linkPinPath,
-			CreatedAt:    time.Now(),
-			Details:      bpfman.UprobeDetails{Target: target, FnName: fnName, Offset: offset, Retprobe: retprobe, ContainerPid: 0},
+		Spec: bpfman.LinkSpec{
+			ID:        bpfman.LinkID(linkID),
+			Kind:      linkKind,
+			PinPath:   linkPinPath,
+			CreatedAt: time.Now(),
+			Details:   bpfman.UprobeDetails{Target: target, FnName: fnName, Offset: offset, Retprobe: retprobe, ContainerPid: 0},
+			// ProgramID is set by the manager after this call
 		},
-		Kernel: kl,
+		Status: bpfman.LinkStatus{
+			Kernel:     &kl,
+			KernelSeen: true,
+			PinPresent: linkPinPath != "",
+		},
 	}, nil
 }
 
@@ -108,18 +112,22 @@ func (k *kernelAdapter) AttachUprobeContainer(ctx context.Context, scope lock.Wr
 	}
 
 	// Container uprobes use perf_event-based links which don't have kernel link IDs.
-	// The syntheticID is stored as the durable ID in the database, but KernelLinkID is nil.
+	// The syntheticID is stored as the durable ID in the database.
 	// We also can't load the pinned link for container uprobes (they can't be pinned).
 	return bpfman.Link{
-		Managed: bpfman.LinkRecord{
-			ID:           bpfman.LinkID(syntheticID), // Store the synthetic ID
-			Kind:         linkKind,
-			KernelLinkID: nil, // No kernel link for perf_event-based uprobes
-			PinPath:      linkPinPath,
-			CreatedAt:    time.Now(),
-			Details:      bpfman.UprobeDetails{Target: target, FnName: fnName, Offset: offset, Retprobe: retprobe, ContainerPid: containerPid},
+		Spec: bpfman.LinkSpec{
+			ID:        bpfman.LinkID(syntheticID), // Store the synthetic ID
+			Kind:      linkKind,
+			PinPath:   linkPinPath,
+			CreatedAt: time.Now(),
+			Details:   bpfman.UprobeDetails{Target: target, FnName: fnName, Offset: offset, Retprobe: retprobe, ContainerPid: containerPid},
+			// ProgramID is set by the manager after this call
 		},
-		// Kernel is zero-value since perf_event links don't have kernel link info
+		Status: bpfman.LinkStatus{
+			Kernel:     nil, // No kernel link for perf_event-based uprobes
+			KernelSeen: false,
+			PinPresent: false, // Container uprobes can't be pinned
+		},
 	}, nil
 }
 

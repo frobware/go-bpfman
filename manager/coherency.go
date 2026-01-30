@@ -531,8 +531,9 @@ func (s *ObservedState) Links() []LinkState {
 		link := &s.dbLinks[i]
 		synthetic := link.IsSynthetic()
 		inKernel := false
-		if link.KernelLinkID != nil && !synthetic {
-			inKernel = s.kernelLinks[*link.KernelLinkID]
+		// For non-synthetic links, ID is the kernel link ID
+		if !synthetic {
+			inKernel = s.kernelLinks[uint32(link.ID)]
 		}
 		ls := LinkState{
 			DB:        link,
@@ -771,14 +772,11 @@ Category: db-vs-kernel`,
 						continue
 					}
 					if !l.Kernel {
-						kernelLinkID := uint32(0)
-						if l.DB.KernelLinkID != nil {
-							kernelLinkID = *l.DB.KernelLinkID
-						}
+						// For non-synthetic links, ID is the kernel link ID
 						out = append(out, Violation{
 							Severity:    SeverityError,
 							Category:    "db-vs-kernel",
-							Description: fmt.Sprintf("Link %d (kernel_link_id=%d) in DB not found in kernel", l.DB.ID, kernelLinkID),
+							Description: fmt.Sprintf("Link %d in DB not found in kernel", l.DB.ID),
 						})
 					}
 				}
@@ -923,7 +921,7 @@ Category: db-vs-fs`,
 						out = append(out, Violation{
 							Severity:    SeverityWarning,
 							Category:    "db-vs-fs",
-							Description: fmt.Sprintf("Link %d: pin path missing: %s", l.DB.KernelLinkID, l.DB.PinPath),
+							Description: fmt.Sprintf("Link %d: pin path missing: %s", l.DB.ID, l.DB.PinPath),
 						})
 					}
 				}

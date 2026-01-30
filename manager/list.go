@@ -94,11 +94,12 @@ func (m *Manager) Get(ctx context.Context, kernelID uint32) (ProgramInfo, error)
 			linksWithDetails = append(linksWithDetails, record)
 		}
 
-		// Fetch from kernel if we have a kernel link ID
-		if sl.KernelLinkID == nil {
-			continue // Link not pinned or no kernel ID
+		// Fetch from kernel if we have a kernel link ID.
+		// For non-synthetic links, ID is the kernel link ID.
+		if sl.IsSynthetic() {
+			continue // Synthetic links don't have kernel link IDs
 		}
-		kl, err := m.kernel.GetLinkByID(ctx, *sl.KernelLinkID)
+		kl, err := m.kernel.GetLinkByID(ctx, uint32(sl.ID))
 		if err != nil {
 			// Link exists in store but not kernel - skip
 			continue

@@ -270,12 +270,13 @@ func (s *Server) GetLink(ctx context.Context, req *pb.GetLinkRequest) (*pb.GetLi
 
 // linkRecordToProtoSummary converts a bpfman.LinkRecord to protobuf LinkSummary.
 func linkRecordToProtoSummary(r bpfman.LinkRecord, k *kernel.Link) *pb.LinkSummary {
+	// For non-synthetic links, ID is the kernel link ID
 	var kernelLinkID uint32
-	if r.KernelLinkID != nil {
-		kernelLinkID = *r.KernelLinkID
+	if !r.IsSynthetic() {
+		kernelLinkID = uint32(r.ID)
 	}
 	// Use program ID from record (stored in DB), with kernel as verification
-	kernelProgramID := r.KernelProgramID
+	kernelProgramID := r.ProgramID
 	if k != nil && kernelProgramID == 0 {
 		kernelProgramID = k.ProgramID
 	}
