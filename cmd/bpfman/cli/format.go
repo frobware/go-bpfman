@@ -367,8 +367,8 @@ func FormatLinkResult(bpfFunction string, record bpfman.LinkRecord, details bpfm
 
 // linkResultData combines record, details, and bpf function for JSON serialisation.
 type linkResultData struct {
-	BPFFunction string            `json:"bpf_function,omitempty"`
-	Record      bpfman.LinkRecord `json:"record"`
+	BPFFunction string             `json:"bpf_function,omitempty"`
+	Record      bpfman.LinkRecord  `json:"record"`
 	Details     bpfman.LinkDetails `json:"details"`
 }
 
@@ -505,8 +505,8 @@ func FormatLinkInfo(bpfFunction string, record bpfman.LinkRecord, details bpfman
 
 func formatLinkInfoJSON(bpfFunction string, record bpfman.LinkRecord, details bpfman.LinkDetails) (string, error) {
 	data := struct {
-		BPFFunction string            `json:"bpf_function,omitempty"`
-		Record      bpfman.LinkRecord `json:"record"`
+		BPFFunction string             `json:"bpf_function,omitempty"`
+		Record      bpfman.LinkRecord  `json:"record"`
 		Details     bpfman.LinkDetails `json:"details,omitempty"`
 	}{
 		BPFFunction: bpfFunction,
@@ -522,8 +522,8 @@ func formatLinkInfoJSON(bpfFunction string, record bpfman.LinkRecord, details bp
 
 func formatLinkInfoJSONPath(bpfFunction string, record bpfman.LinkRecord, details bpfman.LinkDetails, expr string) (string, error) {
 	data := struct {
-		BPFFunction string            `json:"bpf_function,omitempty"`
-		Record      bpfman.LinkRecord `json:"record"`
+		BPFFunction string             `json:"bpf_function,omitempty"`
+		Record      bpfman.LinkRecord  `json:"record"`
 		Details     bpfman.LinkDetails `json:"details,omitempty"`
 	}{
 		BPFFunction: bpfFunction,

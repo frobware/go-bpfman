@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/frobware/go-bpfman"
 	"github.com/frobware/go-bpfman/action"
@@ -147,7 +146,7 @@ func (m *Manager) AttachXDP(ctx context.Context, spec bpfman.XDPAttachSpec, opts
 		return m.kernel.DetachLink(ctx, linkPinPath)
 	})
 
-	// COMPUTE: Build link record with XDP details
+	// COMPUTE: Build link record with XDP details (enrich the kernel-returned record)
 	details := bpfman.XDPDetails{
 		Interface:    ifname,
 		Ifindex:      uint32(ifindex),
@@ -158,11 +157,11 @@ func (m *Manager) AttachXDP(ctx context.Context, spec bpfman.XDPAttachSpec, opts
 		DispatcherID: dispState.KernelID,
 		Revision:     dispState.Revision,
 	}
-	record := bpfman.NewLinkRecord(0, details, linkPinPath, time.Now())
+	// Use the ID from the kernel-returned link, rebuild record with enriched details
+	link.Managed.Details = details
 
-	// EXECUTE: Save link metadata directly to store (need LinkID back)
-	linkID, err := m.store.SaveLink(ctx, record, programKernelID, link.Managed.KernelLinkID)
-	if err != nil {
+	// EXECUTE: Save link metadata directly to store
+	if err := m.store.SaveLink(ctx, link.Managed.ID, link.Managed, programKernelID); err != nil {
 		m.logger.ErrorContext(ctx, "persist failed, rolling back", "program_id", programKernelID, "error", err)
 		if rbErr := undo.rollback(ctx, m.logger); rbErr != nil {
 			return bpfman.Link{}, errors.Join(fmt.Errorf("save link metadata: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
@@ -170,13 +169,8 @@ func (m *Manager) AttachXDP(ctx context.Context, spec bpfman.XDPAttachSpec, opts
 		return bpfman.Link{}, fmt.Errorf("save link metadata: %w", err)
 	}
 
-	// Update record with assigned ID and kernel link ID
-	record.ID = linkID
-	record.KernelLinkID = link.Managed.KernelLinkID
-
 	m.logger.InfoContext(ctx, "attached XDP via dispatcher",
-		"link_id", linkID,
-		"kernel_link_id", link.Managed.KernelLinkID,
+		"link_id", link.Managed.ID,
 		"program_id", programKernelID,
 		"interface", ifname,
 		"ifindex", ifindex,
@@ -185,7 +179,7 @@ func (m *Manager) AttachXDP(ctx context.Context, spec bpfman.XDPAttachSpec, opts
 		"revision", dispState.Revision,
 		"pin_path", linkPinPath)
 
-	return bpfman.Link{Managed: record, Kernel: link.Kernel}, nil
+	return link, nil
 }
 
 // createXDPDispatcher creates a new XDP dispatcher for the given interface.

@@ -62,6 +62,7 @@ func (k *kernelAdapter) AttachUprobeLocal(ctx context.Context, progPinPath, targ
 
 	return bpfman.Link{
 		Managed: bpfman.LinkRecord{
+			ID:           bpfman.LinkID(linkID),
 			Kind:         linkKind,
 			KernelLinkID: &linkID,
 			PinPath:      linkPinPath,

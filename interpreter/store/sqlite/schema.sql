@@ -55,21 +55,20 @@ CREATE INDEX IF NOT EXISTS idx_program_metadata_key_value ON program_metadata_in
 --------------------------------------------------------------------------------
 
 -- links contains all common fields for managed links.
--- id is the durable bpfman identity (autoincrement).
--- kernel_link_id is nullable: absent for perf_event/synthetic links.
+-- link_id is the primary key: kernel-assigned for real BPF links,
+-- or bpfman-assigned (0x80000000+) for synthetic/perf_event links.
+-- This matches the ID users see in CLI and bpftool.
 CREATE TABLE IF NOT EXISTS links (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    link_id         INTEGER PRIMARY KEY,  -- kernel ID or synthetic ID
     kind            TEXT NOT NULL,        -- LinkKind discriminator
-    kernel_link_id  INTEGER,              -- nullable: absent for perf_event links
     kernel_prog_id  INTEGER NOT NULL,     -- useful for queries
     pin_path        TEXT,
+    is_synthetic    INTEGER NOT NULL DEFAULT 0 CHECK (is_synthetic IN (0, 1)),
     created_at      TEXT NOT NULL,
 
     FOREIGN KEY (kernel_prog_id)
         REFERENCES managed_programs(kernel_id)
-        ON DELETE CASCADE,
-    -- Real kernel links don't collide
-    UNIQUE(kernel_link_id)
+        ON DELETE CASCADE
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS idx_links_by_prog ON links(kernel_prog_id);
@@ -87,7 +86,7 @@ CREATE TABLE IF NOT EXISTS link_tracepoint_details (
     tp_name TEXT NOT NULL,
 
     FOREIGN KEY (link_id)
-        REFERENCES links(id)
+        REFERENCES links(link_id)
         ON DELETE CASCADE
 ) STRICT;
 
@@ -99,7 +98,7 @@ CREATE TABLE IF NOT EXISTS link_kprobe_details (
     retprobe INTEGER NOT NULL DEFAULT 0 CHECK (retprobe IN (0, 1)),
 
     FOREIGN KEY (link_id)
-        REFERENCES links(id)
+        REFERENCES links(link_id)
         ON DELETE CASCADE
 ) STRICT;
 
@@ -113,7 +112,7 @@ CREATE TABLE IF NOT EXISTS link_uprobe_details (
     retprobe INTEGER NOT NULL DEFAULT 0 CHECK (retprobe IN (0, 1)),
 
     FOREIGN KEY (link_id)
-        REFERENCES links(id)
+        REFERENCES links(link_id)
         ON DELETE CASCADE
 ) STRICT;
 
@@ -123,7 +122,7 @@ CREATE TABLE IF NOT EXISTS link_fentry_details (
     fn_name TEXT NOT NULL,
 
     FOREIGN KEY (link_id)
-        REFERENCES links(id)
+        REFERENCES links(link_id)
         ON DELETE CASCADE
 ) STRICT;
 
@@ -133,7 +132,7 @@ CREATE TABLE IF NOT EXISTS link_fexit_details (
     fn_name TEXT NOT NULL,
 
     FOREIGN KEY (link_id)
-        REFERENCES links(id)
+        REFERENCES links(link_id)
         ON DELETE CASCADE
 ) STRICT;
 
@@ -169,7 +168,7 @@ CREATE TABLE IF NOT EXISTS link_xdp_details (
     revision INTEGER NOT NULL,
 
     FOREIGN KEY (link_id)
-        REFERENCES links(id)
+        REFERENCES links(link_id)
         ON DELETE CASCADE,
     FOREIGN KEY (dispatcher_kernel_id)
         REFERENCES dispatchers(kernel_id)
@@ -195,7 +194,7 @@ CREATE TABLE IF NOT EXISTS link_tc_details (
     revision INTEGER NOT NULL,
 
     FOREIGN KEY (link_id)
-        REFERENCES links(id)
+        REFERENCES links(link_id)
         ON DELETE CASCADE,
     FOREIGN KEY (dispatcher_kernel_id)
         REFERENCES dispatchers(kernel_id)
@@ -217,6 +216,6 @@ CREATE TABLE IF NOT EXISTS link_tcx_details (
     nsid INTEGER NOT NULL,
 
     FOREIGN KEY (link_id)
-        REFERENCES links(id)
+        REFERENCES links(link_id)
         ON DELETE CASCADE
 ) STRICT;

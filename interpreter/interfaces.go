@@ -16,11 +16,11 @@ import (
 // LinkWriter writes link metadata to the store.
 // SaveLink dispatches to the appropriate detail table based on record.Details.Kind().
 type LinkWriter interface {
-	// SaveLink saves a link record with its details and returns the assigned LinkID.
+	// SaveLink saves a link record with its details.
+	// linkID is the primary key (kernel-assigned for real BPF links,
+	// or bpfman-assigned synthetic ID for perf_event-based links).
 	// kernelProgramID is stored for queries but not part of LinkRecord (ephemeral).
-	// kernelLinkID is nullable: present for real BPF links, absent for perf_event links.
-	// The returned LinkID is the durable bpfman identity (autoincrement).
-	SaveLink(ctx context.Context, record bpfman.LinkRecord, kernelProgramID uint32, kernelLinkID *uint32) (bpfman.LinkID, error)
+	SaveLink(ctx context.Context, linkID bpfman.LinkID, record bpfman.LinkRecord, kernelProgramID uint32) error
 	DeleteLink(ctx context.Context, linkID bpfman.LinkID) error
 }
 

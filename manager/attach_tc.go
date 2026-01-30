@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/frobware/go-bpfman"
 	"github.com/frobware/go-bpfman/action"
@@ -167,8 +166,10 @@ func (m *Manager) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts b
 		return m.kernel.DetachLink(ctx, linkPinPath)
 	})
 
-	// COMPUTE: Build link record with TC details
-	details := bpfman.TCDetails{
+	// COMPUTE: Update link record with TC details
+	// The kernel attach function populates ID, Kind, KernelLinkID, PinPath, CreatedAt
+	// We need to add the TC-specific details
+	link.Managed.Details = bpfman.TCDetails{
 		Interface:    ifname,
 		Ifindex:      uint32(ifindex),
 		Direction:    direction,
@@ -179,11 +180,10 @@ func (m *Manager) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts b
 		DispatcherID: dispState.KernelID,
 		Revision:     dispState.Revision,
 	}
-	record := bpfman.NewLinkRecord(0, details, linkPinPath, time.Now())
 
-	// EXECUTE: Save link metadata directly to store (need LinkID back)
-	linkID, err := m.store.SaveLink(ctx, record, programKernelID, link.Managed.KernelLinkID)
-	if err != nil {
+	// EXECUTE: Save link metadata directly to store
+	// The link ID is populated by the kernel attach function (kernel-assigned for real links)
+	if err := m.store.SaveLink(ctx, link.Managed.ID, link.Managed, programKernelID); err != nil {
 		m.logger.ErrorContext(ctx, "persist failed, rolling back", "program_id", programKernelID, "error", err)
 		if rbErr := undo.rollback(ctx, m.logger); rbErr != nil {
 			return bpfman.Link{}, errors.Join(fmt.Errorf("save link metadata: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
@@ -191,13 +191,8 @@ func (m *Manager) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts b
 		return bpfman.Link{}, fmt.Errorf("save link metadata: %w", err)
 	}
 
-	// Update record with assigned ID and kernel link ID
-	record.ID = linkID
-	record.KernelLinkID = link.Managed.KernelLinkID
-
 	m.logger.InfoContext(ctx, "attached TC via dispatcher",
-		"link_id", linkID,
-		"kernel_link_id", link.Managed.KernelLinkID,
+		"link_id", link.Managed.ID,
 		"program_id", programKernelID,
 		"interface", ifname,
 		"direction", direction,
@@ -207,7 +202,7 @@ func (m *Manager) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts b
 		"revision", dispState.Revision,
 		"pin_path", linkPinPath)
 
-	return bpfman.Link{Managed: record, Kernel: link.Kernel}, nil
+	return link, nil
 }
 
 // AttachTCX attaches a TCX program to a network interface using native
@@ -292,19 +287,20 @@ func (m *Manager) AttachTCX(ctx context.Context, spec bpfman.TCXAttachSpec, opts
 		return m.kernel.DetachLink(ctx, linkPinPath)
 	})
 
-	// COMPUTE: Build link record with TCX details
-	details := bpfman.TCXDetails{
+	// COMPUTE: Update link record with TCX details
+	// The kernel attach function populates ID, Kind, KernelLinkID, PinPath, CreatedAt
+	// We need to add the TCX-specific details
+	link.Managed.Details = bpfman.TCXDetails{
 		Interface: ifname,
 		Ifindex:   uint32(ifindex),
 		Direction: direction,
 		Priority:  int32(priority),
 		Nsid:      nsid,
 	}
-	record := bpfman.NewLinkRecord(0, details, linkPinPath, time.Now())
 
-	// EXECUTE: Save link metadata directly to store (need LinkID back)
-	linkID, err := m.store.SaveLink(ctx, record, programKernelID, link.Managed.KernelLinkID)
-	if err != nil {
+	// EXECUTE: Save link metadata directly to store
+	// The link ID is populated by the kernel attach function (kernel-assigned for real links)
+	if err := m.store.SaveLink(ctx, link.Managed.ID, link.Managed, programKernelID); err != nil {
 		m.logger.ErrorContext(ctx, "persist failed, rolling back", "program_id", programKernelID, "error", err)
 		if rbErr := undo.rollback(ctx, m.logger); rbErr != nil {
 			return bpfman.Link{}, errors.Join(fmt.Errorf("save TCX link metadata: %w", err), fmt.Errorf("rollback failed: %w", rbErr))
@@ -312,13 +308,8 @@ func (m *Manager) AttachTCX(ctx context.Context, spec bpfman.TCXAttachSpec, opts
 		return bpfman.Link{}, fmt.Errorf("save TCX link metadata: %w", err)
 	}
 
-	// Update record with assigned ID and kernel link ID
-	record.ID = linkID
-	record.KernelLinkID = link.Managed.KernelLinkID
-
 	m.logger.InfoContext(ctx, "attached TCX program",
-		"link_id", linkID,
-		"kernel_link_id", link.Managed.KernelLinkID,
+		"link_id", link.Managed.ID,
 		"program_id", programKernelID,
 		"interface", ifname,
 		"direction", direction,
@@ -327,7 +318,7 @@ func (m *Manager) AttachTCX(ctx context.Context, spec bpfman.TCXAttachSpec, opts
 		"priority", priority,
 		"pin_path", linkPinPath)
 
-	return bpfman.Link{Managed: record, Kernel: link.Kernel}, nil
+	return link, nil
 }
 
 // computeTCXAttachOrder determines where to insert a new TCX program in the chain

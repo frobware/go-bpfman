@@ -138,45 +138,45 @@ func (s *sqliteStore) prepareProgramStatements(ctx context.Context) error {
 func (s *sqliteStore) prepareLinkRegistryStatements(ctx context.Context) error {
 	var err error
 
-	const sqlDeleteLink = "DELETE FROM links WHERE id = ?"
+	const sqlDeleteLink = "DELETE FROM links WHERE link_id = ?"
 	if s.stmtDeleteLink, err = s.db.PrepareContext(ctx, sqlDeleteLink); err != nil {
 		return fmt.Errorf("prepare DeleteLink: %w", err)
 	}
 
 	const sqlGetLinkRegistry = `
-		SELECT id, kind, kernel_link_id, pin_path, created_at
-		FROM links WHERE id = ?`
+		SELECT link_id, kind, pin_path, is_synthetic, created_at
+		FROM links WHERE link_id = ?`
 	if s.stmtGetLinkRegistry, err = s.db.PrepareContext(ctx, sqlGetLinkRegistry); err != nil {
 		return fmt.Errorf("prepare GetLinkRegistry: %w", err)
 	}
 
 	const sqlListLinks = `
-		SELECT id, kind, kernel_link_id, pin_path, created_at
+		SELECT link_id, kind, pin_path, is_synthetic, created_at
 		FROM links`
 	if s.stmtListLinks, err = s.db.PrepareContext(ctx, sqlListLinks); err != nil {
 		return fmt.Errorf("prepare ListLinks: %w", err)
 	}
 
 	const sqlListLinksByProgram = `
-		SELECT id, kind, kernel_link_id, pin_path, created_at
+		SELECT link_id, kind, pin_path, is_synthetic, created_at
 		FROM links WHERE kernel_prog_id = ?`
 	if s.stmtListLinksByProgram, err = s.db.PrepareContext(ctx, sqlListLinksByProgram); err != nil {
 		return fmt.Errorf("prepare ListLinksByProgram: %w", err)
 	}
 
-	// Note: INSERT ... RETURNING requires SQLite 3.35+ (March 2021)
-	// We use ExecContext + LastInsertId instead for broader compatibility
+	// link_id is the primary key (kernel ID or synthetic ID)
+	// Caller provides the ID explicitly
 	const sqlInsertLinkRegistry = `
-		INSERT INTO links (kind, kernel_link_id, kernel_prog_id, pin_path, created_at)
-		VALUES (?, ?, ?, ?, ?)`
+		INSERT INTO links (link_id, kind, kernel_prog_id, pin_path, is_synthetic, created_at)
+		VALUES (?, ?, ?, ?, ?, ?)`
 	if s.stmtInsertLinkRegistry, err = s.db.PrepareContext(ctx, sqlInsertLinkRegistry); err != nil {
 		return fmt.Errorf("prepare InsertLinkRegistry: %w", err)
 	}
 
 	const sqlListTCXLinksByInterface = `
-		SELECT l.kernel_link_id, l.kernel_prog_id, td.priority
+		SELECT l.link_id, l.kernel_prog_id, td.priority
 		FROM links l
-		JOIN link_tcx_details td ON l.id = td.link_id
+		JOIN link_tcx_details td ON l.link_id = td.link_id
 		WHERE td.nsid = ? AND td.ifindex = ? AND td.direction = ?
 		ORDER BY td.priority ASC`
 	if s.stmtListTCXLinksByInterface, err = s.db.PrepareContext(ctx, sqlListTCXLinksByInterface); err != nil {

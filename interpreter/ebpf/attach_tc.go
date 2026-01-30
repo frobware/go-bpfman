@@ -322,6 +322,7 @@ func (k *kernelAdapter) AttachTCExtension(ctx context.Context, dispatcherPinPath
 	kernelLinkID := uint32(linkInfo.ID)
 	return bpfman.Link{
 		Managed: bpfman.LinkRecord{
+			ID:           bpfman.LinkID(kernelLinkID),
 			Kind:         bpfman.LinkKindTC,
 			KernelLinkID: &kernelLinkID,
 			PinPath:      linkPinPath,
@@ -406,6 +407,7 @@ func (k *kernelAdapter) AttachTCX(ctx context.Context, ifindex int, direction, p
 		kernelLinkID := uint32(linkInfo.ID)
 		result = bpfman.Link{
 			Managed: bpfman.LinkRecord{
+				ID:           bpfman.LinkID(kernelLinkID),
 				Kind:         bpfman.LinkKindTCX,
 				KernelLinkID: &kernelLinkID,
 				PinPath:      linkPinPath,

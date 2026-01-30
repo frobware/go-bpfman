@@ -385,6 +385,7 @@ func (f *fakeKernel) AttachTracepoint(_ context.Context, progPinPath, group, nam
 	f.recordOp("attach", "tracepoint:"+group+"/"+name, id, nil)
 	return bpfman.Link{
 		Managed: bpfman.LinkRecord{
+			ID:           bpfman.LinkID(id),
 			Kind:         bpfman.LinkKindTracepoint,
 			KernelLinkID: &id,
 			PinPath:      linkPinPath,
@@ -405,6 +406,7 @@ func (f *fakeKernel) AttachXDP(_ context.Context, progPinPath string, ifindex in
 	}
 	return bpfman.Link{
 		Managed: bpfman.LinkRecord{
+			ID:           bpfman.LinkID(id),
 			Kind:         bpfman.LinkKindXDP,
 			KernelLinkID: &id,
 			PinPath:      linkPinPath,
@@ -431,6 +433,7 @@ func (f *fakeKernel) AttachKprobe(_ context.Context, progPinPath, fnName string,
 	}
 	return bpfman.Link{
 		Managed: bpfman.LinkRecord{
+			ID:           bpfman.LinkID(id),
 			Kind:         linkKind,
 			KernelLinkID: &id,
 			PinPath:      linkPinPath,
@@ -457,6 +460,7 @@ func (f *fakeKernel) AttachUprobeLocal(_ context.Context, progPinPath, target, f
 	}
 	return bpfman.Link{
 		Managed: bpfman.LinkRecord{
+			ID:           bpfman.LinkID(id),
 			Kind:         linkKind,
 			KernelLinkID: &id,
 			PinPath:      linkPinPath,
@@ -483,6 +487,7 @@ func (f *fakeKernel) AttachUprobeContainer(_ context.Context, _ lock.WriterScope
 	}
 	return bpfman.Link{
 		Managed: bpfman.LinkRecord{
+			ID:           bpfman.LinkID(id),
 			Kind:         linkKind,
 			KernelLinkID: &id,
 			PinPath:      linkPinPath,
@@ -503,6 +508,7 @@ func (f *fakeKernel) AttachFentry(_ context.Context, progPinPath, fnName, linkPi
 	}
 	return bpfman.Link{
 		Managed: bpfman.LinkRecord{
+			ID:           bpfman.LinkID(id),
 			Kind:         bpfman.LinkKindFentry,
 			KernelLinkID: &id,
 			PinPath:      linkPinPath,
@@ -523,6 +529,7 @@ func (f *fakeKernel) AttachFexit(_ context.Context, progPinPath, fnName, linkPin
 	}
 	return bpfman.Link{
 		Managed: bpfman.LinkRecord{
+			ID:           bpfman.LinkID(id),
 			Kind:         bpfman.LinkKindFexit,
 			KernelLinkID: &id,
 			PinPath:      linkPinPath,
@@ -595,6 +602,7 @@ func (f *fakeKernel) AttachXDPExtension(_ context.Context, dispatcherPinPath, ob
 	f.recordExtensionAttach("attach-xdp-ext", programName, id, mapPinDir)
 	return bpfman.Link{
 		Managed: bpfman.LinkRecord{
+			ID:           bpfman.LinkID(id),
 			Kind:         bpfman.LinkKindXDP,
 			KernelLinkID: &id,
 			PinPath:      linkPinPath,
@@ -670,6 +678,7 @@ func (f *fakeKernel) AttachTCExtension(_ context.Context, dispatcherPinPath, obj
 	f.recordExtensionAttach("attach-tc-ext", programName, id, mapPinDir)
 	return bpfman.Link{
 		Managed: bpfman.LinkRecord{
+			ID:           bpfman.LinkID(id),
 			Kind:         bpfman.LinkKindTC,
 			KernelLinkID: &id,
 			PinPath:      linkPinPath,
@@ -691,6 +700,7 @@ func (f *fakeKernel) AttachTCX(_ context.Context, ifindex int, direction, progra
 	f.recordTCXAttach(programPinPath, id)
 	return bpfman.Link{
 		Managed: bpfman.LinkRecord{
+			ID:           bpfman.LinkID(id),
 			Kind:         bpfman.LinkKindTCX,
 			KernelLinkID: &id,
 			PinPath:      linkPinPath,

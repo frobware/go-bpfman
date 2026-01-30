@@ -51,6 +51,7 @@ func (k *kernelAdapter) AttachXDP(ctx context.Context, progPinPath string, ifind
 	kernelLinkID := uint32(linkInfo.ID)
 	return bpfman.Link{
 		Managed: bpfman.LinkRecord{
+			ID:           bpfman.LinkID(kernelLinkID),
 			Kind:         bpfman.LinkKindXDP,
 			KernelLinkID: &kernelLinkID,
 			PinPath:      linkPinPath,
@@ -391,6 +392,7 @@ func (k *kernelAdapter) AttachXDPExtension(ctx context.Context, dispatcherPinPat
 	kernelLinkID := uint32(linkInfo.ID)
 	return bpfman.Link{
 		Managed: bpfman.LinkRecord{
+			ID:           bpfman.LinkID(kernelLinkID),
 			Kind:         bpfman.LinkKindXDP, // XDP extension
 			KernelLinkID: &kernelLinkID,
 			PinPath:      linkPinPath,

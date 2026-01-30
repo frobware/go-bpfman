@@ -126,38 +126,38 @@ func (s *sqliteStore) ListTCXLinksByInterface(ctx context.Context, nsid uint64, 
 // SaveLink - Unified Link Save Method
 // ----------------------------------------------------------------------------
 
-// SaveLink saves a link record with its details and returns the assigned LinkID.
+// SaveLink saves a link record with its details.
+// The linkID is provided by the caller (kernel-assigned for real BPF links,
+// or bpfman-assigned synthetic ID for perf_event-based links).
 // Dispatches to the appropriate detail table based on record.Details.Kind().
-// kernelLinkID is nullable: present for real BPF links, absent for perf_event links.
-func (s *sqliteStore) SaveLink(ctx context.Context, record bpfman.LinkRecord, kernelProgramID uint32, kernelLinkID *uint32) (bpfman.LinkID, error) {
-	linkID, err := s.insertLinkRegistry(ctx, record, kernelProgramID, kernelLinkID)
-	if err != nil {
-		return 0, err
+func (s *sqliteStore) SaveLink(ctx context.Context, linkID bpfman.LinkID, record bpfman.LinkRecord, kernelProgramID uint32) error {
+	if err := s.insertLinkRegistry(ctx, linkID, record, kernelProgramID); err != nil {
+		return err
 	}
 
 	if record.Details == nil {
-		return linkID, nil
+		return nil
 	}
 
 	switch details := record.Details.(type) {
 	case bpfman.TracepointDetails:
-		return linkID, s.saveTracepointDetails(ctx, linkID, details)
+		return s.saveTracepointDetails(ctx, linkID, details)
 	case bpfman.KprobeDetails:
-		return linkID, s.saveKprobeDetails(ctx, linkID, details)
+		return s.saveKprobeDetails(ctx, linkID, details)
 	case bpfman.UprobeDetails:
-		return linkID, s.saveUprobeDetails(ctx, linkID, details)
+		return s.saveUprobeDetails(ctx, linkID, details)
 	case bpfman.FentryDetails:
-		return linkID, s.saveFentryDetails(ctx, linkID, details)
+		return s.saveFentryDetails(ctx, linkID, details)
 	case bpfman.FexitDetails:
-		return linkID, s.saveFexitDetails(ctx, linkID, details)
+		return s.saveFexitDetails(ctx, linkID, details)
 	case bpfman.XDPDetails:
-		return linkID, s.saveXDPDetails(ctx, linkID, details)
+		return s.saveXDPDetails(ctx, linkID, details)
 	case bpfman.TCDetails:
-		return linkID, s.saveTCDetails(ctx, linkID, details)
+		return s.saveTCDetails(ctx, linkID, details)
 	case bpfman.TCXDetails:
-		return linkID, s.saveTCXDetails(ctx, linkID, details)
+		return s.saveTCXDetails(ctx, linkID, details)
 	default:
-		return 0, fmt.Errorf("unknown link details type: %T", details)
+		return fmt.Errorf("unknown link details type: %T", details)
 	}
 }
 
@@ -285,45 +285,40 @@ func (s *sqliteStore) saveTCXDetails(ctx context.Context, linkID bpfman.LinkID, 
 // Helper Functions
 // ----------------------------------------------------------------------------
 
-// insertLinkRegistry inserts a record into the links table and returns the assigned ID.
-func (s *sqliteStore) insertLinkRegistry(ctx context.Context, record bpfman.LinkRecord, kernelProgramID uint32, kernelLinkID *uint32) (bpfman.LinkID, error) {
+// insertLinkRegistry inserts a record into the links table.
+// The linkID is provided by the caller (kernel-assigned or synthetic).
+func (s *sqliteStore) insertLinkRegistry(ctx context.Context, linkID bpfman.LinkID, record bpfman.LinkRecord, kernelProgramID uint32) error {
 	start := time.Now()
 
-	// Handle nullable kernel_link_id
-	var klID interface{}
-	if kernelLinkID != nil {
-		klID = *kernelLinkID
+	// Derive is_synthetic from the link ID
+	isSynthetic := 0
+	if linkID.IsSynthetic() {
+		isSynthetic = 1
 	}
 
-	result, err := s.stmtInsertLinkRegistry.ExecContext(ctx,
-		string(record.Kind), klID, kernelProgramID,
-		record.PinPath, record.CreatedAt.Format(time.RFC3339))
+	_, err := s.stmtInsertLinkRegistry.ExecContext(ctx,
+		uint32(linkID), string(record.Kind), kernelProgramID,
+		record.PinPath, isSynthetic, record.CreatedAt.Format(time.RFC3339))
 	if err != nil {
-		s.logger.Debug("sql", "stmt", "InsertLinkRegistry", "args", []any{record.Kind, klID, kernelProgramID, record.PinPath, "(timestamp)"}, "duration_ms", msec(time.Since(start)), "error", err)
-		return 0, fmt.Errorf("failed to insert link: %w", err)
+		s.logger.Debug("sql", "stmt", "InsertLinkRegistry", "args", []any{linkID, record.Kind, kernelProgramID, record.PinPath, isSynthetic, "(timestamp)"}, "duration_ms", msec(time.Since(start)), "error", err)
+		return fmt.Errorf("failed to insert link: %w", err)
 	}
 
-	// Get the autoincrement ID
-	id, err := result.LastInsertId()
-	if err != nil {
-		return 0, fmt.Errorf("failed to get last insert id: %w", err)
-	}
-
-	s.logger.Debug("sql", "stmt", "InsertLinkRegistry", "args", []any{record.Kind, klID, kernelProgramID, record.PinPath, "(timestamp)"}, "duration_ms", msec(time.Since(start)), "link_id", id)
-	return bpfman.LinkID(id), nil
+	s.logger.Debug("sql", "stmt", "InsertLinkRegistry", "args", []any{linkID, record.Kind, kernelProgramID, record.PinPath, isSynthetic, "(timestamp)"}, "duration_ms", msec(time.Since(start)))
+	return nil
 }
 
 // scanLinkRecord scans a single row into a LinkRecord (without details).
-// Row format: id, kind, kernel_link_id, pin_path, created_at
+// Row format: link_id, kind, pin_path, is_synthetic, created_at
 func (s *sqliteStore) scanLinkRecord(row *sql.Row) (bpfman.LinkRecord, error) {
 	var record bpfman.LinkRecord
-	var id int64
+	var linkID int64
 	var kindStr string
-	var kernelLinkID sql.NullInt64
 	var pinPath sql.NullString
+	var isSynthetic int
 	var createdAtStr string
 
-	err := row.Scan(&id, &kindStr, &kernelLinkID, &pinPath, &createdAtStr)
+	err := row.Scan(&linkID, &kindStr, &pinPath, &isSynthetic, &createdAtStr)
 	if err == sql.ErrNoRows {
 		return bpfman.LinkRecord{}, fmt.Errorf("link: %w", store.ErrNotFound)
 	}
@@ -331,10 +326,11 @@ func (s *sqliteStore) scanLinkRecord(row *sql.Row) (bpfman.LinkRecord, error) {
 		return bpfman.LinkRecord{}, err
 	}
 
-	record.ID = bpfman.LinkID(id)
+	record.ID = bpfman.LinkID(linkID)
 	record.Kind = bpfman.LinkKind(kindStr)
-	if kernelLinkID.Valid {
-		klid := uint32(kernelLinkID.Int64)
+	// KernelLinkID is populated for non-synthetic links (link_id IS the kernel link ID)
+	if isSynthetic == 0 {
+		klid := uint32(linkID)
 		record.KernelLinkID = &klid
 	}
 	if pinPath.Valid {
@@ -342,7 +338,7 @@ func (s *sqliteStore) scanLinkRecord(row *sql.Row) (bpfman.LinkRecord, error) {
 	}
 	createdAt, err := time.Parse(time.RFC3339, createdAtStr)
 	if err != nil {
-		return bpfman.LinkRecord{}, fmt.Errorf("invalid created_at timestamp for link %d: %q: %w", id, createdAtStr, err)
+		return bpfman.LinkRecord{}, fmt.Errorf("invalid created_at timestamp for link %d: %q: %w", linkID, createdAtStr, err)
 	}
 	record.CreatedAt = createdAt
 
@@ -350,28 +346,29 @@ func (s *sqliteStore) scanLinkRecord(row *sql.Row) (bpfman.LinkRecord, error) {
 }
 
 // scanLinkRecords scans multiple rows into a slice of LinkRecord (without details).
-// Row format: id, kind, kernel_link_id, pin_path, created_at
+// Row format: link_id, kind, pin_path, is_synthetic, created_at
 func (s *sqliteStore) scanLinkRecords(rows *sql.Rows) ([]bpfman.LinkRecord, error) {
 	var result []bpfman.LinkRecord
 
 	for rows.Next() {
-		var id int64
+		var linkID int64
 		var kindStr string
-		var kernelLinkID sql.NullInt64
 		var pinPath sql.NullString
+		var isSynthetic int
 		var createdAtStr string
 
-		err := rows.Scan(&id, &kindStr, &kernelLinkID, &pinPath, &createdAtStr)
+		err := rows.Scan(&linkID, &kindStr, &pinPath, &isSynthetic, &createdAtStr)
 		if err != nil {
 			return nil, err
 		}
 
 		record := bpfman.LinkRecord{
-			ID:   bpfman.LinkID(id),
+			ID:   bpfman.LinkID(linkID),
 			Kind: bpfman.LinkKind(kindStr),
 		}
-		if kernelLinkID.Valid {
-			klid := uint32(kernelLinkID.Int64)
+		// KernelLinkID is populated for non-synthetic links (link_id IS the kernel link ID)
+		if isSynthetic == 0 {
+			klid := uint32(linkID)
 			record.KernelLinkID = &klid
 		}
 		if pinPath.Valid {
@@ -379,7 +376,7 @@ func (s *sqliteStore) scanLinkRecords(rows *sql.Rows) ([]bpfman.LinkRecord, erro
 		}
 		createdAt, err := time.Parse(time.RFC3339, createdAtStr)
 		if err != nil {
-			return nil, fmt.Errorf("invalid created_at timestamp for link %d: %q: %w", id, createdAtStr, err)
+			return nil, fmt.Errorf("invalid created_at timestamp for link %d: %q: %w", linkID, createdAtStr, err)
 		}
 		record.CreatedAt = createdAt
 
