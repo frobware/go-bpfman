@@ -54,7 +54,15 @@ func (m *Manager) Load(ctx context.Context, spec bpfman.LoadSpec, opts LoadOpts)
 	// Phase 2: Persist metadata to DB (single transaction)
 	// Use the inferred type from the kernel layer (from ELF section name)
 	// rather than the user-specified type.
-	metadata := bpfman.ProgramRecord{
+	//
+	// Convert MapOwnerID: 0 means self/no owner (nil), non-zero is a pointer.
+	var mapOwnerID *uint32
+	if ownerID := spec.MapOwnerID(); ownerID != 0 {
+		mapOwnerID = &ownerID
+	}
+
+	metadata := bpfman.ProgramSpec{
+		KernelID:      loaded.Kernel.ID,
 		Name:          spec.ProgramName(),
 		ProgramType:   loaded.Managed.Type,
 		ObjectPath:    spec.ObjectPath(),
@@ -63,7 +71,7 @@ func (m *Manager) Load(ctx context.Context, spec bpfman.LoadSpec, opts LoadOpts)
 		GlobalData:    spec.GlobalData(),
 		ImageSource:   spec.ImageSource(),
 		AttachFunc:    spec.AttachFunc(),
-		MapOwnerID:    spec.MapOwnerID(),
+		MapOwnerID:    mapOwnerID,
 		GPLCompatible: bpfman.ExtractGPLCompatible(loaded.Kernel),
 		UserMetadata:  opts.UserMetadata,
 		Tags:          nil,

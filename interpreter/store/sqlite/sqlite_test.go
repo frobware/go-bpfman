@@ -541,7 +541,7 @@ func TestMapOwnership_CountDependentPrograms(t *testing.T) {
 	for i := uint32(1); i <= 3; i++ {
 		depProg := testProgram()
 		depProg.Name = "dependent_" + string(rune('0'+i))
-		depProg.MapOwnerID = ownerID
+		depProg.MapOwnerID = &ownerID
 		depProg.MapPinPath = "/sys/fs/bpf/bpfman/100" // Same as owner
 		require.NoError(t, store.Save(ctx, 100+i, depProg), "Save dependent %d failed", i)
 	}
@@ -577,7 +577,7 @@ func TestMapOwnership_ForeignKeyPreventsDeletingOwner(t *testing.T) {
 	// Create a dependent program.
 	depProg := testProgram()
 	depProg.Name = "dependent"
-	depProg.MapOwnerID = ownerID
+	depProg.MapOwnerID = &ownerID
 	depProg.MapPinPath = "/sys/fs/bpf/bpfman/100"
 	require.NoError(t, store.Save(ctx, 101, depProg), "Save dependent failed")
 
@@ -631,7 +631,7 @@ func TestMapOwnership_MapOwnerIDPersisted(t *testing.T) {
 	depID := uint32(101)
 	depProg := testProgram()
 	depProg.Name = "dependent"
-	depProg.MapOwnerID = ownerID
+	depProg.MapOwnerID = &ownerID
 	depProg.MapPinPath = "/sys/fs/bpf/bpfman/100"
 
 	require.NoError(t, store.Save(ctx, depID, depProg), "Save dependent failed")
@@ -639,7 +639,8 @@ func TestMapOwnership_MapOwnerIDPersisted(t *testing.T) {
 	// Retrieve and verify MapOwnerID is persisted.
 	got, err := store.Get(ctx, depID)
 	require.NoError(t, err, "Get failed")
-	assert.Equal(t, ownerID, got.MapOwnerID, "MapOwnerID mismatch")
+	require.NotNil(t, got.MapOwnerID, "MapOwnerID should not be nil")
+	assert.Equal(t, ownerID, *got.MapOwnerID, "MapOwnerID mismatch")
 }
 
 func TestMapOwnership_ListIncludesMapFields(t *testing.T) {
@@ -660,7 +661,7 @@ func TestMapOwnership_ListIncludesMapFields(t *testing.T) {
 	depID := uint32(101)
 	depProg := testProgram()
 	depProg.Name = "dependent"
-	depProg.MapOwnerID = ownerID
+	depProg.MapOwnerID = &ownerID
 	depProg.MapPinPath = "/sys/fs/bpf/bpfman/100"
 	require.NoError(t, store.Save(ctx, depID, depProg), "Save dependent failed")
 
@@ -672,12 +673,13 @@ func TestMapOwnership_ListIncludesMapFields(t *testing.T) {
 	// Verify owner has MapPinPath but no MapOwnerID.
 	owner := programs[ownerID]
 	assert.Equal(t, "/sys/fs/bpf/bpfman/100", owner.MapPinPath, "owner MapPinPath mismatch")
-	assert.Equal(t, uint32(0), owner.MapOwnerID, "owner should have no MapOwnerID")
+	assert.Nil(t, owner.MapOwnerID, "owner should have no MapOwnerID")
 
 	// Verify dependent has both fields.
 	dep := programs[depID]
 	assert.Equal(t, "/sys/fs/bpf/bpfman/100", dep.MapPinPath, "dependent MapPinPath mismatch")
-	assert.Equal(t, ownerID, dep.MapOwnerID, "dependent MapOwnerID mismatch")
+	require.NotNil(t, dep.MapOwnerID, "dependent should have MapOwnerID set")
+	assert.Equal(t, ownerID, *dep.MapOwnerID, "dependent MapOwnerID mismatch")
 }
 
 // TestListTCXLinksByInterface_OrderByPriority verifies that TCX links are
@@ -920,15 +922,16 @@ func TestGC_MapOwnerOrdering(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create dependents that reference the owner
+	ownerID := uint32(100)
 	dep1 := testProgram()
 	dep1.Name = "dep1"
-	dep1.MapOwnerID = 100
+	dep1.MapOwnerID = &ownerID
 	err = store.Save(ctx, 101, dep1)
 	require.NoError(t, err)
 
 	dep2 := testProgram()
 	dep2.Name = "dep2"
-	dep2.MapOwnerID = 100
+	dep2.MapOwnerID = &ownerID
 	err = store.Save(ctx, 102, dep2)
 	require.NoError(t, err)
 
@@ -1046,9 +1049,10 @@ func TestGC_Comprehensive(t *testing.T) {
 	err = store.Save(ctx, 101, ownerProg)
 	require.NoError(t, err)
 
+	staleOwnerID := uint32(101)
 	depProg := testProgram()
 	depProg.Name = "stale_dep"
-	depProg.MapOwnerID = 101
+	depProg.MapOwnerID = &staleOwnerID
 	err = store.Save(ctx, 102, depProg)
 	require.NoError(t, err)
 

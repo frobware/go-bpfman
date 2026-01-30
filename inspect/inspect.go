@@ -20,14 +20,14 @@ var ErrNotFound = errors.New("not found")
 
 // StoreLister is the subset of interpreter.Store needed by Snapshot.
 type StoreLister interface {
-	List(ctx context.Context) (map[uint32]bpfman.ProgramRecord, error)
+	List(ctx context.Context) (map[uint32]bpfman.ProgramSpec, error)
 	ListLinks(ctx context.Context) ([]bpfman.LinkRecord, error)
 	ListDispatchers(ctx context.Context) ([]dispatcher.State, error)
 }
 
 // StoreGetter is the subset of interpreter.Store needed by GetProgram.
 type StoreGetter interface {
-	Get(ctx context.Context, kernelID uint32) (bpfman.ProgramRecord, error)
+	Get(ctx context.Context, kernelID uint32) (bpfman.ProgramSpec, error)
 }
 
 // KernelLister is the subset of interpreter.KernelSource needed by Snapshot.
@@ -92,7 +92,7 @@ type ProgramView struct {
 	KernelID uint32
 
 	// Store fields (valid when Presence.InStore is true)
-	Managed *bpfman.ProgramRecord
+	Managed *bpfman.ProgramSpec
 
 	// Kernel fields (valid when Presence.InKernel is true)
 	Kernel *kernel.Program
@@ -103,13 +103,22 @@ type ProgramView struct {
 	Presence Presence
 }
 
-// AsProgram constructs a bpfman.Program composite if both parts are present.
-// Returns by value to avoid deep-copy surprises with maps/slices.
+// AsProgram constructs a bpfman.Program composite from a store-managed program.
+// Returns (Program, true) when Managed != nil (even if kernel/fs are missing).
+// Status reflects what's actually present vs missing.
 func (v ProgramView) AsProgram() (bpfman.Program, bool) {
-	if v.Managed == nil || v.Kernel == nil {
-		return bpfman.Program{}, false
+	if v.Managed == nil {
+		return bpfman.Program{}, false // not store-managed, can't construct
 	}
-	return bpfman.Program{Managed: *v.Managed, Kernel: v.Kernel}, true
+	return bpfman.Program{
+		Spec: *v.Managed,
+		Status: bpfman.ProgramStatus{
+			Kernel:     v.Kernel,            // may be nil
+			KernelSeen: v.Presence.InKernel, // true if kernel enumeration found it
+			PinPresent: v.Presence.InFS,     // Spec.PinPath exists
+			// MapsPresent: could check Spec.MapPinPath if needed
+		},
+	}, true
 }
 
 // ProgramRow is an alias for ProgramView for backwards compatibility.

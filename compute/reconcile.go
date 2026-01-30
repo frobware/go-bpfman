@@ -30,7 +30,7 @@ func ReconcileActions(
 	var dependents, owners []uint32
 	for id, prog := range stored {
 		if !kernelIDs[id] {
-			if prog.MapOwnerID != 0 {
+			if prog.MapOwnerID != nil {
 				dependents = append(dependents, id)
 			} else {
 				owners = append(owners, id)

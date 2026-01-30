@@ -14,8 +14,8 @@ import (
 
 // ManagedProgram combines kernel and metadata info.
 type ManagedProgram struct {
-	KernelProgram kernel.Program        `json:"kernel"`
-	Metadata      *bpfman.ProgramRecord `json:"metadata,omitempty"`
+	KernelProgram kernel.Program      `json:"kernel"`
+	Metadata      *bpfman.ProgramSpec `json:"metadata,omitempty"`
 }
 
 // ProgramInfo is the complete view of a managed program.
@@ -33,8 +33,8 @@ type KernelInfo struct {
 
 // BpfmanInfo contains managed metadata.
 type BpfmanInfo struct {
-	Program *bpfman.ProgramRecord `json:"program,omitempty"`
-	Links   []bpfman.LinkRecord   `json:"links,omitempty"`
+	Program *bpfman.ProgramSpec `json:"program,omitempty"`
+	Links   []bpfman.LinkRecord `json:"links,omitempty"`
 }
 
 // ErrMultipleProgramsFound is returned when multiple programs match the
@@ -179,12 +179,12 @@ func (m *Manager) FindLoadedProgramByMetadata(ctx context.Context, key, value st
 	case 1:
 		return *matches[0].Managed, matches[0].KernelID, nil
 	default:
-		// Multiple programs match - find the map owner (MapOwnerID == 0).
+		// Multiple programs match - find the map owner (MapOwnerID == nil).
 		// In multi-program loads, one program owns all maps and the others
 		// reference it via MapOwnerID.
 		var owners []inspect.ProgramView
 		for _, row := range matches {
-			if row.Managed.MapOwnerID == 0 {
+			if row.Managed.MapOwnerID == nil {
 				owners = append(owners, row)
 			}
 		}

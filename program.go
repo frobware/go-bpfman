@@ -104,27 +104,27 @@ func ParseProgramType(s string) (ProgramType, bool) {
 	}
 }
 
-// ProgramRecord is what bpfman persists/manages about a program.
-// Contains only durable identifiers we control - no kernel IDs.
-// This is what we store - the kernel is the source of truth for runtime state.
-// A ProgramRecord only exists in the store after successful load.
+// ProgramSpec is what bpfman intends to manage (DB-backed).
+// This is the "desired state" - what was loaded.
+// KernelID is the DB primary key and user-facing identity.
 //
-// Note: ProgramRecord is distinct from LoadSpec. LoadSpec describes how to load
-// a program (validated input), while ProgramRecord describes a loaded program's
+// Note: ProgramSpec is distinct from LoadSpec. LoadSpec describes how to load
+// a program (validated input), while ProgramSpec describes a loaded program's
 // state (stored output). They share some fields but serve different purposes.
-type ProgramRecord struct {
-	// Core identity - what was loaded (bpfman-level, not kernel)
-	Name        string      `json:"name"`
+type ProgramSpec struct {
+	// Identity - KernelID is the DB primary key and user-facing ID
+	KernelID    uint32      `json:"kernel_id"`
+	Name        string      `json:"name"` // human-readable label (not identity)
 	ProgramType ProgramType `json:"program_type"`
 	ObjectPath  string      `json:"object_path,omitempty"`
-	PinPath     string      `json:"pin_path"` // stable handle
+	PinPath     string      `json:"pin_path"`               // stable handle
+	MapPinPath  string      `json:"map_pin_path,omitempty"` // directory where maps are pinned
 
 	// Load-time configuration (stored for reference/potential reload)
 	GlobalData    map[string][]byte `json:"global_data,omitempty"`
 	ImageSource   *ImageSource      `json:"image_source,omitempty"`
 	AttachFunc    string            `json:"attach_func,omitempty"`  // For fentry/fexit
-	MapOwnerID    uint32            `json:"map_owner_id,omitempty"` // Program that owns shared maps (0 = self)
-	MapPinPath    string            `json:"map_pin_path,omitempty"` // Directory where maps are pinned
+	MapOwnerID    *uint32           `json:"map_owner_id,omitempty"` // nil means self/no owner (matches DB NULL)
 	GPLCompatible bool              `json:"gpl_compatible"`         // Whether program has GPL-compatible license
 
 	// Management metadata
@@ -136,15 +136,29 @@ type ProgramRecord struct {
 	UpdatedAt    time.Time         `json:"updated_at"`
 }
 
-// Program is the canonical domain object - managed state + kernel state.
-// Kernel.ID and Kernel.Name come from the kernel, not duplicated in Managed.
-type Program struct {
-	Managed ProgramRecord
-	Kernel  *kernel.Program
+// ProgramStatus is observed state (kernel + filesystem).
+// This is "what actually exists right now".
+type ProgramStatus struct {
+	Kernel      *kernel.Program // nil if not in kernel
+	KernelSeen  bool            // true if kernel enumeration succeeded
+	PinPresent  bool            // true if Spec.PinPath exists on filesystem
+	MapsPresent bool            // true if Spec.MapPinPath dir exists
 }
 
-// WithTag returns a new ProgramRecord with the tag added.
-func (p ProgramRecord) WithTag(tag string) ProgramRecord {
+// Program is the canonical domain object combining spec and status.
+// Spec comes from the store (what bpfman manages).
+// Status comes from observation (kernel enumeration + filesystem checks).
+type Program struct {
+	Spec   ProgramSpec
+	Status ProgramStatus
+}
+
+// ProgramRecord is an alias for ProgramSpec for backwards compatibility.
+// Deprecated: Use ProgramSpec instead.
+type ProgramRecord = ProgramSpec
+
+// WithTag returns a new ProgramSpec with the tag added.
+func (p ProgramSpec) WithTag(tag string) ProgramSpec {
 	cp := p
 	cp.Tags = append(slices.Clone(p.Tags), tag)
 	cp.UserMetadata = cloneMap(p.UserMetadata)
@@ -152,8 +166,8 @@ func (p ProgramRecord) WithTag(tag string) ProgramRecord {
 	return cp
 }
 
-// WithDescription returns a new ProgramRecord with the description set.
-func (p ProgramRecord) WithDescription(desc string) ProgramRecord {
+// WithDescription returns a new ProgramSpec with the description set.
+func (p ProgramSpec) WithDescription(desc string) ProgramSpec {
 	cp := p
 	cp.Description = desc
 	cp.Tags = slices.Clone(p.Tags)

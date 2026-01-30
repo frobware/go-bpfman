@@ -68,8 +68,8 @@ func (s *Server) List(ctx context.Context, req *pb.ListRequest) (*pb.ListRespons
 			GlobalData: prog.GlobalData,
 			MapPinPath: prog.MapPinPath,
 		}
-		if prog.MapOwnerID != 0 {
-			info.MapOwnerId = &prog.MapOwnerID
+		if prog.MapOwnerID != nil {
+			info.MapOwnerId = prog.MapOwnerID
 		}
 
 		results = append(results, &pb.ListResponse_ListResult{
@@ -147,8 +147,8 @@ func (s *Server) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, 
 		MapPinPath: prog.MapPinPath,
 		Links:      linkIDs,
 	}
-	if prog.MapOwnerID != 0 {
-		info.MapOwnerId = &prog.MapOwnerID
+	if prog.MapOwnerID != nil {
+		info.MapOwnerId = prog.MapOwnerID
 	}
 
 	// Note: GplCompatible is stored in the database at load time (from the
