@@ -934,6 +934,18 @@ func TestTC_LoadAttachDetachUnload(t *testing.T) {
 	require.NotZero(t, tcDetails.DispatcherID, "TC should use dispatcher")
 	require.NotZero(t, tcDetails.Revision, "dispatcher should have revision")
 
+	// Verify TC ingress filters exist on the interface via netlink
+	filters := tcIngressFilters(t, "lo")
+	require.NotEmpty(t, filters, "expected at least one TC ingress filter on lo after attach")
+	foundPriority := false
+	for _, f := range filters {
+		if f.Attrs().Priority == 50 {
+			foundPriority = true
+			break
+		}
+	}
+	require.True(t, foundPriority, "expected a TC filter with priority 50 on lo")
+
 	// Round-trip: ListLinks should include our link
 	// Note: TC uses dispatchers, so KernelProgramID is the dispatcher's program ID.
 	listedLinks, err := env.Client.ListLinks(ctx)
@@ -963,6 +975,10 @@ func TestTC_LoadAttachDetachUnload(t *testing.T) {
 	env.AssertCleanState()
 	_, err = env.Client.Get(ctx, prog.Kernel.ID)
 	require.Error(t, err, "Get should fail after unload")
+
+	// Verify TC ingress filters are removed after detach/unload
+	filtersAfter := tcIngressFilters(t, "lo")
+	require.Empty(t, filtersAfter, "expected no TC ingress filters on lo after detach/unload")
 }
 
 // TestTCX_LoadAttachDetachUnload tests the full lifecycle of a TCX program.

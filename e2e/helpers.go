@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/vishvananda/netlink"
 
 	"github.com/frobware/go-bpfman"
 	"github.com/frobware/go-bpfman/client"
@@ -246,6 +247,17 @@ func RequireTracepoint(t *testing.T, group, name string) {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		t.Fatalf("tracepoint %s/%s not found", group, name)
 	}
+}
+
+// tcIngressFilters returns the TC filters attached to the ingress
+// qdisc of the named network interface.
+func tcIngressFilters(t *testing.T, ifaceName string) []netlink.Filter {
+	t.Helper()
+	link, err := netlink.LinkByName(ifaceName)
+	require.NoError(t, err)
+	filters, err := netlink.FilterList(link, netlink.HANDLE_MIN_INGRESS)
+	require.NoError(t, err)
+	return filters
 }
 
 // sanitizeTestName converts a test name to a safe directory name.
