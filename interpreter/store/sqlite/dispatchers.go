@@ -20,9 +20,8 @@ func (s *sqliteStore) GetDispatcher(ctx context.Context, dispType string, nsid u
 	row := s.stmtGetDispatcher.QueryRowContext(ctx, dispType, nsid, ifindex)
 
 	var state dispatcher.State
-	var id int64
 	var dispTypeStr string
-	err := row.Scan(&id, &dispTypeStr, &state.Nsid, &state.Ifindex, &state.Revision,
+	err := row.Scan(&dispTypeStr, &state.Nsid, &state.Ifindex, &state.Revision,
 		&state.KernelID, &state.LinkID, &state.Priority)
 	if err == sql.ErrNoRows {
 		s.logger.Debug("sql", "stmt", "GetDispatcher", "args", []any{dispType, nsid, ifindex}, "duration_ms", msec(time.Since(start)), "rows", 0)
@@ -51,9 +50,8 @@ func (s *sqliteStore) ListDispatchers(ctx context.Context) ([]dispatcher.State, 
 	var result []dispatcher.State
 	for rows.Next() {
 		var state dispatcher.State
-		var id int64
 		var dispTypeStr string
-		if err := rows.Scan(&id, &dispTypeStr, &state.Nsid, &state.Ifindex, &state.Revision,
+		if err := rows.Scan(&dispTypeStr, &state.Nsid, &state.Ifindex, &state.Revision,
 			&state.KernelID, &state.LinkID, &state.Priority); err != nil {
 			s.logger.Debug("sql", "stmt", "ListDispatchers", "duration_ms", msec(time.Since(start)), "error", err)
 			return nil, err

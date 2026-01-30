@@ -465,13 +465,14 @@ func TestDispatcherStore_UniqueConstraint(t *testing.T) {
 	require.NoError(t, store.SaveDispatcher(ctx, xdpState), "SaveDispatcher (xdp) failed")
 
 	// Create a TC-ingress dispatcher on same nsid/ifindex - should work (different type)
+	// TC dispatchers have LinkID=0 (they use netlink filters, not BPF links)
 	tcState := dispatcher.State{
 		Type:     dispatcher.DispatcherTypeTCIngress,
 		Nsid:     4026531840,
 		Ifindex:  1,
 		Revision: 1,
 		KernelID: 200,
-		LinkID:   201,
+		LinkID:   0,
 	}
 
 	require.NoError(t, store.SaveDispatcher(ctx, tcState), "SaveDispatcher (tc-ingress) failed")
@@ -966,13 +967,14 @@ func TestGC_StaleDispatchers(t *testing.T) {
 	err = store.SaveDispatcher(ctx, disp1)
 	require.NoError(t, err)
 
+	// TC dispatchers have LinkID=0 (they use netlink filters, not BPF links)
 	disp2 := dispatcher.State{
 		Type:     dispatcher.DispatcherTypeTCIngress,
 		Nsid:     4026531840,
 		Ifindex:  3,
 		Revision: 1,
 		KernelID: 101,
-		LinkID:   201,
+		LinkID:   0,
 	}
 	err = store.SaveDispatcher(ctx, disp2)
 	require.NoError(t, err)
@@ -1064,13 +1066,14 @@ func TestGC_Comprehensive(t *testing.T) {
 	err = store.SaveDispatcher(ctx, aliveDisp)
 	require.NoError(t, err)
 
+	// TC dispatchers have LinkID=0 (they use netlink filters, not BPF links)
 	staleDisp := dispatcher.State{
 		Type:     dispatcher.DispatcherTypeTCIngress,
 		Nsid:     4026531840,
 		Ifindex:  3,
 		Revision: 1,
 		KernelID: 101,
-		LinkID:   301,
+		LinkID:   0,
 	}
 	err = store.SaveDispatcher(ctx, staleDisp)
 	require.NoError(t, err)

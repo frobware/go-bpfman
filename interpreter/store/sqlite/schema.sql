@@ -66,6 +66,13 @@ CREATE TABLE IF NOT EXISTS links (
     is_synthetic    INTEGER NOT NULL DEFAULT 0 CHECK (is_synthetic IN (0, 1)),
     created_at      TEXT NOT NULL,
 
+    -- Enforce synthetic ID range: synthetic links must have ID >= 0x80000000
+    CHECK (
+        (is_synthetic = 1 AND link_id >= 2147483648)
+        OR
+        (is_synthetic = 0 AND link_id < 2147483648)
+    ),
+
     FOREIGN KEY (kernel_prog_id)
         REFERENCES managed_programs(kernel_id)
         ON DELETE CASCADE
@@ -137,8 +144,10 @@ CREATE TABLE IF NOT EXISTS link_fexit_details (
 ) STRICT;
 
 -- Dispatchers table for XDP/TC multi-program chaining
+-- Natural key (type, nsid, ifindex) is the primary key - this is how
+-- the system identifies a dispatcher ("the XDP dispatcher for this interface").
+-- kernel_id is the kernel-assigned program ID for the dispatcher program.
 CREATE TABLE IF NOT EXISTS dispatchers (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
     type TEXT NOT NULL CHECK (type IN ('xdp', 'tc-ingress', 'tc-egress')),
     nsid INTEGER NOT NULL,
     ifindex INTEGER NOT NULL,
@@ -148,11 +157,16 @@ CREATE TABLE IF NOT EXISTS dispatchers (
     priority INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    UNIQUE (type, nsid, ifindex)
-) STRICT;
 
-CREATE INDEX IF NOT EXISTS idx_dispatchers_lookup
-    ON dispatchers(type, nsid, ifindex);
+    PRIMARY KEY (type, nsid, ifindex),
+
+    -- XDP dispatchers have a link; TC dispatchers do not (uses netlink filters)
+    CHECK (
+        (type = 'xdp' AND link_id != 0)
+        OR
+        (type IN ('tc-ingress', 'tc-egress') AND link_id = 0)
+    )
+) STRICT;
 
 -- XDP links (dispatcher-based)
 CREATE TABLE IF NOT EXISTS link_xdp_details (

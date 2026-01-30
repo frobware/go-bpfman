@@ -302,14 +302,14 @@ func (s *sqliteStore) prepareDispatcherStatements(ctx context.Context) error {
 	var err error
 
 	const sqlGetDispatcher = `
-		SELECT id, type, nsid, ifindex, revision, kernel_id, link_id, priority
+		SELECT type, nsid, ifindex, revision, kernel_id, link_id, priority
 		FROM dispatchers WHERE type = ? AND nsid = ? AND ifindex = ?`
 	if s.stmtGetDispatcher, err = s.db.PrepareContext(ctx, sqlGetDispatcher); err != nil {
 		return fmt.Errorf("prepare GetDispatcher: %w", err)
 	}
 
 	const sqlListDispatchers = `
-		SELECT id, type, nsid, ifindex, revision, kernel_id, link_id, priority
+		SELECT type, nsid, ifindex, revision, kernel_id, link_id, priority
 		FROM dispatchers`
 	if s.stmtListDispatchers, err = s.db.PrepareContext(ctx, sqlListDispatchers); err != nil {
 		return fmt.Errorf("prepare ListDispatchers: %w", err)
