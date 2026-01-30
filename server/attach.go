@@ -87,7 +87,8 @@ func (s *Server) attachTracepoint(ctx context.Context, programID uint32, info *p
 	// Call manager with empty LinkPinPath to auto-generate
 	link, err := s.mgr.AttachTracepoint(ctx, spec, bpfman.AttachOpts{})
 	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
+		var notFound bpfman.ErrProgramNotFound
+		if errors.As(err, &notFound) || errors.Is(err, store.ErrNotFound) {
 			return nil, status.Errorf(codes.NotFound, "program with ID %d not found", programID)
 		}
 		return nil, status.Errorf(codes.Internal, "attach tracepoint: %v", err)
@@ -120,6 +121,10 @@ func (s *Server) attachXDP(ctx context.Context, programID uint32, info *pb.XDPAt
 	// Call manager with empty LinkPinPath to auto-generate
 	link, err := s.mgr.AttachXDP(ctx, spec, bpfman.AttachOpts{})
 	if err != nil {
+		var notFound bpfman.ErrProgramNotFound
+		if errors.As(err, &notFound) {
+			return nil, status.Errorf(codes.NotFound, "program with ID %d not found", programID)
+		}
 		return nil, status.Errorf(codes.Internal, "attach XDP: %v", err)
 	}
 
@@ -171,6 +176,10 @@ func (s *Server) attachTC(ctx context.Context, programID uint32, info *pb.TCAtta
 	// Call manager with empty LinkPinPath to auto-generate
 	link, err := s.mgr.AttachTC(ctx, spec, bpfman.AttachOpts{})
 	if err != nil {
+		var notFound bpfman.ErrProgramNotFound
+		if errors.As(err, &notFound) {
+			return nil, status.Errorf(codes.NotFound, "program with ID %d not found", programID)
+		}
 		return nil, status.Errorf(codes.Internal, "attach TC: %v", err)
 	}
 
@@ -214,6 +223,10 @@ func (s *Server) attachTCX(ctx context.Context, programID uint32, info *pb.TCXAt
 	// Call manager with empty LinkPinPath to auto-generate
 	link, err := s.mgr.AttachTCX(ctx, spec, bpfman.AttachOpts{})
 	if err != nil {
+		var notFound bpfman.ErrProgramNotFound
+		if errors.As(err, &notFound) {
+			return nil, status.Errorf(codes.NotFound, "program with ID %d not found", programID)
+		}
 		return nil, status.Errorf(codes.Internal, "attach TCX: %v", err)
 	}
 
@@ -240,6 +253,10 @@ func (s *Server) attachKprobe(ctx context.Context, programID uint32, info *pb.Kp
 	// Call manager - it will determine retprobe from program type
 	link, err := s.mgr.AttachKprobe(ctx, spec, bpfman.AttachOpts{})
 	if err != nil {
+		var notFound bpfman.ErrProgramNotFound
+		if errors.As(err, &notFound) {
+			return nil, status.Errorf(codes.NotFound, "program with ID %d not found", programID)
+		}
 		return nil, status.Errorf(codes.Internal, "attach kprobe: %v", err)
 	}
 
@@ -286,6 +303,10 @@ func (s *Server) attachUprobe(ctx context.Context, programID uint32, info *pb.Up
 	// Call manager with empty linkPinPath to auto-generate
 	link, err := s.mgr.AttachUprobe(ctx, scope, spec, bpfman.AttachOpts{})
 	if err != nil {
+		var notFound bpfman.ErrProgramNotFound
+		if errors.As(err, &notFound) {
+			return nil, status.Errorf(codes.NotFound, "program with ID %d not found", programID)
+		}
 		return nil, status.Errorf(codes.Internal, "attach uprobe: %v", err)
 	}
 
@@ -307,6 +328,10 @@ func (s *Server) attachFentry(ctx context.Context, programID uint32, info *pb.Fe
 	// The manager will retrieve the attach function from the stored program metadata.
 	link, err := s.mgr.AttachFentry(ctx, spec, bpfman.AttachOpts{})
 	if err != nil {
+		var notFound bpfman.ErrProgramNotFound
+		if errors.As(err, &notFound) {
+			return nil, status.Errorf(codes.NotFound, "program with ID %d not found", programID)
+		}
 		return nil, status.Errorf(codes.Internal, "attach fentry: %v", err)
 	}
 
@@ -328,6 +353,10 @@ func (s *Server) attachFexit(ctx context.Context, programID uint32, info *pb.Fex
 	// The manager will retrieve the attach function from the stored program metadata.
 	link, err := s.mgr.AttachFexit(ctx, spec, bpfman.AttachOpts{})
 	if err != nil {
+		var notFound bpfman.ErrProgramNotFound
+		if errors.As(err, &notFound) {
+			return nil, status.Errorf(codes.NotFound, "program with ID %d not found", programID)
+		}
 		return nil, status.Errorf(codes.Internal, "attach fexit: %v", err)
 	}
 

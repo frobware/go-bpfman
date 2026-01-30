@@ -41,6 +41,9 @@ func (m *Manager) AttachXDP(ctx context.Context, spec bpfman.XDPAttachSpec, opts
 	// FETCH: Get program metadata to access ObjectPath and ProgramName
 	prog, err := m.store.Get(ctx, programKernelID)
 	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return bpfman.Link{}, bpfman.ErrProgramNotFound{ID: programKernelID}
+		}
 		return bpfman.Link{}, fmt.Errorf("get program %d: %w", programKernelID, err)
 	}
 

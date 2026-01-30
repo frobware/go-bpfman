@@ -50,6 +50,9 @@ func (m *Manager) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts b
 	// FETCH: Get program metadata to access ObjectPath and ProgramName
 	prog, err := m.store.Get(ctx, programKernelID)
 	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return bpfman.Link{}, bpfman.ErrProgramNotFound{ID: programKernelID}
+		}
 		return bpfman.Link{}, fmt.Errorf("get program %d: %w", programKernelID, err)
 	}
 
@@ -217,6 +220,9 @@ func (m *Manager) AttachTCX(ctx context.Context, spec bpfman.TCXAttachSpec, opts
 	// FETCH: Get program metadata to find pin path
 	prog, err := m.store.Get(ctx, programKernelID)
 	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return bpfman.Link{}, bpfman.ErrProgramNotFound{ID: programKernelID}
+		}
 		return bpfman.Link{}, fmt.Errorf("get program %d: %w", programKernelID, err)
 	}
 

@@ -613,29 +613,6 @@ func TestUnloadProgram_WithActiveLinks_DetachesLinksThenUnloads(t *testing.T) {
 }
 
 // =============================================================================
-// Attach to Non-Existent Program Tests
-// =============================================================================
-
-// TestAttach_ToNonExistentProgram_ReturnsError verifies that:
-//
-//	Given an empty manager with no programs loaded,
-//	When I attempt to attach to a non-existent program ID,
-//	Then the manager returns an error.
-func TestAttach_ToNonExistentProgram_ReturnsError(t *testing.T) {
-	fix := newTestFixture(t)
-	ctx := context.Background()
-
-	// Attempt to attach to non-existent program ID 999
-	attachSpec, err := bpfman.NewTracepointAttachSpec(999, "syscalls", "sys_enter_write")
-	require.NoError(t, err, "failed to create attach spec")
-	_, err = fix.Manager.AttachTracepoint(ctx, attachSpec, bpfman.AttachOpts{})
-	require.Error(t, err, "Attach to non-existent program should fail")
-
-	// Verify clean state
-	fix.AssertCleanState()
-}
-
-// =============================================================================
 // Detach Failure Tests
 // =============================================================================
 

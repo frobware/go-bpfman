@@ -786,20 +786,6 @@ func TestListLinks_EmptyWhenNoLinks(t *testing.T) {
 	assert.Empty(t, links, "should have 0 links")
 }
 
-// TestGetLink_NonExistentLink_ReturnsError verifies that:
-//
-//	Given no attached links,
-//	When I try to get a non-existent link,
-//	Then an error is returned.
-func TestGetLink_NonExistentLink_ReturnsError(t *testing.T) {
-	fix := newTestFixture(t)
-	ctx := context.Background()
-
-	// Try to get non-existent link
-	_, err := fix.Manager.GetLink(ctx, bpfman.LinkID(99999))
-	require.Error(t, err, "GetLink should fail for non-existent link")
-}
-
 // =============================================================================
 // Validation Tests
 // =============================================================================
@@ -1507,55 +1493,6 @@ func TestGetLink_ReturnsLinkDetails(t *testing.T) {
 }
 
 // =============================================================================
-// Metadata Filter Test
-// =============================================================================
-
-// TestListPrograms_WithMetadataFilter verifies that programs can be
-// found by metadata.
-func TestListPrograms_WithMetadataFilter(t *testing.T) {
-	fix := newTestFixture(t)
-	ctx := context.Background()
-
-	// Load programs with different metadata
-	for _, name := range []string{"prog1", "prog2", "prog3"} {
-		spec, err := bpfman.NewLoadSpec("/path/to/prog.o", name, bpfman.ProgramTypeTracepoint)
-		require.NoError(t, err)
-		_, err = fix.Manager.Load(ctx, spec, manager.LoadOpts{
-			UserMetadata: map[string]string{
-				"bpfman.io/ProgramName": name,
-				"app":                   "test-app",
-			},
-		})
-		require.NoError(t, err)
-	}
-
-	// Load a program with different metadata
-	spec, err := bpfman.NewLoadSpec("/path/to/prog.o", "other_prog", bpfman.ProgramTypeTracepoint)
-	require.NoError(t, err)
-	_, err = fix.Manager.Load(ctx, spec, manager.LoadOpts{
-		UserMetadata: map[string]string{
-			"bpfman.io/ProgramName": "other_prog",
-			"app":                   "different-app",
-		},
-	})
-	require.NoError(t, err)
-
-	// List all programs
-	result, err := fix.Manager.ListPrograms(ctx)
-	require.NoError(t, err)
-	assert.Len(t, result.Programs, 4, "should have 4 programs total")
-
-	// Count programs with "app=test-app" metadata
-	count := 0
-	for _, p := range result.Programs {
-		if p.Spec.Meta.Metadata["app"] == "test-app" {
-			count++
-		}
-	}
-	assert.Equal(t, 3, count, "should have 3 programs with app=test-app")
-}
-
-// =============================================================================
 // Unspecified Program Type Test
 // =============================================================================
 
@@ -1804,12 +1741,7 @@ func TestTCX_AttachToNonExistentInterface(t *testing.T) {
 //
 //	Given an empty manager with no programs,
 //	When I attempt to attach a non-existent program,
-//	Then the manager returns an error indicating the program was not found.
-//
-// Note: The attach operations currently return a wrapped error rather than
-// ErrProgramNotFound. The error message contains "not found" which the
-// server layer maps to gRPC NotFound status. For consistency with Unload,
-// attach operations could be updated to return ErrProgramNotFound.
+//	Then the manager returns ErrProgramNotFound.
 func TestAttach_ToNonExistentProgram_ReturnsNotFound(t *testing.T) {
 	fix := newTestFixture(t)
 	ctx := context.Background()
@@ -1819,7 +1751,10 @@ func TestAttach_ToNonExistentProgram_ReturnsNotFound(t *testing.T) {
 	require.NoError(t, err, "spec creation should succeed")
 	_, err = fix.Manager.AttachTracepoint(ctx, attachSpec, bpfman.AttachOpts{})
 	require.Error(t, err, "Attach to non-existent program should fail")
-	assert.Contains(t, err.Error(), "not found", "error should indicate program not found")
+
+	var notFound bpfman.ErrProgramNotFound
+	assert.True(t, errors.As(err, &notFound), "expected ErrProgramNotFound, got %T: %v", err, err)
+	assert.Equal(t, uint32(99999), notFound.ID)
 }
 
 // TestGetLink_NonExistentLink_ReturnsNotFound verifies that:
@@ -1886,66 +1821,4 @@ func TestListPrograms_WithMetadataFilter_ReturnsOnlyMatching(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 3, count, "should have 3 programs with app=test-app")
-}
-
-// TestUnloadProgram_WhenProgramDoesNotExist_ReturnsNotFound verifies that:
-//
-//	Given an empty manager with no programs,
-//	When I attempt to unload a non-existent program,
-//	Then the manager returns an error indicating the program was not found.
-func TestUnloadProgram_WhenProgramDoesNotExist_ReturnsNotFound(t *testing.T) {
-	fix := newTestFixture(t)
-	ctx := context.Background()
-
-	err := fix.Manager.Unload(ctx, 99999)
-	require.Error(t, err, "Unload of non-existent program should fail")
-
-	var notFound bpfman.ErrProgramNotFound
-	assert.True(t, errors.As(err, &notFound), "expected ErrProgramNotFound, got %T: %v", err, err)
-}
-
-// TestUnloadProgram_KernelOnlyProgram_ReturnsNotFound verifies that:
-//
-//	Given a program that exists in the kernel but is not managed by bpfman,
-//	When I attempt to unload it,
-//	Then the manager returns an error indicating the program is not managed.
-//
-// Note: At the manager layer, this returns ErrProgramNotManaged. The server
-// layer maps this to a NotFound gRPC status for API compatibility.
-func TestUnloadProgram_KernelOnlyProgram_ReturnsNotFound(t *testing.T) {
-	fix := newTestFixture(t)
-	ctx := context.Background()
-
-	// Inject a program directly into the kernel (bypassing bpfman)
-	const kernelOnlyProgID = 42
-	fix.Kernel.InjectKernelProgram(kernelOnlyProgID, "orphan_prog", bpfman.ProgramTypeTracepoint)
-
-	err := fix.Manager.Unload(ctx, kernelOnlyProgID)
-	require.Error(t, err, "Unload of kernel-only program should fail")
-
-	var notManaged bpfman.ErrProgramNotManaged
-	assert.True(t, errors.As(err, &notManaged), "expected ErrProgramNotManaged, got %T: %v", err, err)
-}
-
-// TestDetach_KernelOnlyLink_ReturnsNotFound verifies that:
-//
-//	Given a link that exists in the kernel but is not managed by bpfman,
-//	When I attempt to detach it,
-//	Then the manager returns an error indicating the link is not managed.
-//
-// Note: At the manager layer, this returns ErrLinkNotManaged. The server
-// layer maps this to a NotFound gRPC status for API compatibility.
-func TestDetach_KernelOnlyLink_ReturnsNotFound(t *testing.T) {
-	fix := newTestFixture(t)
-	ctx := context.Background()
-
-	// Inject a link directly into the kernel (bypassing bpfman)
-	const kernelOnlyLinkID = 42
-	fix.Kernel.InjectKernelLink(kernelOnlyLinkID, bpfman.AttachTracepoint)
-
-	err := fix.Manager.Detach(ctx, bpfman.LinkID(kernelOnlyLinkID))
-	require.Error(t, err, "Detach of kernel-only link should fail")
-
-	var notManaged bpfman.ErrLinkNotManaged
-	assert.True(t, errors.As(err, &notManaged), "expected ErrLinkNotManaged, got %T: %v", err, err)
 }

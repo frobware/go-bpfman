@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/frobware/go-bpfman"
+	"github.com/frobware/go-bpfman/interpreter/store"
 	"github.com/frobware/go-bpfman/lock"
 )
 
@@ -21,6 +22,9 @@ func (m *Manager) AttachTracepoint(ctx context.Context, spec bpfman.TracepointAt
 	// FETCH: Verify program exists in store
 	_, err := m.store.Get(ctx, programKernelID)
 	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return bpfman.Link{}, bpfman.ErrProgramNotFound{ID: programKernelID}
+		}
 		return bpfman.Link{}, fmt.Errorf("get program %d: %w", programKernelID, err)
 	}
 
@@ -77,6 +81,9 @@ func (m *Manager) AttachKprobe(ctx context.Context, spec bpfman.KprobeAttachSpec
 	// FETCH: Get program to determine if it's a kretprobe
 	prog, err := m.store.Get(ctx, programKernelID)
 	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return bpfman.Link{}, bpfman.ErrProgramNotFound{ID: programKernelID}
+		}
 		return bpfman.Link{}, fmt.Errorf("get program %d: %w", programKernelID, err)
 	}
 
@@ -150,6 +157,9 @@ func (m *Manager) AttachUprobe(ctx context.Context, scope lock.WriterScope, spec
 	// FETCH: Get program to determine if it's a uretprobe
 	prog, err := m.store.Get(ctx, programKernelID)
 	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return bpfman.Link{}, bpfman.ErrProgramNotFound{ID: programKernelID}
+		}
 		return bpfman.Link{}, fmt.Errorf("get program %d: %w", programKernelID, err)
 	}
 
@@ -227,6 +237,9 @@ func (m *Manager) AttachFentry(ctx context.Context, spec bpfman.FentryAttachSpec
 	// FETCH: Get program metadata to access AttachFunc
 	prog, err := m.store.Get(ctx, programKernelID)
 	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return bpfman.Link{}, bpfman.ErrProgramNotFound{ID: programKernelID}
+		}
 		return bpfman.Link{}, fmt.Errorf("get program %d: %w", programKernelID, err)
 	}
 
@@ -286,6 +299,9 @@ func (m *Manager) AttachFexit(ctx context.Context, spec bpfman.FexitAttachSpec, 
 	// FETCH: Get program metadata to access AttachFunc
 	prog, err := m.store.Get(ctx, programKernelID)
 	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return bpfman.Link{}, bpfman.ErrProgramNotFound{ID: programKernelID}
+		}
 		return bpfman.Link{}, fmt.Errorf("get program %d: %w", programKernelID, err)
 	}
 
