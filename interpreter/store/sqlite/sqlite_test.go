@@ -240,6 +240,7 @@ func TestLinkRegistry_TracepointRoundTrip(t *testing.T) {
 	assert.Equal(t, bpfman.LinkKindTracepoint, gotRecord.Kind)
 	require.NotNil(t, gotRecord.KernelLinkID)
 	assert.Equal(t, uint32(linkID), *gotRecord.KernelLinkID)
+	assert.Equal(t, uint32(42), gotRecord.KernelProgramID, "KernelProgramID should match the program kernel ID passed to SaveLink")
 	assert.Equal(t, record.PinPath, gotRecord.PinPath)
 
 	tpDetails, ok := gotRecord.Details.(bpfman.TracepointDetails)

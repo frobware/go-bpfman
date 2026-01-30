@@ -280,12 +280,13 @@ func (id LinkID) IsSynthetic() bool {
 // The durable identity is ID (autoincrement), not kernel link ID.
 // KernelLinkID is an optional attribute for correlation with kernel state.
 type LinkRecord struct {
-	ID           LinkID      `json:"id"`
-	Kind         LinkKind    `json:"kind"`
-	KernelLinkID *uint32     `json:"kernel_link_id,omitempty"` // nil for perf_event-based links
-	PinPath      string      `json:"pin_path,omitempty"`
-	CreatedAt    time.Time   `json:"created_at"`
-	Details      LinkDetails `json:"details,omitempty"`
+	ID              LinkID      `json:"id"`
+	Kind            LinkKind    `json:"kind"`
+	KernelLinkID    *uint32     `json:"kernel_link_id,omitempty"` // nil for perf_event-based links
+	KernelProgramID uint32      `json:"kernel_program_id"`        // program this link is attached to
+	PinPath         string      `json:"pin_path,omitempty"`
+	CreatedAt       time.Time   `json:"created_at"`
+	Details         LinkDetails `json:"details,omitempty"`
 	// owner, metadata, etc. as needed
 	// Note: When Details is non-nil, Kind must equal Details.Kind(); constructors enforce this
 }

@@ -337,11 +337,12 @@ func protoLinkSummaryToRecord(s *pb.LinkSummary) bpfman.LinkRecord {
 	}
 
 	return bpfman.LinkRecord{
-		ID:           bpfman.LinkID(s.KernelLinkId),
-		Kind:         protoLinkKindToManaged(s.LinkType),
-		KernelLinkID: kernelLinkID,
-		PinPath:      s.PinPath,
-		CreatedAt:    createdAt,
+		ID:              bpfman.LinkID(s.KernelLinkId),
+		Kind:            protoLinkKindToManaged(s.LinkType),
+		KernelLinkID:    kernelLinkID,
+		KernelProgramID: s.KernelProgramId,
+		PinPath:         s.PinPath,
+		CreatedAt:       createdAt,
 	}
 }
 

@@ -309,16 +309,17 @@ func (s *sqliteStore) insertLinkRegistry(ctx context.Context, linkID bpfman.Link
 }
 
 // scanLinkRecord scans a single row into a LinkRecord (without details).
-// Row format: link_id, kind, pin_path, is_synthetic, created_at
+// Row format: link_id, kind, kernel_prog_id, pin_path, is_synthetic, created_at
 func (s *sqliteStore) scanLinkRecord(row *sql.Row) (bpfman.LinkRecord, error) {
 	var record bpfman.LinkRecord
 	var linkID int64
 	var kindStr string
+	var kernelProgID uint32
 	var pinPath sql.NullString
 	var isSynthetic int
 	var createdAtStr string
 
-	err := row.Scan(&linkID, &kindStr, &pinPath, &isSynthetic, &createdAtStr)
+	err := row.Scan(&linkID, &kindStr, &kernelProgID, &pinPath, &isSynthetic, &createdAtStr)
 	if err == sql.ErrNoRows {
 		return bpfman.LinkRecord{}, fmt.Errorf("link: %w", store.ErrNotFound)
 	}
@@ -328,6 +329,7 @@ func (s *sqliteStore) scanLinkRecord(row *sql.Row) (bpfman.LinkRecord, error) {
 
 	record.ID = bpfman.LinkID(linkID)
 	record.Kind = bpfman.LinkKind(kindStr)
+	record.KernelProgramID = kernelProgID
 	// KernelLinkID is populated for non-synthetic links (link_id IS the kernel link ID)
 	if isSynthetic == 0 {
 		klid := uint32(linkID)
@@ -346,25 +348,27 @@ func (s *sqliteStore) scanLinkRecord(row *sql.Row) (bpfman.LinkRecord, error) {
 }
 
 // scanLinkRecords scans multiple rows into a slice of LinkRecord (without details).
-// Row format: link_id, kind, pin_path, is_synthetic, created_at
+// Row format: link_id, kind, kernel_prog_id, pin_path, is_synthetic, created_at
 func (s *sqliteStore) scanLinkRecords(rows *sql.Rows) ([]bpfman.LinkRecord, error) {
 	var result []bpfman.LinkRecord
 
 	for rows.Next() {
 		var linkID int64
 		var kindStr string
+		var kernelProgID uint32
 		var pinPath sql.NullString
 		var isSynthetic int
 		var createdAtStr string
 
-		err := rows.Scan(&linkID, &kindStr, &pinPath, &isSynthetic, &createdAtStr)
+		err := rows.Scan(&linkID, &kindStr, &kernelProgID, &pinPath, &isSynthetic, &createdAtStr)
 		if err != nil {
 			return nil, err
 		}
 
 		record := bpfman.LinkRecord{
-			ID:   bpfman.LinkID(linkID),
-			Kind: bpfman.LinkKind(kindStr),
+			ID:              bpfman.LinkID(linkID),
+			Kind:            bpfman.LinkKind(kindStr),
+			KernelProgramID: kernelProgID,
 		}
 		// KernelLinkID is populated for non-synthetic links (link_id IS the kernel link ID)
 		if isSynthetic == 0 {

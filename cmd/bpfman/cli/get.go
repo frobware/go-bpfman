@@ -62,9 +62,16 @@ func (c *GetLinkCmd) Run(cli *CLI, ctx context.Context) error {
 		return err
 	}
 
-	// Note: Program name not available without program ID lookup.
-	// The LinkRecord doesn't contain program ID (it's kernel state).
-	output, err := FormatLinkInfo("", record, details, &c.OutputFlags)
+	// Look up program to get the BPF function name
+	var bpfFunction string
+	if record.KernelProgramID != 0 {
+		progInfo, err := b.Get(ctx, record.KernelProgramID)
+		if err == nil && progInfo.Kernel != nil && progInfo.Kernel.Program != nil {
+			bpfFunction = progInfo.Kernel.Program.Name
+		}
+	}
+
+	output, err := FormatLinkInfo(bpfFunction, record, details, &c.OutputFlags)
 	if err != nil {
 		return err
 	}

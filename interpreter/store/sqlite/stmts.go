@@ -144,21 +144,21 @@ func (s *sqliteStore) prepareLinkRegistryStatements(ctx context.Context) error {
 	}
 
 	const sqlGetLinkRegistry = `
-		SELECT link_id, kind, pin_path, is_synthetic, created_at
+		SELECT link_id, kind, kernel_prog_id, pin_path, is_synthetic, created_at
 		FROM links WHERE link_id = ?`
 	if s.stmtGetLinkRegistry, err = s.db.PrepareContext(ctx, sqlGetLinkRegistry); err != nil {
 		return fmt.Errorf("prepare GetLinkRegistry: %w", err)
 	}
 
 	const sqlListLinks = `
-		SELECT link_id, kind, pin_path, is_synthetic, created_at
+		SELECT link_id, kind, kernel_prog_id, pin_path, is_synthetic, created_at
 		FROM links`
 	if s.stmtListLinks, err = s.db.PrepareContext(ctx, sqlListLinks); err != nil {
 		return fmt.Errorf("prepare ListLinks: %w", err)
 	}
 
 	const sqlListLinksByProgram = `
-		SELECT link_id, kind, pin_path, is_synthetic, created_at
+		SELECT link_id, kind, kernel_prog_id, pin_path, is_synthetic, created_at
 		FROM links WHERE kernel_prog_id = ?`
 	if s.stmtListLinksByProgram, err = s.db.PrepareContext(ctx, sqlListLinksByProgram); err != nil {
 		return fmt.Errorf("prepare ListLinksByProgram: %w", err)
