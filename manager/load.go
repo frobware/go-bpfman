@@ -11,6 +11,7 @@ import (
 	"github.com/frobware/go-bpfman/action"
 	"github.com/frobware/go-bpfman/bpffs"
 	"github.com/frobware/go-bpfman/interpreter"
+	"github.com/frobware/go-bpfman/interpreter/store"
 )
 
 // LoadOpts contains optional metadata for a Load operation.
@@ -111,7 +112,14 @@ func (m *Manager) Unload(ctx context.Context, kernelID uint32) error {
 	// FETCH: Get metadata and links (for link cleanup)
 	_, err := m.store.Get(ctx, kernelID)
 	if err != nil {
-		return fmt.Errorf("program %d: %w", kernelID, err)
+		if errors.Is(err, store.ErrNotFound) {
+			// Check if program exists in kernel but isn't managed by bpfman
+			if _, kerr := m.kernel.GetProgramByID(ctx, kernelID); kerr == nil {
+				return bpfman.ErrProgramNotManaged{ID: kernelID}
+			}
+			return bpfman.ErrProgramNotFound{ID: kernelID}
+		}
+		return fmt.Errorf("get program %d: %w", kernelID, err)
 	}
 
 	// FETCH: Check for dependent programs (map sharing)

@@ -2,6 +2,7 @@ package manager
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/vishvananda/netlink"
@@ -9,7 +10,13 @@ import (
 	"github.com/frobware/go-bpfman"
 	"github.com/frobware/go-bpfman/action"
 	"github.com/frobware/go-bpfman/dispatcher"
+	"github.com/frobware/go-bpfman/interpreter/store"
 )
+
+// isNotFoundError returns true if err wraps store.ErrNotFound.
+func isNotFoundError(err error) bool {
+	return errors.Is(err, store.ErrNotFound)
+}
 
 // Detach removes a link by link ID.
 //
@@ -25,6 +32,13 @@ func (m *Manager) Detach(ctx context.Context, linkID bpfman.LinkID) error {
 	// FETCH: Get link record (includes details)
 	record, err := m.store.GetLink(ctx, linkID)
 	if err != nil {
+		if isNotFoundError(err) {
+			// Check if link exists in kernel but isn't managed by bpfman
+			if _, kerr := m.kernel.GetLinkByID(ctx, uint32(linkID)); kerr == nil {
+				return bpfman.ErrLinkNotManaged{LinkID: linkID}
+			}
+			return bpfman.ErrLinkNotFound{LinkID: linkID}
+		}
 		return fmt.Errorf("get link %d: %w", linkID, err)
 	}
 

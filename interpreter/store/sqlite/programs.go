@@ -23,7 +23,7 @@ func (s *sqliteStore) Get(ctx context.Context, kernelID uint32) (bpfman.ProgramS
 	prog, err := s.scanProgram(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		s.logger.Debug("sql", "stmt", "GetProgram", "args", []any{kernelID}, "duration_ms", msec(time.Since(start)), "rows", 0)
-		return bpfman.ProgramSpec{}, fmt.Errorf("program %d: %w", kernelID, store.ErrNotFound)
+		return bpfman.ProgramSpec{}, store.ErrNotFound
 	}
 	if err != nil {
 		s.logger.Debug("sql", "stmt", "GetProgram", "args", []any{kernelID}, "duration_ms", msec(time.Since(start)), "error", err)

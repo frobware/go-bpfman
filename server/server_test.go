@@ -400,7 +400,39 @@ func TestUnloadProgram_WhenProgramDoesNotExist_ReturnsNotFound(t *testing.T) {
 
 	_, err := srv.Unload(ctx, &pb.UnloadRequest{Id: 999})
 	require.Error(t, err, "Unload of non-existent program should fail")
-	assert.Contains(t, err.Error(), "not found", "expected NotFound error")
+
+	st, ok := status.FromError(err)
+	require.True(t, ok, "expected gRPC status error")
+	assert.Equal(t, codes.NotFound, st.Code(), "expected NotFound status code")
+	assert.Contains(t, st.Message(), "does not exist", "expected 'does not exist' in message")
+}
+
+// TestUnloadProgram_KernelOnlyProgram_ReturnsNotFound verifies that:
+//
+//	Given a program that exists in the kernel but is not managed by bpfman,
+//	When I attempt to unload it,
+//	Then the server returns a NotFound error,
+//	And the error message indicates the program is not managed.
+func TestUnloadProgram_KernelOnlyProgram_ReturnsNotFound(t *testing.T) {
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	// Inject a program directly into the kernel (bypassing bpfman)
+	const kernelOnlyProgID = 42
+	fix.Kernel.InjectKernelProgram(kernelOnlyProgID, "orphan_prog", bpfman.ProgramTypeTracepoint)
+
+	// Attempt to unload the kernel-only program
+	_, err := fix.Server.Unload(ctx, &pb.UnloadRequest{Id: kernelOnlyProgID})
+	require.Error(t, err, "Unload of kernel-only program should fail")
+
+	// Verify it's a gRPC NotFound error
+	st, ok := status.FromError(err)
+	require.True(t, ok, "expected gRPC status error")
+	assert.Equal(t, codes.NotFound, st.Code(), "expected NotFound status code")
+
+	// Verify the error message indicates the program is not managed
+	assert.Contains(t, st.Message(), "not managed by bpfman",
+		"error message should indicate program is not managed")
 }
 
 // TestLoadProgram_AfterUnload_NameBecomesAvailable verifies that:
@@ -1119,6 +1151,34 @@ func TestDetach_NonExistentLink_ReturnsNotFound(t *testing.T) {
 
 	// Verify clean state
 	fix.AssertCleanState()
+}
+
+// TestDetach_KernelOnlyLink_ReturnsNotFound verifies that:
+//
+//	Given a link that exists in the kernel but is not managed by bpfman,
+//	When I attempt to detach it,
+//	Then the server returns a NotFound error,
+//	And the error message indicates the link is not managed.
+func TestDetach_KernelOnlyLink_ReturnsNotFound(t *testing.T) {
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	// Inject a link directly into the kernel (bypassing bpfman)
+	const kernelOnlyLinkID = 42
+	fix.Kernel.InjectKernelLink(kernelOnlyLinkID, bpfman.AttachTracepoint)
+
+	// Attempt to detach the kernel-only link
+	_, err := fix.Server.Detach(ctx, &pb.DetachRequest{LinkId: kernelOnlyLinkID})
+	require.Error(t, err, "Detach of kernel-only link should fail")
+
+	// Verify it's a gRPC NotFound error
+	st, ok := status.FromError(err)
+	require.True(t, ok, "expected gRPC status error")
+	assert.Equal(t, codes.NotFound, st.Code(), "expected NotFound status code")
+
+	// Verify the error message indicates the link is not managed
+	assert.Contains(t, st.Message(), "not managed by bpfman",
+		"error message should indicate link is not managed")
 }
 
 // TestDetach_ExistingLink_Succeeds verifies that:

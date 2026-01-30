@@ -327,7 +327,7 @@ func (s *sqliteStore) scanLinkRecord(row *sql.Row) (bpfman.LinkSpec, error) {
 
 	err := row.Scan(&linkID, &kindStr, &programID, &pinPath, &isSynthetic, &createdAtStr)
 	if err == sql.ErrNoRows {
-		return bpfman.LinkSpec{}, fmt.Errorf("link: %w", store.ErrNotFound)
+		return bpfman.LinkSpec{}, store.ErrNotFound
 	}
 	if err != nil {
 		return bpfman.LinkSpec{}, err

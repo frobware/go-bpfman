@@ -131,7 +131,7 @@ func Run(ctx context.Context) {
 	modeEnv := os.Getenv(nsenter.ModeEnvVar)
 	handled, err := HandleNamespaceHelperInvocation(os.Args, modeEnv, runNamespaceHelper)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bpfman: %v\n", err)
+		fmt.Fprintf(os.Stderr, "bpfman: error: %v\n", err)
 		os.Exit(1)
 	}
 	if handled {
@@ -164,7 +164,7 @@ func Run(ctx context.Context) {
 	if err := kctx.Run(&c); err != nil {
 		// Attempt to write error to stderr. If stderr write fails, we still
 		// exit with code 1 - there's nothing more useful we can do.
-		_ = c.PrintErrf("bpfman: %v\n", err)
+		_ = c.PrintErrf("bpfman: error: %v\n", err)
 		os.Exit(1)
 	}
 }

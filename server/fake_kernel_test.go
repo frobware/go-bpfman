@@ -98,6 +98,31 @@ func (f *fakeKernel) recordOp(op, name string, id uint32, err error) {
 	f.ops = append(f.ops, kernelOp{Op: op, Name: name, ID: id, Err: err})
 }
 
+// InjectKernelLink adds a link directly to the kernel state without going
+// through the normal attach flow. This simulates a link that exists in the
+// kernel but is not managed by bpfman.
+func (f *fakeKernel) InjectKernelLink(id uint32, attachType bpfman.AttachType) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.links[id] = &bpfman.AttachedLink{
+		ID:   id,
+		Type: attachType,
+	}
+}
+
+// InjectKernelProgram adds a program directly to the kernel state without going
+// through the normal load flow. This simulates a program that exists in the
+// kernel but is not managed by bpfman.
+func (f *fakeKernel) InjectKernelProgram(id uint32, name string, progType bpfman.ProgramType) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.programs[id] = fakeProgram{
+		id:          id,
+		name:        name,
+		programType: progType,
+	}
+}
+
 // recordExtensionAttach records an XDP/TC extension attachment with the mapPinDir.
 func (f *fakeKernel) recordExtensionAttach(op, programName string, id uint32, mapPinDir string) {
 	f.mu.Lock()

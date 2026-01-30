@@ -245,10 +245,16 @@ func (s *Server) Unload(ctx context.Context, req *pb.UnloadRequest) (*pb.UnloadR
 	defer s.mgr.MarkMutated()
 
 	if err := s.mgr.Unload(ctx, req.Id); err != nil {
-		if errors.Is(err, store.ErrNotFound) {
+		var notManaged bpfman.ErrProgramNotManaged
+		var notFound bpfman.ErrProgramNotFound
+		switch {
+		case errors.As(err, &notManaged), errors.As(err, &notFound):
+			return nil, status.Errorf(codes.NotFound, "%v", err)
+		case errors.Is(err, store.ErrNotFound):
 			return nil, status.Errorf(codes.NotFound, "program with ID %d not found", req.Id)
+		default:
+			return nil, status.Errorf(codes.Internal, "failed to unload program: %v", err)
 		}
-		return nil, status.Errorf(codes.Internal, "failed to unload program: %v", err)
 	}
 
 	s.logger.InfoContext(ctx, "Unload", "program_id", req.Id)

@@ -347,10 +347,16 @@ func (s *Server) Detach(ctx context.Context, req *pb.DetachRequest) (*pb.DetachR
 	defer s.mgr.MarkMutated()
 
 	if err := s.mgr.Detach(ctx, bpfman.LinkID(req.LinkId)); err != nil {
-		if errors.Is(err, store.ErrNotFound) {
+		var notManaged bpfman.ErrLinkNotManaged
+		var notFound bpfman.ErrLinkNotFound
+		switch {
+		case errors.As(err, &notManaged), errors.As(err, &notFound):
+			return nil, status.Errorf(codes.NotFound, "%v", err)
+		case errors.Is(err, store.ErrNotFound):
 			return nil, status.Errorf(codes.NotFound, "link with ID %d not found", req.LinkId)
+		default:
+			return nil, status.Errorf(codes.Internal, "detach link: %v", err)
 		}
-		return nil, status.Errorf(codes.Internal, "detach link: %v", err)
 	}
 
 	s.logger.InfoContext(ctx, "Detach", "link_id", req.LinkId)
