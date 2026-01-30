@@ -58,7 +58,7 @@ func TestTracepoint_LoadAttachDetachUnload(t *testing.T) {
 
 	// Then: program has expected properties
 	require.NotZero(t, prog.Kernel.ID, "kernel should assign program ID")
-	require.Equal(t, bpfman.ProgramTypeTracepoint.String(), prog.Kernel.ProgramType.String())
+	require.Equal(t, bpfman.ProgramTypeTracepoint, prog.Managed.Type)
 
 	// Register cleanup for the program
 	t.Cleanup(func() {
@@ -182,7 +182,7 @@ func TestKprobe_LoadAttachDetachUnload(t *testing.T) {
 
 	// Then: program has expected properties
 	require.NotZero(t, prog.Kernel.ID, "kernel should assign program ID")
-	require.Equal(t, bpfman.ProgramTypeKprobe.String(), prog.Kernel.ProgramType.String())
+	require.Equal(t, bpfman.ProgramTypeKprobe, prog.Managed.Type)
 
 	t.Cleanup(func() {
 		env.Unload(context.Background(), prog.Kernel.ID)
@@ -295,7 +295,7 @@ func TestKretprobe_LoadAttachDetachUnload(t *testing.T) {
 
 	// Then: program has expected properties
 	require.NotZero(t, prog.Kernel.ID, "kernel should assign program ID")
-	require.Equal(t, bpfman.ProgramTypeKretprobe.String(), prog.Kernel.ProgramType.String())
+	require.Equal(t, bpfman.ProgramTypeKretprobe, prog.Managed.Type)
 
 	t.Cleanup(func() {
 		env.Unload(context.Background(), prog.Kernel.ID)
@@ -412,7 +412,7 @@ func TestUprobe_LoadAttachDetachUnload(t *testing.T) {
 
 	// Then: program has expected properties
 	require.NotZero(t, prog.Kernel.ID, "kernel should assign program ID")
-	require.Equal(t, bpfman.ProgramTypeUprobe.String(), prog.Kernel.ProgramType.String())
+	require.Equal(t, bpfman.ProgramTypeUprobe, prog.Managed.Type)
 
 	t.Cleanup(func() {
 		env.Unload(context.Background(), prog.Kernel.ID)
@@ -530,7 +530,7 @@ func TestUretprobe_LoadAttachDetachUnload(t *testing.T) {
 
 	// Then: program has expected properties
 	require.NotZero(t, prog.Kernel.ID, "kernel should assign program ID")
-	require.Equal(t, bpfman.ProgramTypeUretprobe.String(), prog.Kernel.ProgramType.String())
+	require.Equal(t, bpfman.ProgramTypeUretprobe, prog.Managed.Type)
 
 	t.Cleanup(func() {
 		env.Unload(context.Background(), prog.Kernel.ID)
@@ -644,7 +644,7 @@ func TestFentry_LoadAttachDetachUnload(t *testing.T) {
 
 	// Then: program has expected properties
 	require.NotZero(t, prog.Kernel.ID, "kernel should assign program ID")
-	require.Equal(t, bpfman.ProgramTypeFentry.String(), prog.Kernel.ProgramType.String())
+	require.Equal(t, bpfman.ProgramTypeFentry, prog.Managed.Type)
 
 	t.Cleanup(func() {
 		env.Unload(context.Background(), prog.Kernel.ID)
@@ -752,7 +752,7 @@ func TestFexit_LoadAttachDetachUnload(t *testing.T) {
 
 	// Then: program has expected properties
 	require.NotZero(t, prog.Kernel.ID, "kernel should assign program ID")
-	require.Equal(t, bpfman.ProgramTypeFexit.String(), prog.Kernel.ProgramType.String())
+	require.Equal(t, bpfman.ProgramTypeFexit, prog.Managed.Type)
 
 	t.Cleanup(func() {
 		env.Unload(context.Background(), prog.Kernel.ID)
@@ -862,7 +862,7 @@ func TestTC_LoadAttachDetachUnload(t *testing.T) {
 
 	// Then: program has expected properties
 	require.NotZero(t, prog.Kernel.ID, "kernel should assign program ID")
-	require.Equal(t, bpfman.ProgramTypeTC.String(), prog.Kernel.ProgramType.String())
+	require.Equal(t, bpfman.ProgramTypeTC, prog.Managed.Type)
 
 	t.Cleanup(func() {
 		env.Unload(context.Background(), prog.Kernel.ID)
@@ -1008,7 +1008,7 @@ func TestTCX_LoadAttachDetachUnload(t *testing.T) {
 
 	// Then: program has expected properties
 	require.NotZero(t, prog.Kernel.ID, "kernel should assign program ID")
-	require.Equal(t, bpfman.ProgramTypeTCX.String(), prog.Kernel.ProgramType.String())
+	require.Equal(t, bpfman.ProgramTypeTCX, prog.Managed.Type)
 
 	t.Cleanup(func() {
 		env.Unload(context.Background(), prog.Kernel.ID)
@@ -1123,7 +1123,7 @@ func TestXDP_LoadAttachDetachUnload(t *testing.T) {
 
 	// Then: program has expected properties
 	require.NotZero(t, prog.Kernel.ID, "kernel should assign program ID")
-	require.Equal(t, bpfman.ProgramTypeXDP.String(), prog.Kernel.ProgramType.String())
+	require.Equal(t, bpfman.ProgramTypeXDP, prog.Managed.Type)
 
 	t.Cleanup(func() {
 		env.Unload(context.Background(), prog.Kernel.ID)
