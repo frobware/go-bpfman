@@ -35,7 +35,7 @@ func (m *Manager) Load(ctx context.Context, spec bpfman.LoadSpec, opts LoadOpts)
 
 	// Phase 1: Load into kernel and pin to bpffs
 	// The Manager owns the bpffs root path - callers don't need to know it
-	loaded, err := m.kernel.Load(ctx, spec, bpffs.Root(m.dirs.FS))
+	loaded, err := m.kernel.Load(ctx, spec, bpffs.Root(m.dirs.FS()))
 	if err != nil {
 		return bpfman.ManagedProgram{}, fmt.Errorf("load program %s: %w", spec.ProgramName(), err)
 	}
@@ -136,7 +136,7 @@ func (m *Manager) Unload(ctx context.Context, kernelID uint32) error {
 
 	// COMPUTE: Build paths from convention (kernel ID + bpffs root)
 	progPinPath := m.dirs.ProgPinPath(kernelID)
-	mapsDir := filepath.Join(m.dirs.FS, "maps", fmt.Sprintf("%d", kernelID))
+	mapsDir := filepath.Join(m.dirs.FS(), "maps", fmt.Sprintf("%d", kernelID))
 	linksDir := m.dirs.LinkPinDir(kernelID)
 
 	// COMPUTE: Build unload actions

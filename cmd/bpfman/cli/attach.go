@@ -183,7 +183,7 @@ func (c *AttachCmd) attachTC(ctx context.Context, runtime *CLIRuntime) (attachRe
 		return attachResult{}, fmt.Errorf("--priority is required for TC attachment (must be 1-1000)")
 	}
 
-	direction, err := ParseTCDirection(c.Direction)
+	direction, err := bpfman.ParseTCDirection(c.Direction)
 	if err != nil {
 		return attachResult{}, err
 	}
@@ -199,7 +199,7 @@ func (c *AttachCmd) attachTC(ctx context.Context, runtime *CLIRuntime) (attachRe
 		return attachResult{}, fmt.Errorf("invalid proceed-on value: %w", err)
 	}
 
-	spec, err := bpfman.NewTCAttachSpec(c.ProgramID.Value, c.Iface, iface.Index, string(direction))
+	spec, err := bpfman.NewTCAttachSpec(c.ProgramID.Value, c.Iface, iface.Index, direction)
 	if err != nil {
 		return attachResult{}, fmt.Errorf("invalid TC spec: %w", err)
 	}
@@ -226,7 +226,7 @@ func (c *AttachCmd) attachTCX(ctx context.Context, runtime *CLIRuntime) (attachR
 		return attachResult{}, fmt.Errorf("--priority is required for TCX attachment (must be 1-1000)")
 	}
 
-	direction, err := ParseTCDirection(c.Direction)
+	direction, err := bpfman.ParseTCDirection(c.Direction)
 	if err != nil {
 		return attachResult{}, err
 	}
@@ -236,7 +236,7 @@ func (c *AttachCmd) attachTCX(ctx context.Context, runtime *CLIRuntime) (attachR
 		return attachResult{}, fmt.Errorf("failed to find interface %q: %w", c.Iface, err)
 	}
 
-	spec, err := bpfman.NewTCXAttachSpec(c.ProgramID.Value, c.Iface, iface.Index, string(direction))
+	spec, err := bpfman.NewTCXAttachSpec(c.ProgramID.Value, c.Iface, iface.Index, direction)
 	if err != nil {
 		return attachResult{}, fmt.Errorf("invalid TCX spec: %w", err)
 	}

@@ -22,39 +22,32 @@ import (
 //	{base}/csi/          - CSI socket directory
 //	{base}/csi/fs/       - CSI per-pod mounts
 //	{base}-sock/         - gRPC socket directory
+//
+// RuntimeDirs is immutable after construction. Use NewRuntimeDirs to create.
+// Fields are unexported to prevent construction of invalid instances.
 type RuntimeDirs struct {
-	// Base is the runtime root (e.g., /run/bpfman).
-	Base string
-
-	// FS is the bpffs mount point.
-	FS string
-
-	// Dispatcher directories on bpffs.
-	FS_XDP        string
-	FS_TC_INGRESS string
-	FS_TC_EGRESS  string
-
-	// Map and link directories on bpffs.
-	FS_MAPS  string
-	FS_LINKS string
-
-	// DB is the database directory.
-	DB string
-
-	// CSI directories.
-	CSI    string
-	CSI_FS string
-
-	// Sock is the gRPC socket directory.
-	Sock string
-
-	// Lock is the path to the global writer lock file.
-	Lock string
+	base        string // runtime root (e.g., /run/bpfman)
+	fs          string // bpffs mount point
+	fsXDP       string // XDP dispatcher pins
+	fsTCIngress string // TC ingress dispatcher pins
+	fsTCEgress  string // TC egress dispatcher pins
+	fsMaps      string // map pins
+	fsLinks     string // link pins
+	db          string // database directory
+	csi         string // CSI socket directory
+	csiFS       string // CSI per-pod mounts
+	sock        string // gRPC socket directory
+	lock        string // global writer lock file
 }
 
 // DefaultRuntimeDirs returns RuntimeDirs with production defaults.
+// Panics if the default path is somehow invalid (should never happen).
 func DefaultRuntimeDirs() RuntimeDirs {
-	return NewRuntimeDirs("/run/bpfman")
+	dirs, err := NewRuntimeDirs("/run/bpfman")
+	if err != nil {
+		panic(fmt.Sprintf("DefaultRuntimeDirs: %v", err))
+	}
+	return dirs
 }
 
 // NewRuntimeDirs creates RuntimeDirs rooted at the given base path.
@@ -62,60 +55,107 @@ func DefaultRuntimeDirs() RuntimeDirs {
 //
 // The socket directory is {base}-sock (e.g., /run/bpfman-sock) to allow
 // separate volume mounts in Kubernetes.
-func NewRuntimeDirs(base string) RuntimeDirs {
+//
+// Returns an error if base is empty or not an absolute path.
+func NewRuntimeDirs(base string) (RuntimeDirs, error) {
+	if base == "" {
+		return RuntimeDirs{}, fmt.Errorf("base path cannot be empty")
+	}
+	if !filepath.IsAbs(base) {
+		return RuntimeDirs{}, fmt.Errorf("base path must be absolute, got %q", base)
+	}
+
 	fs := filepath.Join(base, "fs")
 	return RuntimeDirs{
-		Base: base,
+		base: base,
 
-		FS:            fs,
-		FS_XDP:        filepath.Join(fs, "xdp"),
-		FS_TC_INGRESS: filepath.Join(fs, "tc-ingress"),
-		FS_TC_EGRESS:  filepath.Join(fs, "tc-egress"),
-		FS_MAPS:       filepath.Join(fs, "maps"),
-		FS_LINKS:      filepath.Join(fs, "links"),
+		fs:          fs,
+		fsXDP:       filepath.Join(fs, "xdp"),
+		fsTCIngress: filepath.Join(fs, "tc-ingress"),
+		fsTCEgress:  filepath.Join(fs, "tc-egress"),
+		fsMaps:      filepath.Join(fs, "maps"),
+		fsLinks:     filepath.Join(fs, "links"),
 
-		DB: filepath.Join(base, "db"),
+		db: filepath.Join(base, "db"),
 
-		CSI:    filepath.Join(base, "csi"),
-		CSI_FS: filepath.Join(base, "csi", "fs"),
+		csi:   filepath.Join(base, "csi"),
+		csiFS: filepath.Join(base, "csi", "fs"),
 
-		Sock: base + "-sock",
+		sock: base + "-sock",
 
-		Lock: filepath.Join(base, ".lock"),
-	}
+		lock: filepath.Join(base, ".lock"),
+	}, nil
 }
+
+// Getter methods for RuntimeDirs fields.
+
+// Base returns the runtime root path (e.g., /run/bpfman).
+func (d RuntimeDirs) Base() string { return d.base }
+
+// FS returns the bpffs mount point path.
+func (d RuntimeDirs) FS() string { return d.fs }
+
+// FS_XDP returns the XDP dispatcher pins directory.
+func (d RuntimeDirs) FS_XDP() string { return d.fsXDP }
+
+// FS_TC_INGRESS returns the TC ingress dispatcher pins directory.
+func (d RuntimeDirs) FS_TC_INGRESS() string { return d.fsTCIngress }
+
+// FS_TC_EGRESS returns the TC egress dispatcher pins directory.
+func (d RuntimeDirs) FS_TC_EGRESS() string { return d.fsTCEgress }
+
+// FS_MAPS returns the map pins directory.
+func (d RuntimeDirs) FS_MAPS() string { return d.fsMaps }
+
+// FS_LINKS returns the link pins directory.
+func (d RuntimeDirs) FS_LINKS() string { return d.fsLinks }
+
+// DB returns the database directory path.
+func (d RuntimeDirs) DB() string { return d.db }
+
+// CSI returns the CSI socket directory path.
+func (d RuntimeDirs) CSI() string { return d.csi }
+
+// CSI_FS returns the CSI per-pod mounts directory path.
+func (d RuntimeDirs) CSI_FS() string { return d.csiFS }
+
+// Sock returns the gRPC socket directory path.
+func (d RuntimeDirs) Sock() string { return d.sock }
+
+// Lock returns the global writer lock file path.
+func (d RuntimeDirs) Lock() string { return d.lock }
 
 // SocketPath returns the full path to the gRPC socket.
 func (d RuntimeDirs) SocketPath() string {
-	return filepath.Join(d.Sock, "bpfman.sock")
+	return filepath.Join(d.sock, "bpfman.sock")
 }
 
 // CSISocketPath returns the full path to the CSI socket.
 func (d RuntimeDirs) CSISocketPath() string {
-	return filepath.Join(d.CSI, "csi.sock")
+	return filepath.Join(d.csi, "csi.sock")
 }
 
 // DBPath returns the full path to the SQLite database file.
 func (d RuntimeDirs) DBPath() string {
-	return filepath.Join(d.DB, "store.db")
+	return filepath.Join(d.db, "store.db")
 }
 
 // ProgPinPath returns the pin path for a program.
 // Format: {base}/fs/prog_{id}
 func (d RuntimeDirs) ProgPinPath(kernelID uint32) string {
-	return filepath.Join(d.FS, "prog_"+uitoa(kernelID))
+	return filepath.Join(d.fs, "prog_"+uitoa(kernelID))
 }
 
 // MapPinDir returns the directory for a program's map pins.
 // Format: {base}/fs/maps/{program_id}/
 func (d RuntimeDirs) MapPinDir(programID uint32) string {
-	return filepath.Join(d.FS_MAPS, uitoa(programID))
+	return filepath.Join(d.fsMaps, uitoa(programID))
 }
 
 // LinkPinDir returns the directory for a program's link pins.
 // Format: {base}/fs/links/{program_id}/
 func (d RuntimeDirs) LinkPinDir(programID uint32) string {
-	return filepath.Join(d.FS_LINKS, uitoa(programID))
+	return filepath.Join(d.fsLinks, uitoa(programID))
 }
 
 // uitoa converts uint32 to string.
@@ -150,15 +190,15 @@ func uitoa(n uint32) string {
 func (d RuntimeDirs) EnsureDirectories() error {
 	// Create core directories. MkdirAll is idempotent.
 	// CSI directories are created separately by EnsureCSIDirectories.
-	for _, dir := range []string{d.Base, d.DB, d.Sock} {
+	for _, dir := range []string{d.base, d.db, d.sock} {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}
 	}
 
 	// Ensure bpffs is mounted
-	if err := bpffs.EnsureMounted(bpffs.DefaultMountInfoPath, d.FS); err != nil {
-		return fmt.Errorf("failed to ensure bpffs at %s: %w", d.FS, err)
+	if err := bpffs.EnsureMounted(bpffs.DefaultMountInfoPath, d.fs); err != nil {
+		return fmt.Errorf("failed to ensure bpffs at %s: %w", d.fs, err)
 	}
 
 	return nil
@@ -171,7 +211,7 @@ func (d RuntimeDirs) EnsureDirectories() error {
 //   - {base}/csi/
 //   - {base}/csi/fs/
 func (d RuntimeDirs) EnsureCSIDirectories() error {
-	for _, dir := range []string{d.CSI, d.CSI_FS} {
+	for _, dir := range []string{d.csi, d.csiFS} {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}
@@ -182,11 +222,11 @@ func (d RuntimeDirs) EnsureCSIDirectories() error {
 // ScannerDirs returns a bpffs.ScannerDirs for use with bpffs.Scanner.
 func (d RuntimeDirs) ScannerDirs() bpffs.ScannerDirs {
 	return bpffs.ScannerDirs{
-		FS:        d.FS,
-		XDP:       d.FS_XDP,
-		TCIngress: d.FS_TC_INGRESS,
-		TCEgress:  d.FS_TC_EGRESS,
-		Maps:      d.FS_MAPS,
-		Links:     d.FS_LINKS,
+		FS:        d.fs,
+		XDP:       d.fsXDP,
+		TCIngress: d.fsTCIngress,
+		TCEgress:  d.fsTCEgress,
+		Maps:      d.fsMaps,
+		Links:     d.fsLinks,
 	}
 }

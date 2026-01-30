@@ -63,7 +63,7 @@ func (m *Manager) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts b
 
 	// Determine dispatcher type based on direction
 	var dispType dispatcher.DispatcherType
-	if direction == "ingress" {
+	if direction == bpfman.TCDirectionIngress {
 		dispType = dispatcher.DispatcherTypeTCIngress
 	} else {
 		dispType = dispatcher.DispatcherTypeTCEgress
@@ -90,7 +90,7 @@ func (m *Manager) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts b
 		"dispatcher_id", dispState.KernelID)
 
 	// COMPUTE: Calculate extension link path
-	revisionDir := dispatcher.DispatcherRevisionDir(m.dirs.FS, dispType, nsid, uint32(ifindex), dispState.Revision)
+	revisionDir := dispatcher.DispatcherRevisionDir(m.dirs.FS(), dispType, nsid, uint32(ifindex), dispState.Revision)
 	position, err := m.store.CountDispatcherLinks(ctx, dispState.KernelID)
 	if err != nil {
 		return bpfman.Link{}, fmt.Errorf("count dispatcher links: %w", err)
@@ -136,7 +136,7 @@ func (m *Manager) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts b
 			return bpfman.Link{}, fmt.Errorf("recreate TC dispatcher for %s %s: %w", ifname, direction, err)
 		}
 		// Recalculate paths for the fresh dispatcher
-		revisionDir = dispatcher.DispatcherRevisionDir(m.dirs.FS, dispType, nsid, uint32(ifindex), dispState.Revision)
+		revisionDir = dispatcher.DispatcherRevisionDir(m.dirs.FS(), dispType, nsid, uint32(ifindex), dispState.Revision)
 		position, err = m.store.CountDispatcherLinks(ctx, dispState.KernelID)
 		if err != nil {
 			return bpfman.Link{}, fmt.Errorf("count dispatcher links after recreate: %w", err)
@@ -246,7 +246,7 @@ func (m *Manager) AttachTCX(ctx context.Context, spec bpfman.TCXAttachSpec, opts
 	// kernel attachment alive.
 	if linkPinPath == "" {
 		dirName := fmt.Sprintf("tcx-%s", direction)
-		linkPinPath = filepath.Join(m.dirs.FS, dirName, fmt.Sprintf("link_%d_%d_%d", nsid, ifindex, programKernelID))
+		linkPinPath = filepath.Join(m.dirs.FS(), dirName, fmt.Sprintf("link_%d_%d_%d", nsid, ifindex, programKernelID))
 	}
 
 	// KERNEL I/O: Remove stale pin if it exists from a previous daemon run.
@@ -261,7 +261,7 @@ func (m *Manager) AttachTCX(ctx context.Context, spec bpfman.TCXAttachSpec, opts
 	progPinPath := prog.Handles.PinPath
 
 	// FETCH: Get existing TCX links for this interface/direction to compute order
-	existingLinks, err := m.store.ListTCXLinksByInterface(ctx, nsid, uint32(ifindex), direction)
+	existingLinks, err := m.store.ListTCXLinksByInterface(ctx, nsid, uint32(ifindex), string(direction))
 	if err != nil {
 		return bpfman.Link{}, fmt.Errorf("list existing TCX links: %w", err)
 	}
@@ -278,7 +278,7 @@ func (m *Manager) AttachTCX(ctx context.Context, spec bpfman.TCXAttachSpec, opts
 		"order", order)
 
 	// KERNEL I/O: Attach program using TCX link with computed order
-	link, err := m.kernel.AttachTCX(ctx, ifindex, direction, progPinPath, linkPinPath, netnsPath, order)
+	link, err := m.kernel.AttachTCX(ctx, ifindex, string(direction), progPinPath, linkPinPath, netnsPath, order)
 	if err != nil {
 		return bpfman.Link{}, fmt.Errorf("attach TCX to %s %s: %w", ifname, direction, err)
 	}
@@ -359,12 +359,12 @@ func computeTCXAttachOrder(existingLinks []bpfman.TCXLinkInfo, newPriority int32
 // matching the upstream Rust bpfman approach.
 //
 // Pattern: COMPUTE -> KERNEL I/O -> COMPUTE -> EXECUTE
-func (m *Manager) createTCDispatcher(ctx context.Context, nsid uint64, ifindex uint32, ifname, direction string, dispType dispatcher.DispatcherType, netnsPath string) (dispatcher.State, error) {
+func (m *Manager) createTCDispatcher(ctx context.Context, nsid uint64, ifindex uint32, ifname string, direction bpfman.TCDirection, dispType dispatcher.DispatcherType, netnsPath string) (dispatcher.State, error) {
 	// COMPUTE: Calculate paths according to Rust bpfman convention.
 	// TC dispatchers do not use a link pin — legacy netlink TC has no
 	// BPF link to pin. The filter is identified by handle + priority.
 	revision := uint32(1)
-	revisionDir := dispatcher.DispatcherRevisionDir(m.dirs.FS, dispType, nsid, ifindex, revision)
+	revisionDir := dispatcher.DispatcherRevisionDir(m.dirs.FS(), dispType, nsid, ifindex, revision)
 	progPinPath := dispatcher.DispatcherProgPath(revisionDir)
 
 	m.logger.InfoContext(ctx, "creating TC dispatcher",
@@ -382,7 +382,7 @@ func (m *Manager) createTCDispatcher(ctx context.Context, nsid uint64, ifindex u
 		int(ifindex),
 		ifname,
 		progPinPath,
-		direction,
+		string(direction),
 		dispatcher.MaxPrograms,
 		uint32(DefaultTCProceedOn),
 		netnsPath,

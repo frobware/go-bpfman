@@ -33,7 +33,10 @@ func (c *CLI) NewCLIRuntime(ctx context.Context) (*CLIRuntime, error) {
 		return nil, fmt.Errorf("create logger: %w", err)
 	}
 
-	dirs := c.RuntimeDirs()
+	dirs, err := c.RuntimeDirs()
+	if err != nil {
+		return nil, fmt.Errorf("invalid runtime directory: %w", err)
+	}
 
 	// Set up runtime environment (ensures directories, opens store, creates manager)
 	env, err := manager.SetupRuntimeEnv(ctx, dirs, logger)

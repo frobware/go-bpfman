@@ -369,8 +369,8 @@ func TestTCX_AttachUsesProgramPinPath(t *testing.T) {
 	progID := loadResp.Programs[0].KernelInfo.Id
 
 	// The expected pin path follows the pattern: <fsRoot>/prog_<kernelID>
-	// The fake kernel uses spec.PinPath() (which is fix.Dirs.FS) + "/prog_" + id
-	expectedPinPath := fmt.Sprintf("%s/prog_%d", fix.Dirs.FS, progID)
+	// The fake kernel uses bpffsRoot + "/prog_" + id
+	expectedPinPath := fmt.Sprintf("%s/prog_%d", fix.Dirs.FS(), progID)
 
 	// Attach the program
 	attachReq := &pb.AttachRequest{

@@ -777,13 +777,13 @@ func TestListTCXLinksByInterface_FiltersByInterfaceAndDirection(t *testing.T) {
 	testLinks := []struct {
 		linkID    uint32
 		ifindex   uint32
-		direction string
+		direction bpfman.TCDirection
 		priority  int32
 	}{
-		{linkID: 1001, ifindex: 2, direction: "ingress", priority: 100},
-		{linkID: 1002, ifindex: 2, direction: "ingress", priority: 200},
-		{linkID: 1003, ifindex: 2, direction: "egress", priority: 100},  // different direction
-		{linkID: 1004, ifindex: 3, direction: "ingress", priority: 100}, // different interface
+		{linkID: 1001, ifindex: 2, direction: bpfman.TCDirectionIngress, priority: 100},
+		{linkID: 1002, ifindex: 2, direction: bpfman.TCDirectionIngress, priority: 200},
+		{linkID: 1003, ifindex: 2, direction: bpfman.TCDirectionEgress, priority: 100},  // different direction
+		{linkID: 1004, ifindex: 3, direction: bpfman.TCDirectionIngress, priority: 100}, // different interface
 	}
 
 	for _, link := range testLinks {

@@ -181,14 +181,15 @@ type TCAttachSpec struct {
 	programID uint32
 	ifname    string
 	ifindex   int
-	direction string // "ingress" or "egress"
+	direction TCDirection
 	priority  int
 	proceedOn []int32
 	netns     string // optional network namespace path
 }
 
 // NewTCAttachSpec creates a TCAttachSpec with validated fields.
-func NewTCAttachSpec(programID uint32, ifname string, ifindex int, direction string) (TCAttachSpec, error) {
+// direction must be a valid TCDirection (use ParseTCDirection to parse from strings).
+func NewTCAttachSpec(programID uint32, ifname string, ifindex int, direction TCDirection) (TCAttachSpec, error) {
 	if programID == 0 {
 		return TCAttachSpec{}, errors.New("programID is required")
 	}
@@ -198,16 +199,16 @@ func NewTCAttachSpec(programID uint32, ifname string, ifindex int, direction str
 	if ifindex <= 0 {
 		return TCAttachSpec{}, errors.New("ifindex must be positive")
 	}
-	if direction != "ingress" && direction != "egress" {
-		return TCAttachSpec{}, errors.New("direction must be 'ingress' or 'egress'")
+	if direction != TCDirectionIngress && direction != TCDirectionEgress {
+		return TCAttachSpec{}, errors.New("direction must be TCDirectionIngress or TCDirectionEgress")
 	}
 	return TCAttachSpec{programID: programID, ifname: ifname, ifindex: ifindex, direction: direction}, nil
 }
 
-func (s TCAttachSpec) ProgramID() uint32  { return s.programID }
-func (s TCAttachSpec) Ifname() string     { return s.ifname }
-func (s TCAttachSpec) Ifindex() int       { return s.ifindex }
-func (s TCAttachSpec) Direction() string  { return s.direction }
+func (s TCAttachSpec) ProgramID() uint32     { return s.programID }
+func (s TCAttachSpec) Ifname() string        { return s.ifname }
+func (s TCAttachSpec) Ifindex() int          { return s.ifindex }
+func (s TCAttachSpec) Direction() TCDirection { return s.direction }
 func (s TCAttachSpec) Priority() int      { return s.priority }
 func (s TCAttachSpec) ProceedOn() []int32 { return s.proceedOn }
 func (s TCAttachSpec) Netns() string      { return s.netns }
@@ -236,13 +237,14 @@ type TCXAttachSpec struct {
 	programID uint32
 	ifname    string
 	ifindex   int
-	direction string
+	direction TCDirection
 	priority  int
 	netns     string // optional network namespace path
 }
 
 // NewTCXAttachSpec creates a TCXAttachSpec with validated fields.
-func NewTCXAttachSpec(programID uint32, ifname string, ifindex int, direction string) (TCXAttachSpec, error) {
+// direction must be a valid TCDirection (use ParseTCDirection to parse from strings).
+func NewTCXAttachSpec(programID uint32, ifname string, ifindex int, direction TCDirection) (TCXAttachSpec, error) {
 	if programID == 0 {
 		return TCXAttachSpec{}, errors.New("programID is required")
 	}
@@ -252,16 +254,16 @@ func NewTCXAttachSpec(programID uint32, ifname string, ifindex int, direction st
 	if ifindex <= 0 {
 		return TCXAttachSpec{}, errors.New("ifindex must be positive")
 	}
-	if direction != "ingress" && direction != "egress" {
-		return TCXAttachSpec{}, errors.New("direction must be 'ingress' or 'egress'")
+	if direction != TCDirectionIngress && direction != TCDirectionEgress {
+		return TCXAttachSpec{}, errors.New("direction must be TCDirectionIngress or TCDirectionEgress")
 	}
 	return TCXAttachSpec{programID: programID, ifname: ifname, ifindex: ifindex, direction: direction}, nil
 }
 
-func (s TCXAttachSpec) ProgramID() uint32 { return s.programID }
-func (s TCXAttachSpec) Ifname() string    { return s.ifname }
-func (s TCXAttachSpec) Ifindex() int      { return s.ifindex }
-func (s TCXAttachSpec) Direction() string { return s.direction }
+func (s TCXAttachSpec) ProgramID() uint32     { return s.programID }
+func (s TCXAttachSpec) Ifname() string        { return s.ifname }
+func (s TCXAttachSpec) Ifindex() int          { return s.ifindex }
+func (s TCXAttachSpec) Direction() TCDirection { return s.direction }
 func (s TCXAttachSpec) Priority() int     { return s.priority }
 func (s TCXAttachSpec) Netns() string     { return s.netns }
 

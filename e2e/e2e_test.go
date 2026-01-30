@@ -936,7 +936,7 @@ func TestTC_LoadAttachDetachUnload(t *testing.T) {
 	require.True(t, ok, "expected TCDetails, got %T", gotLinkDetails)
 	require.Equal(t, "lo", tcDetails.Interface)
 	require.Equal(t, uint32(1), tcDetails.Ifindex, "ifindex should match lo")
-	require.Equal(t, "ingress", tcDetails.Direction)
+	require.Equal(t, bpfman.TCDirectionIngress, tcDetails.Direction)
 	require.Equal(t, int32(50), tcDetails.Priority)
 	require.NotZero(t, tcDetails.DispatcherID, "TC should use dispatcher")
 	require.NotZero(t, tcDetails.Revision, "dispatcher should have revision")
@@ -1075,7 +1075,7 @@ func TestTCX_LoadAttachDetachUnload(t *testing.T) {
 	require.True(t, ok, "expected TCXDetails, got %T", gotLinkDetails)
 	require.Equal(t, "lo", tcxDetails.Interface)
 	require.Equal(t, uint32(1), tcxDetails.Ifindex, "ifindex should match lo")
-	require.Equal(t, "ingress", tcxDetails.Direction)
+	require.Equal(t, bpfman.TCDirectionIngress, tcxDetails.Direction)
 	require.Equal(t, int32(50), tcxDetails.Priority)
 	// TCX uses native kernel multi-prog support, not dispatchers
 

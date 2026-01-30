@@ -336,12 +336,12 @@ func GatherState(ctx context.Context, store interpreter.Store, kernel interprete
 
 	// Dispatcher prog pins and XDP link pins.
 	for _, d := range s.dbDispatchers {
-		revDir := dispatcher.DispatcherRevisionDir(dirs.FS, d.Type, d.Nsid, d.Ifindex, d.Revision)
+		revDir := dispatcher.DispatcherRevisionDir(dirs.FS(), d.Type, d.Nsid, d.Ifindex, d.Revision)
 		progPin := dispatcher.DispatcherProgPath(revDir)
 		pathsToStat[progPin] = struct{}{}
 
 		if d.Type == dispatcher.DispatcherTypeXDP {
-			linkPin := dispatcher.DispatcherLinkPath(dirs.FS, d.Type, d.Nsid, d.Ifindex)
+			linkPin := dispatcher.DispatcherLinkPath(dirs.FS(), d.Type, d.Nsid, d.Ifindex)
 			pathsToStat[linkPin] = struct{}{}
 		}
 	}
@@ -364,13 +364,13 @@ func GatherState(ctx context.Context, store interpreter.Store, kernel interprete
 	s.orphans = make([]FsOrphan, 0)
 
 	// Scan dirs.FS for orphan prog_* pins.
-	if entries, err := os.ReadDir(dirs.FS); err == nil {
+	if entries, err := os.ReadDir(dirs.FS()); err == nil {
 		for _, entry := range entries {
 			name := entry.Name()
 			if !strings.HasPrefix(name, "prog_") {
 				continue
 			}
-			pinPath := filepath.Join(dirs.FS, name)
+			pinPath := filepath.Join(dirs.FS(), name)
 			if s.dbProgPins[pinPath] {
 				continue
 			}
@@ -381,8 +381,8 @@ func GatherState(ctx context.Context, store interpreter.Store, kernel interprete
 		}
 	}
 
-	// Scan dirs.FS_LINKS for orphan link directories.
-	if entries, err := os.ReadDir(dirs.FS_LINKS); err == nil {
+	// Scan dirs.FS_LINKS() for orphan link directories.
+	if entries, err := os.ReadDir(dirs.FS_LINKS()); err == nil {
 		for _, entry := range entries {
 			var progID uint32
 			if n, _ := fmt.Sscanf(entry.Name(), "%d", &progID); n != 1 {
@@ -392,15 +392,15 @@ func GatherState(ctx context.Context, store interpreter.Store, kernel interprete
 				continue
 			}
 			s.orphans = append(s.orphans, FsOrphan{
-				Path:     filepath.Join(dirs.FS_LINKS, entry.Name()),
+				Path:     filepath.Join(dirs.FS_LINKS(), entry.Name()),
 				KernelID: progID,
 				Kind:     "link-dir",
 			})
 		}
 	}
 
-	// Scan dirs.FS_MAPS for orphan map directories.
-	if entries, err := os.ReadDir(dirs.FS_MAPS); err == nil {
+	// Scan dirs.FS_MAPS() for orphan map directories.
+	if entries, err := os.ReadDir(dirs.FS_MAPS()); err == nil {
 		for _, entry := range entries {
 			if !entry.IsDir() {
 				continue
@@ -413,7 +413,7 @@ func GatherState(ctx context.Context, store interpreter.Store, kernel interprete
 				continue
 			}
 			s.orphans = append(s.orphans, FsOrphan{
-				Path:     filepath.Join(dirs.FS_MAPS, entry.Name()),
+				Path:     filepath.Join(dirs.FS_MAPS(), entry.Name()),
 				KernelID: progID,
 				Kind:     "map-dir",
 			})
@@ -428,7 +428,7 @@ func GatherState(ctx context.Context, store interpreter.Store, kernel interprete
 		dispatcher.DispatcherTypeTCEgress,
 	}
 	for _, dt := range dispTypes {
-		typeDir := dispatcher.TypeDir(dirs.FS, dt)
+		typeDir := dispatcher.TypeDir(dirs.FS(), dt)
 		entries, err := os.ReadDir(typeDir)
 		if err != nil {
 			continue
@@ -559,7 +559,7 @@ func (s *ObservedState) Dispatchers() []DispatcherState {
 	}
 	for _, d := range s.dbDispatchers {
 		key := dispatcherKey(d.Type, d.Nsid, d.Ifindex)
-		revDir := dispatcher.DispatcherRevisionDir(s.dirs.FS, d.Type, d.Nsid, d.Ifindex, d.Revision)
+		revDir := dispatcher.DispatcherRevisionDir(s.dirs.FS(), d.Type, d.Nsid, d.Ifindex, d.Revision)
 		progPin := dispatcher.DispatcherProgPath(revDir)
 
 		ds := DispatcherState{
@@ -578,7 +578,7 @@ func (s *ObservedState) Dispatchers() []DispatcherState {
 		// XDP link checks from gathered facts.
 		if d.Type == dispatcher.DispatcherTypeXDP {
 			ds.KernelLink = d.LinkID != 0 && s.kernelLinks[d.LinkID]
-			linkPin := dispatcher.DispatcherLinkPath(s.dirs.FS, d.Type, d.Nsid, d.Ifindex)
+			linkPin := dispatcher.DispatcherLinkPath(s.dirs.FS(), d.Type, d.Nsid, d.Ifindex)
 			if exists, ok := s.fsPinExists[linkPin]; ok {
 				ds.LinkPinExist = &exists
 			}
@@ -1146,7 +1146,7 @@ Category: gc-dispatcher`,
 								os.Remove(dd.ProgPin)
 								os.RemoveAll(dd.RevDir)
 								if dd.DB.Type == dispatcher.DispatcherTypeXDP {
-									linkPin := dispatcher.DispatcherLinkPath(s.dirs.FS, dd.DB.Type, dd.DB.Nsid, dd.DB.Ifindex)
+									linkPin := dispatcher.DispatcherLinkPath(s.dirs.FS(), dd.DB.Type, dd.DB.Nsid, dd.DB.Ifindex)
 									os.Remove(linkPin)
 								}
 								return s.DeleteDispatcher(string(dd.DB.Type), dd.DB.Nsid, dd.DB.Ifindex)

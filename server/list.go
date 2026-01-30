@@ -399,7 +399,7 @@ func linkDetailsToProto(d bpfman.LinkDetails) *pb.LinkDetails {
 				Tc: &pb.TCLinkDetails{
 					Interface:    details.Interface,
 					Ifindex:      details.Ifindex,
-					Direction:    details.Direction,
+					Direction:    string(details.Direction),
 					Priority:     details.Priority,
 					Position:     details.Position,
 					ProceedOn:    details.ProceedOn,
@@ -416,7 +416,7 @@ func linkDetailsToProto(d bpfman.LinkDetails) *pb.LinkDetails {
 				Tcx: &pb.TCXLinkDetails{
 					Interface: details.Interface,
 					Ifindex:   details.Ifindex,
-					Direction: details.Direction,
+					Direction: string(details.Direction),
 					Priority:  details.Priority,
 					Netns:     details.Netns,
 					Nsid:      details.Nsid,

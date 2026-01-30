@@ -58,7 +58,8 @@ type CLI struct {
 }
 
 // RuntimeDirs returns the runtime directories configuration.
-func (c *CLI) RuntimeDirs() config.RuntimeDirs {
+// Returns an error if RuntimeDir is empty or not an absolute path.
+func (c *CLI) RuntimeDirs() (config.RuntimeDirs, error) {
 	return config.NewRuntimeDirs(c.RuntimeDir)
 }
 
@@ -283,7 +284,10 @@ func RunWithLockValue[T any](ctx context.Context, c *CLI, fn func(context.Contex
 		defer cancel()
 	}
 
-	dirs := c.RuntimeDirs()
+	dirs, err := c.RuntimeDirs()
+	if err != nil {
+		return result, fmt.Errorf("invalid runtime directory: %w", err)
+	}
 	logger, logErr := c.Logger()
 	if logErr != nil {
 		// Fall back to default logger if config parsing fails.
@@ -291,7 +295,7 @@ func RunWithLockValue[T any](ctx context.Context, c *CLI, fn func(context.Contex
 		logger = slog.Default()
 	}
 
-	err := lock.RunWithTiming(ctx, dirs.Lock, logger, func(ctx context.Context, _ lock.WriterScope) error {
+	err = lock.RunWithTiming(ctx, dirs.Lock(), logger, func(ctx context.Context, _ lock.WriterScope) error {
 		var fnErr error
 		result, fnErr = fn(ctx)
 		return fnErr
@@ -299,7 +303,7 @@ func RunWithLockValue[T any](ctx context.Context, c *CLI, fn func(context.Contex
 
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
-			return result, fmt.Errorf("timed out waiting for lock %s (--lock-timeout=%v)", dirs.Lock, c.LockTimeout)
+			return result, fmt.Errorf("timed out waiting for lock %s (--lock-timeout=%v)", dirs.Lock(), c.LockTimeout)
 		}
 		return result, err
 	}
@@ -319,13 +323,16 @@ func RunWithLockValueAndScope[T any](ctx context.Context, c *CLI, fn func(contex
 		defer cancel()
 	}
 
-	dirs := c.RuntimeDirs()
+	dirs, err := c.RuntimeDirs()
+	if err != nil {
+		return result, fmt.Errorf("invalid runtime directory: %w", err)
+	}
 	logger, logErr := c.Logger()
 	if logErr != nil {
 		logger = slog.Default()
 	}
 
-	err := lock.RunWithTiming(ctx, dirs.Lock, logger, func(ctx context.Context, scope lock.WriterScope) error {
+	err = lock.RunWithTiming(ctx, dirs.Lock(), logger, func(ctx context.Context, scope lock.WriterScope) error {
 		var fnErr error
 		result, fnErr = fn(ctx, scope)
 		return fnErr
@@ -333,7 +340,7 @@ func RunWithLockValueAndScope[T any](ctx context.Context, c *CLI, fn func(contex
 
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
-			return result, fmt.Errorf("timed out waiting for lock %s (--lock-timeout=%v)", dirs.Lock, c.LockTimeout)
+			return result, fmt.Errorf("timed out waiting for lock %s (--lock-timeout=%v)", dirs.Lock(), c.LockTimeout)
 		}
 		return result, err
 	}

@@ -422,7 +422,7 @@ func TestXDP_PinPathConventions(t *testing.T) {
 	require.NoError(t, err)
 
 	removedPins := fix.Kernel.RemovedPins()
-	bpffsRoot := fix.Dirs.FS
+	bpffsRoot := fix.Dirs.FS()
 
 	revisionDir := dispatcher.DispatcherRevisionDir(bpffsRoot, disp.Type, disp.Nsid, disp.Ifindex, disp.Revision)
 	expectedProgPin := dispatcher.DispatcherProgPath(revisionDir)

@@ -130,10 +130,10 @@ func (s *Server) attachXDP(ctx context.Context, programID uint32, info *pb.XDPAt
 
 // attachTC handles TC attachment via the manager.
 func (s *Server) attachTC(ctx context.Context, programID uint32, info *pb.TCAttachInfo) (*pb.AttachResponse, error) {
-	// Validate direction
-	direction := strings.ToLower(info.Direction)
-	if direction != "ingress" && direction != "egress" {
-		return nil, status.Errorf(codes.InvalidArgument, "direction must be 'ingress' or 'egress', got %q", info.Direction)
+	// Parse direction at the boundary
+	direction, err := bpfman.ParseTCDirection(strings.ToLower(info.Direction))
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid direction %q: must be 'ingress' or 'egress'", info.Direction)
 	}
 
 	// Get interface index from name
@@ -181,10 +181,10 @@ func (s *Server) attachTC(ctx context.Context, programID uint32, info *pb.TCAtta
 
 // attachTCX handles TCX attachment via the manager.
 func (s *Server) attachTCX(ctx context.Context, programID uint32, info *pb.TCXAttachInfo) (*pb.AttachResponse, error) {
-	// Validate direction
-	direction := strings.ToLower(info.Direction)
-	if direction != "ingress" && direction != "egress" {
-		return nil, status.Errorf(codes.InvalidArgument, "direction must be 'ingress' or 'egress', got %q", info.Direction)
+	// Parse direction at the boundary
+	direction, err := bpfman.ParseTCDirection(strings.ToLower(info.Direction))
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid direction %q: must be 'ingress' or 'egress'", info.Direction)
 	}
 
 	// Get interface index from name

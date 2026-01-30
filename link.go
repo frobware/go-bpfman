@@ -1,6 +1,7 @@
 package bpfman
 
 import (
+	"fmt"
 	"math"
 	"time"
 
@@ -173,11 +174,35 @@ type XDPDetails struct {
 func (XDPDetails) linkDetails()   {}
 func (XDPDetails) Kind() LinkKind { return LinkKindXDP }
 
+// TCDirection represents the direction of TC traffic (ingress or egress).
+// This is a closed set - use ParseTCDirection to create from strings.
+type TCDirection string
+
+const (
+	TCDirectionIngress TCDirection = "ingress"
+	TCDirectionEgress  TCDirection = "egress"
+)
+
+// ParseTCDirection parses a string into a TCDirection.
+// Returns an error if the string is not "ingress" or "egress".
+func ParseTCDirection(s string) (TCDirection, error) {
+	switch s {
+	case "ingress":
+		return TCDirectionIngress, nil
+	case "egress":
+		return TCDirectionEgress, nil
+	default:
+		return "", fmt.Errorf("invalid TC direction %q: must be 'ingress' or 'egress'", s)
+	}
+}
+
+func (d TCDirection) String() string { return string(d) }
+
 // TCDetails contains fields specific to TC attachments.
 type TCDetails struct {
-	Interface    string  `json:"interface"`
-	Ifindex      uint32  `json:"ifindex"`
-	Direction    string  `json:"direction"` // "ingress" or "egress"
+	Interface    string      `json:"interface"`
+	Ifindex      uint32      `json:"ifindex"`
+	Direction    TCDirection `json:"direction"`
 	Priority     int32   `json:"priority"`
 	Position     int32   `json:"position"`
 	ProceedOn    []int32 `json:"proceed_on"`
@@ -192,9 +217,9 @@ func (TCDetails) Kind() LinkKind { return LinkKindTC }
 
 // TCXDetails contains fields specific to TCX attachments.
 type TCXDetails struct {
-	Interface string `json:"interface"`
-	Ifindex   uint32 `json:"ifindex"`
-	Direction string `json:"direction"` // "ingress" or "egress"
+	Interface string      `json:"interface"`
+	Ifindex   uint32      `json:"ifindex"`
+	Direction TCDirection `json:"direction"`
 	Priority  int32  `json:"priority"`
 	Netns     string `json:"netns,omitempty"`
 	Nsid      uint64 `json:"nsid,omitempty"`

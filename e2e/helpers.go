@@ -55,7 +55,10 @@ func NewTestEnv(t *testing.T) *TestEnv {
 	testName := sanitizeTestName(t.Name())
 	baseDir := filepath.Join(os.TempDir(), fmt.Sprintf("bpfman-e2e-%d-%s", os.Getpid(), testName))
 
-	dirs := config.NewRuntimeDirs(baseDir)
+	dirs, err := config.NewRuntimeDirs(baseDir)
+	if err != nil {
+		t.Fatalf("invalid runtime directory: %v", err)
+	}
 
 	// Set up logger based on BPFMAN_LOG environment variable.
 	// Examples:
@@ -118,31 +121,31 @@ func (e *TestEnv) cleanup() {
 	}
 
 	// Unmount bpffs if mounted
-	if isMounted(e.Dirs.FS) {
-		if err := unmount(e.Dirs.FS); err != nil {
-			e.T.Logf("warning: failed to unmount bpffs at %s: %v", e.Dirs.FS, err)
+	if isMounted(e.Dirs.FS()) {
+		if err := unmount(e.Dirs.FS()); err != nil {
+			e.T.Logf("warning: failed to unmount bpffs at %s: %v", e.Dirs.FS(), err)
 		}
 	}
 
 	// Remove runtime directories
-	if err := os.RemoveAll(e.Dirs.Base); err != nil {
-		e.T.Logf("warning: failed to remove %s: %v", e.Dirs.Base, err)
+	if err := os.RemoveAll(e.Dirs.Base()); err != nil {
+		e.T.Logf("warning: failed to remove %s: %v", e.Dirs.Base(), err)
 	}
-	if err := os.RemoveAll(e.Dirs.Sock); err != nil {
-		e.T.Logf("warning: failed to remove %s: %v", e.Dirs.Sock, err)
+	if err := os.RemoveAll(e.Dirs.Sock()); err != nil {
+		e.T.Logf("warning: failed to remove %s: %v", e.Dirs.Sock(), err)
 	}
 }
 
 // runWithLock executes a function under the writer lock.
 func (e *TestEnv) runWithLock(ctx context.Context, fn func(context.Context) error) error {
-	return lock.Run(ctx, e.Dirs.Lock, func(ctx context.Context, _ lock.WriterScope) error {
+	return lock.Run(ctx, e.Dirs.Lock(), func(ctx context.Context, _ lock.WriterScope) error {
 		return fn(ctx)
 	})
 }
 
 // runWithLockAndScope executes a function under the writer lock with scope access.
 func (e *TestEnv) runWithLockAndScope(ctx context.Context, fn func(context.Context, lock.WriterScope) error) error {
-	return lock.Run(ctx, e.Dirs.Lock, fn)
+	return lock.Run(ctx, e.Dirs.Lock(), fn)
 }
 
 // LoadImage loads BPF programs from an OCI image.
