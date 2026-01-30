@@ -98,7 +98,8 @@ type ProgramView struct {
 	Kernel *kernel.Program
 
 	// FS fields
-	FSPinPath string // from bpffs scan (may differ from store)
+	FSPinPath   string // from bpffs scan (may differ from store)
+	MapsPresent bool   // true if map pin directory exists
 
 	Presence Presence
 }
@@ -113,10 +114,10 @@ func (v ProgramView) AsProgram() (bpfman.Program, bool) {
 	return bpfman.Program{
 		Spec: *v.Managed,
 		Status: bpfman.ProgramStatus{
-			Kernel:     v.Kernel,            // may be nil
-			KernelSeen: v.Presence.InKernel, // true if kernel enumeration found it
-			PinPresent: v.Presence.InFS,     // Spec.PinPath exists
-			// MapsPresent: could check Spec.MapPinPath if needed
+			Kernel:      v.Kernel,            // may be nil
+			KernelSeen:  v.Presence.InKernel, // true if kernel enumeration found it
+			PinPresent:  v.Presence.InFS,     // Spec.PinPath exists
+			MapsPresent: v.MapsPresent,       // map pin directory exists
 		},
 	}, true
 }
@@ -380,12 +381,14 @@ func Snapshot(
 		seenProgIDs[kernelID] = true
 		fsPath, inFS := fsProgPins[kernelID]
 		kp, inKernel := kernelProgs[kernelID]
+		_, mapsPresent := fsMapDirs[kernelID]
 
 		progCopy := prog // copy to avoid address-of-loop-variable trap
 		row := ProgramView{
-			KernelID:  kernelID,
-			Managed:   &progCopy,
-			FSPinPath: fsPath,
+			KernelID:    kernelID,
+			Managed:     &progCopy,
+			FSPinPath:   fsPath,
+			MapsPresent: mapsPresent,
 			Presence: Presence{
 				InStore:  true,
 				InKernel: inKernel,
