@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"iter"
+	"time"
 
 	"github.com/frobware/go-bpfman"
 	"github.com/frobware/go-bpfman/bpffs"
@@ -244,6 +245,8 @@ type DispatcherRow struct {
 
 // SnapshotMeta contains metadata about the snapshot.
 type SnapshotMeta struct {
+	// ObservedAt is when the snapshot was taken.
+	ObservedAt time.Time
 	// Errors encountered during snapshot (non-fatal)
 	Errors []error
 }
@@ -298,7 +301,11 @@ func Snapshot(
 	kern KernelLister,
 	scanner *bpffs.Scanner,
 ) (*World, error) {
-	w := &World{}
+	w := &World{
+		Meta: SnapshotMeta{
+			ObservedAt: time.Now(),
+		},
+	}
 
 	// Phase 1: Build indexes from kernel and filesystem
 	kernelProgs := make(map[uint32]kernel.Program)
