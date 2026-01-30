@@ -3,10 +3,8 @@ package bpfman
 import "errors"
 
 // AttachOpts contains optional parameters for attach operations.
+// Currently empty; link pin paths are always computed from conventions.
 type AttachOpts struct {
-	// LinkPinPath overrides the auto-generated link pin path.
-	// If empty, a path is generated based on program ID and attach target.
-	LinkPinPath string
 }
 
 // TracepointAttachSpec specifies how to attach a tracepoint.
@@ -205,13 +203,13 @@ func NewTCAttachSpec(programID uint32, ifname string, ifindex int, direction TCD
 	return TCAttachSpec{programID: programID, ifname: ifname, ifindex: ifindex, direction: direction}, nil
 }
 
-func (s TCAttachSpec) ProgramID() uint32     { return s.programID }
-func (s TCAttachSpec) Ifname() string        { return s.ifname }
-func (s TCAttachSpec) Ifindex() int          { return s.ifindex }
+func (s TCAttachSpec) ProgramID() uint32      { return s.programID }
+func (s TCAttachSpec) Ifname() string         { return s.ifname }
+func (s TCAttachSpec) Ifindex() int           { return s.ifindex }
 func (s TCAttachSpec) Direction() TCDirection { return s.direction }
-func (s TCAttachSpec) Priority() int      { return s.priority }
-func (s TCAttachSpec) ProceedOn() []int32 { return s.proceedOn }
-func (s TCAttachSpec) Netns() string      { return s.netns }
+func (s TCAttachSpec) Priority() int          { return s.priority }
+func (s TCAttachSpec) ProceedOn() []int32     { return s.proceedOn }
+func (s TCAttachSpec) Netns() string          { return s.netns }
 
 // WithPriority returns a new TCAttachSpec with the priority set.
 func (s TCAttachSpec) WithPriority(p int) TCAttachSpec {
@@ -260,12 +258,12 @@ func NewTCXAttachSpec(programID uint32, ifname string, ifindex int, direction TC
 	return TCXAttachSpec{programID: programID, ifname: ifname, ifindex: ifindex, direction: direction}, nil
 }
 
-func (s TCXAttachSpec) ProgramID() uint32     { return s.programID }
-func (s TCXAttachSpec) Ifname() string        { return s.ifname }
-func (s TCXAttachSpec) Ifindex() int          { return s.ifindex }
+func (s TCXAttachSpec) ProgramID() uint32      { return s.programID }
+func (s TCXAttachSpec) Ifname() string         { return s.ifname }
+func (s TCXAttachSpec) Ifindex() int           { return s.ifindex }
 func (s TCXAttachSpec) Direction() TCDirection { return s.direction }
-func (s TCXAttachSpec) Priority() int     { return s.priority }
-func (s TCXAttachSpec) Netns() string     { return s.netns }
+func (s TCXAttachSpec) Priority() int          { return s.priority }
+func (s TCXAttachSpec) Netns() string          { return s.netns }
 
 // WithPriority returns a new TCXAttachSpec with the priority set.
 func (s TCXAttachSpec) WithPriority(p int) TCXAttachSpec {

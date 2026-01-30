@@ -17,7 +17,6 @@ func (m *Manager) AttachTracepoint(ctx context.Context, spec bpfman.TracepointAt
 	programKernelID := spec.ProgramID()
 	group := spec.Group()
 	name := spec.Name()
-	linkPinPath := opts.LinkPinPath
 
 	// FETCH: Verify program exists in store
 	_, err := m.store.Get(ctx, programKernelID)
@@ -28,12 +27,10 @@ func (m *Manager) AttachTracepoint(ctx context.Context, spec bpfman.TracepointAt
 	// COMPUTE: Construct paths from convention (kernel ID + bpffs root)
 	progPinPath := m.dirs.ProgPinPath(programKernelID)
 
-	// COMPUTE: Auto-generate link pin path if not provided
-	if linkPinPath == "" {
-		linkName := fmt.Sprintf("%s_%s", group, name)
-		linksDir := m.dirs.LinkPinDir(programKernelID)
-		linkPinPath = filepath.Join(linksDir, linkName)
-	}
+	// COMPUTE: Calculate link pin path from conventions
+	linkName := fmt.Sprintf("%s_%s", group, name)
+	linksDir := m.dirs.LinkPinDir(programKernelID)
+	linkPinPath := filepath.Join(linksDir, linkName)
 
 	// KERNEL I/O: Attach to the kernel
 	link, err := m.kernel.AttachTracepoint(ctx, progPinPath, group, name, linkPinPath)
@@ -76,7 +73,6 @@ func (m *Manager) AttachKprobe(ctx context.Context, spec bpfman.KprobeAttachSpec
 	programKernelID := spec.ProgramID()
 	fnName := spec.FnName()
 	offset := spec.Offset()
-	linkPinPath := opts.LinkPinPath
 
 	// FETCH: Get program to determine if it's a kretprobe
 	prog, err := m.store.Get(ctx, programKernelID)
@@ -90,15 +86,13 @@ func (m *Manager) AttachKprobe(ctx context.Context, spec bpfman.KprobeAttachSpec
 	// COMPUTE: Construct paths from convention (kernel ID + bpffs root)
 	progPinPath := m.dirs.ProgPinPath(programKernelID)
 
-	// COMPUTE: Auto-generate link pin path if not provided
-	if linkPinPath == "" {
-		linkName := fnName
-		if retprobe {
-			linkName = "ret_" + linkName
-		}
-		linksDir := m.dirs.LinkPinDir(programKernelID)
-		linkPinPath = filepath.Join(linksDir, linkName)
+	// COMPUTE: Calculate link pin path from conventions
+	linkName := fnName
+	if retprobe {
+		linkName = "ret_" + linkName
 	}
+	linksDir := m.dirs.LinkPinDir(programKernelID)
+	linkPinPath := filepath.Join(linksDir, linkName)
 
 	// KERNEL I/O: Attach to the kernel
 	link, err := m.kernel.AttachKprobe(ctx, progPinPath, fnName, offset, retprobe, linkPinPath)
@@ -152,7 +146,6 @@ func (m *Manager) AttachUprobe(ctx context.Context, scope lock.WriterScope, spec
 	fnName := spec.FnName()
 	offset := spec.Offset()
 	containerPid := spec.ContainerPid()
-	linkPinPath := opts.LinkPinPath
 
 	// FETCH: Get program to determine if it's a uretprobe
 	prog, err := m.store.Get(ctx, programKernelID)
@@ -166,15 +159,13 @@ func (m *Manager) AttachUprobe(ctx context.Context, scope lock.WriterScope, spec
 	// COMPUTE: Construct paths from convention (kernel ID + bpffs root)
 	progPinPath := m.dirs.ProgPinPath(programKernelID)
 
-	// COMPUTE: Auto-generate link pin path if not provided
-	if linkPinPath == "" {
-		linkName := fnName
-		if retprobe {
-			linkName = "ret_" + linkName
-		}
-		linksDir := m.dirs.LinkPinDir(programKernelID)
-		linkPinPath = filepath.Join(linksDir, linkName)
+	// COMPUTE: Calculate link pin path from conventions
+	linkName := fnName
+	if retprobe {
+		linkName = "ret_" + linkName
 	}
+	linksDir := m.dirs.LinkPinDir(programKernelID)
+	linkPinPath := filepath.Join(linksDir, linkName)
 
 	// KERNEL I/O: Choose local vs container method based on spec
 	var link bpfman.Link
@@ -232,7 +223,6 @@ func (m *Manager) AttachUprobe(ctx context.Context, scope lock.WriterScope, spec
 // Pattern: FETCH -> KERNEL I/O -> COMPUTE -> EXECUTE
 func (m *Manager) AttachFentry(ctx context.Context, spec bpfman.FentryAttachSpec, opts bpfman.AttachOpts) (bpfman.Link, error) {
 	programKernelID := spec.ProgramID()
-	linkPinPath := opts.LinkPinPath
 
 	// FETCH: Get program metadata to access AttachFunc
 	prog, err := m.store.Get(ctx, programKernelID)
@@ -248,12 +238,10 @@ func (m *Manager) AttachFentry(ctx context.Context, spec bpfman.FentryAttachSpec
 	// COMPUTE: Construct paths from convention (kernel ID + bpffs root)
 	progPinPath := m.dirs.ProgPinPath(programKernelID)
 
-	// COMPUTE: Auto-generate link pin path if not provided
-	if linkPinPath == "" {
-		linkName := "fentry_" + fnName
-		linksDir := m.dirs.LinkPinDir(programKernelID)
-		linkPinPath = filepath.Join(linksDir, linkName)
-	}
+	// COMPUTE: Calculate link pin path from conventions
+	linkName := "fentry_" + fnName
+	linksDir := m.dirs.LinkPinDir(programKernelID)
+	linkPinPath := filepath.Join(linksDir, linkName)
 
 	// KERNEL I/O: Attach to the kernel
 	link, err := m.kernel.AttachFentry(ctx, progPinPath, fnName, linkPinPath)
@@ -294,7 +282,6 @@ func (m *Manager) AttachFentry(ctx context.Context, spec bpfman.FentryAttachSpec
 // Pattern: FETCH -> KERNEL I/O -> COMPUTE -> EXECUTE
 func (m *Manager) AttachFexit(ctx context.Context, spec bpfman.FexitAttachSpec, opts bpfman.AttachOpts) (bpfman.Link, error) {
 	programKernelID := spec.ProgramID()
-	linkPinPath := opts.LinkPinPath
 
 	// FETCH: Get program metadata to access AttachFunc
 	prog, err := m.store.Get(ctx, programKernelID)
@@ -310,12 +297,10 @@ func (m *Manager) AttachFexit(ctx context.Context, spec bpfman.FexitAttachSpec, 
 	// COMPUTE: Construct paths from convention (kernel ID + bpffs root)
 	progPinPath := m.dirs.ProgPinPath(programKernelID)
 
-	// COMPUTE: Auto-generate link pin path if not provided
-	if linkPinPath == "" {
-		linkName := "fexit_" + fnName
-		linksDir := m.dirs.LinkPinDir(programKernelID)
-		linkPinPath = filepath.Join(linksDir, linkName)
-	}
+	// COMPUTE: Calculate link pin path from conventions
+	linkName := "fexit_" + fnName
+	linksDir := m.dirs.LinkPinDir(programKernelID)
+	linkPinPath := filepath.Join(linksDir, linkName)
 
 	// KERNEL I/O: Attach to the kernel
 	link, err := m.kernel.AttachFexit(ctx, progPinPath, fnName, linkPinPath)

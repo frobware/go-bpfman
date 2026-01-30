@@ -203,13 +203,13 @@ type TCDetails struct {
 	Interface    string      `json:"interface"`
 	Ifindex      uint32      `json:"ifindex"`
 	Direction    TCDirection `json:"direction"`
-	Priority     int32   `json:"priority"`
-	Position     int32   `json:"position"`
-	ProceedOn    []int32 `json:"proceed_on"`
-	Netns        string  `json:"netns,omitempty"`
-	Nsid         uint64  `json:"nsid"`
-	DispatcherID uint32  `json:"dispatcher_id"`
-	Revision     uint32  `json:"revision"`
+	Priority     int32       `json:"priority"`
+	Position     int32       `json:"position"`
+	ProceedOn    []int32     `json:"proceed_on"`
+	Netns        string      `json:"netns,omitempty"`
+	Nsid         uint64      `json:"nsid"`
+	DispatcherID uint32      `json:"dispatcher_id"`
+	Revision     uint32      `json:"revision"`
 }
 
 func (TCDetails) linkDetails()   {}
@@ -220,9 +220,9 @@ type TCXDetails struct {
 	Interface string      `json:"interface"`
 	Ifindex   uint32      `json:"ifindex"`
 	Direction TCDirection `json:"direction"`
-	Priority  int32  `json:"priority"`
-	Netns     string `json:"netns,omitempty"`
-	Nsid      uint64 `json:"nsid,omitempty"`
+	Priority  int32       `json:"priority"`
+	Netns     string      `json:"netns,omitempty"`
+	Nsid      uint64      `json:"nsid,omitempty"`
 }
 
 func (TCXDetails) linkDetails()   {}

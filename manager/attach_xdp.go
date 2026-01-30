@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/frobware/go-bpfman"
 	"github.com/frobware/go-bpfman/action"
@@ -38,7 +37,6 @@ func (m *Manager) AttachXDP(ctx context.Context, spec bpfman.XDPAttachSpec, opts
 	ifindex := spec.Ifindex()
 	ifname := spec.Ifname()
 	netnsPath := spec.Netns()
-	linkPinPath := opts.LinkPinPath
 
 	// FETCH: Get program metadata to access ObjectPath and ProgramName
 	prog, err := m.store.Get(ctx, programKernelID)
@@ -71,16 +69,13 @@ func (m *Manager) AttachXDP(ctx context.Context, spec bpfman.XDPAttachSpec, opts
 		"revision", dispState.Revision,
 		"dispatcher_id", dispState.KernelID)
 
-	// COMPUTE: Calculate extension link path
+	// COMPUTE: Calculate extension link path from conventions
 	revisionDir := dispatcher.DispatcherRevisionDir(m.dirs.FS(), dispatcher.DispatcherTypeXDP, nsid, uint32(ifindex), dispState.Revision)
 	position, err := m.store.CountDispatcherLinks(ctx, dispState.KernelID)
 	if err != nil {
 		return bpfman.Link{}, fmt.Errorf("count dispatcher links: %w", err)
 	}
-	extensionLinkPath := dispatcher.ExtensionLinkPath(revisionDir, position)
-	if linkPinPath == "" {
-		linkPinPath = extensionLinkPath
-	}
+	linkPinPath := dispatcher.ExtensionLinkPath(revisionDir, position)
 
 	// COMPUTE: Use the program's MapPinPath which points to the correct maps
 	// directory (either the program's own or the map owner's if sharing).
@@ -121,10 +116,7 @@ func (m *Manager) AttachXDP(ctx context.Context, spec bpfman.XDPAttachSpec, opts
 		if err != nil {
 			return bpfman.Link{}, fmt.Errorf("count dispatcher links after recreate: %w", err)
 		}
-		extensionLinkPath = dispatcher.ExtensionLinkPath(revisionDir, position)
-		if linkPinPath == "" || strings.Contains(linkPinPath, "dispatcher_") {
-			linkPinPath = extensionLinkPath
-		}
+		linkPinPath = dispatcher.ExtensionLinkPath(revisionDir, position)
 		progPinPath = dispatcher.DispatcherProgPath(revisionDir)
 		link, err = m.kernel.AttachXDPExtension(
 			ctx,
