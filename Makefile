@@ -89,7 +89,18 @@ COVERAGE_HTML ?= $(COVERAGE_DIR)/coverage.html
 
 coverage:
 	@mkdir -p $(COVERAGE_DIR)
-	@go test -coverprofile=$(COVERAGE_PROFILE) ./server/... ./client/... ./compute/... ./bpffs/... ./config/... ./dispatcher/... 2>&1 | grep -v "no such tool"
+	@go test -coverprofile=$(COVERAGE_PROFILE) \
+		./bpffs/... \
+		./cmd/bpfman/cli/... \
+		./compute/... \
+		./config/... \
+		./dispatcher/... \
+		./inspect/... \
+		./interpreter/store/sqlite/... \
+		./logging/... \
+		./manager/... \
+		./server/... \
+		2>&1 | grep -v "no such tool"
 	@echo "Coverage profile written to $(COVERAGE_PROFILE)"
 	@go tool cover -func=$(COVERAGE_PROFILE) 2>/dev/null | grep total
 
