@@ -383,10 +383,9 @@ func Snapshot(
 		kp, inKernel := kernelProgs[kernelID]
 		_, mapsPresent := fsMapDirs[kernelID]
 
-		progCopy := prog // copy to avoid address-of-loop-variable trap
 		row := ProgramView{
 			KernelID:    kernelID,
-			Managed:     &progCopy,
+			Managed:     &prog,
 			FSPinPath:   fsPath,
 			MapsPresent: mapsPresent,
 			Presence: Presence{
@@ -396,8 +395,7 @@ func Snapshot(
 			},
 		}
 		if inKernel {
-			kpCopy := kp
-			row.Kernel = &kpCopy
+			row.Kernel = &kp
 		}
 		w.Programs = append(w.Programs, row)
 	}
@@ -408,10 +406,9 @@ func Snapshot(
 			continue
 		}
 		fsPath, inFS := fsProgPins[kernelID]
-		kpCopy := kp
 		row := ProgramView{
 			KernelID:  kernelID,
-			Kernel:    &kpCopy,
+			Kernel:    &kp,
 			FSPinPath: fsPath,
 			Presence: Presence{
 				InStore:  false,
@@ -457,8 +454,6 @@ func Snapshot(
 
 	seenKernelLinkIDs := make(map[uint32]bool)
 	for _, link := range storeLinks {
-		linkCopy := link // copy to avoid address-of-loop-variable trap
-
 		// Track kernel link IDs we've seen from store.
 		// For non-synthetic links, ID is the kernel link ID.
 		if !link.IsSynthetic() {
@@ -469,13 +464,12 @@ func Snapshot(
 		var kernelLink *kernel.Link
 		if !link.IsSynthetic() {
 			if kl, ok := kernelLinkMap[uint32(link.ID)]; ok {
-				klCopy := kl
-				kernelLink = &klCopy
+				kernelLink = &kl
 			}
 		}
 
 		row := LinkRow{
-			Managed: &linkCopy,
+			Managed: &link,
 			Kernel:  kernelLink,
 			Presence: Presence{
 				InStore:  true,
@@ -491,9 +485,8 @@ func Snapshot(
 		if seenKernelLinkIDs[kernelLinkID] {
 			continue
 		}
-		klCopy := kl
 		row := LinkRow{
-			Kernel: &klCopy,
+			Kernel: &kl,
 			Presence: Presence{
 				InStore:  false,
 				InKernel: true,
