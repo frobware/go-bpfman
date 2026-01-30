@@ -645,7 +645,6 @@ func TestFentry_LoadAttachDetachUnload(t *testing.T) {
 	// When: load from file via client
 	spec, err := bpfman.NewAttachLoadSpec(bytecodeFile, "test_fentry", bpfman.ProgramTypeFentry, "do_unlinkat")
 	require.NoError(t, err)
-	spec = spec.WithPinPath(env.Dirs.FS) // Set bpffs root for pinning
 	prog, err := env.Load(ctx, spec, manager.LoadOpts{})
 	require.NoError(t, err)
 
@@ -755,7 +754,6 @@ func TestFexit_LoadAttachDetachUnload(t *testing.T) {
 	// When: load from file via client
 	spec, err := bpfman.NewAttachLoadSpec(bytecodeFile, "test_fexit", bpfman.ProgramTypeFexit, "do_unlinkat")
 	require.NoError(t, err)
-	spec = spec.WithPinPath(env.Dirs.FS) // Set bpffs root for pinning
 	prog, err := env.Load(ctx, spec, manager.LoadOpts{})
 	require.NoError(t, err)
 

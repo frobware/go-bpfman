@@ -20,6 +20,14 @@ const (
 	defaultScanMaxLineLen = 1024 * 1024
 )
 
+// Root represents a bpffs mount point path.
+// This is a newtype to prevent accidentally passing arbitrary strings
+// where a bpffs root is expected.
+type Root string
+
+// String returns the path as a string.
+func (r Root) String() string { return string(r) }
+
 // IsMounted reports whether a bpffs is mounted at mountPoint by
 // parsing mountInfoPath (e.g. /proc/self/mountinfo).
 //

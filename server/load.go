@@ -139,7 +139,6 @@ func (s *Server) Load(ctx context.Context, req *pb.LoadRequest) (*pb.LoadRespons
 		}
 
 		// Apply optional fields
-		spec = spec.WithPinPath(s.dirs.FS) // bpffs root - actual paths computed from kernel ID
 		if req.GlobalData != nil {
 			spec = spec.WithGlobalData(req.GlobalData)
 		}

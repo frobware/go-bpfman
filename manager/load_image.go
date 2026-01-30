@@ -76,9 +76,6 @@ func (m *Manager) LoadImage(ctx context.Context, puller interpreter.ImagePuller,
 			spec = spec.WithGlobalData(globalData)
 		}
 
-		// Set pin path to bpffs root
-		spec = spec.WithPinPath(m.dirs.FS)
-
 		// Set map owner ID if specified
 		if prog.MapOwnerID != 0 {
 			spec = spec.WithMapOwnerID(prog.MapOwnerID)

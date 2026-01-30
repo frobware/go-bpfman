@@ -4,6 +4,7 @@ package action
 
 import (
 	"github.com/frobware/go-bpfman"
+	"github.com/frobware/go-bpfman/bpffs"
 	"github.com/frobware/go-bpfman/dispatcher"
 )
 
@@ -52,7 +53,8 @@ func (DeleteLink) isAction() {}
 
 // LoadProgram loads a BPF program into the kernel.
 type LoadProgram struct {
-	Spec bpfman.LoadSpec
+	Spec      bpfman.LoadSpec
+	BpffsRoot bpffs.Root // Required: bpffs mount point for pinning
 }
 
 func (LoadProgram) isAction() {}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/frobware/go-bpfman"
 	"github.com/frobware/go-bpfman/action"
+	"github.com/frobware/go-bpfman/bpffs"
 	"github.com/frobware/go-bpfman/interpreter"
 )
 
@@ -22,10 +23,9 @@ type LoadOpts struct {
 //
 // See package documentation for details on the atomic load model.
 //
-// spec.PinPath is the bpffs root (e.g., /run/bpfman/fs/). Actual pin paths
-// are computed from the kernel ID following the upstream convention:
-//   - Program: <root>/prog_<kernel_id>
-//   - Maps: <root>/maps/<kernel_id>/<map_name>
+// Pin paths are computed from the kernel ID following the upstream convention:
+//   - Program: <bpffs>/prog_<kernel_id>
+//   - Maps: <bpffs>/maps/<kernel_id>/<map_name>
 //
 // On failure, previously completed steps are rolled back:
 //   - If kernel load fails: nothing to clean up
@@ -34,8 +34,8 @@ func (m *Manager) Load(ctx context.Context, spec bpfman.LoadSpec, opts LoadOpts)
 	now := time.Now()
 
 	// Phase 1: Load into kernel and pin to bpffs
-	// Pin paths are computed from kernel ID by the kernel layer
-	loaded, err := m.kernel.Load(ctx, spec)
+	// The Manager owns the bpffs root path - callers don't need to know it
+	loaded, err := m.kernel.Load(ctx, spec, bpffs.Root(m.dirs.FS))
 	if err != nil {
 		return bpfman.ManagedProgram{}, fmt.Errorf("load program %s: %w", spec.ProgramName(), err)
 	}

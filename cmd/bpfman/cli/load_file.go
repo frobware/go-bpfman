@@ -40,8 +40,6 @@ func (c *LoadFileCmd) Run(cli *CLI, ctx context.Context) error {
 	}
 	defer runtime.Close()
 
-	dirs := cli.RuntimeDirs()
-
 	results, err := RunWithLockValue(ctx, cli, func(ctx context.Context) ([]bpfman.ManagedProgram, error) {
 		// Convert global data
 		var globalData map[string][]byte
@@ -74,8 +72,6 @@ func (c *LoadFileCmd) Run(cli *CLI, ctx context.Context) error {
 			}
 
 			// Apply optional fields
-			// PinPath is the bpffs root; actual paths are computed from kernel ID
-			spec = spec.WithPinPath(dirs.FS)
 			if globalData != nil {
 				spec = spec.WithGlobalData(globalData)
 			}

@@ -10,6 +10,7 @@ import (
 	"github.com/cilium/ebpf"
 
 	"github.com/frobware/go-bpfman"
+	"github.com/frobware/go-bpfman/bpffs"
 )
 
 // Load loads a BPF program into the kernel.
@@ -17,18 +18,18 @@ import (
 // Load loads a BPF program and pins it using kernel ID-based paths.
 //
 // Pin paths follow the upstream bpfman convention:
-//   - Program: <root>/prog_<kernel_id>
-//   - Maps: <root>/maps/<kernel_id>/<map_name>
+//   - Program: <bpffsRoot>/prog_<kernel_id>
+//   - Maps: <bpffsRoot>/maps/<kernel_id>/<map_name>
 //
-// spec.PinPath is the bpffs root (e.g., /run/bpfman/fs/).
+// bpffsRoot is the bpffs mount point (e.g., /run/bpfman/fs/).
 // On failure, all successfully pinned objects are cleaned up.
 //
 // Map sharing: If spec.MapOwnerID() is non-zero, this program will share maps
 // with the owner program instead of creating its own. The owner's maps directory
-// (<root>/maps/<owner_id>/) must exist and contain the required pinned maps.
+// (<bpffsRoot>/maps/<owner_id>/) must exist and contain the required pinned maps.
 // This is used when loading multiple programs from the same image (e.g., via
 // the bpfman-operator) where all programs should share the same map instances.
-func (k *kernelAdapter) Load(ctx context.Context, spec bpfman.LoadSpec) (bpfman.ManagedProgram, error) {
+func (k *kernelAdapter) Load(ctx context.Context, spec bpfman.LoadSpec, bpffsRoot bpffs.Root) (bpfman.ManagedProgram, error) {
 	// Load the collection from the object file
 	collSpec, err := ebpf.LoadCollectionSpec(spec.ObjectPath())
 	if err != nil {
@@ -75,7 +76,7 @@ func (k *kernelAdapter) Load(ctx context.Context, spec bpfman.LoadSpec) (bpfman.
 	mapOwnerID := spec.MapOwnerID()
 
 	if mapOwnerID != 0 {
-		ownerMapsDir = filepath.Join(spec.PinPath(), "maps", fmt.Sprintf("%d", mapOwnerID))
+		ownerMapsDir = filepath.Join(string(bpffsRoot), "maps", fmt.Sprintf("%d", mapOwnerID))
 		mapReplacements = make(map[string]*ebpf.Map)
 
 		k.logger.Debug("loading shared maps from owner program",
@@ -148,7 +149,7 @@ func (k *kernelAdapter) Load(ctx context.Context, spec bpfman.LoadSpec) (bpfman.
 	}
 
 	// Pin program to <root>/prog_<kernel_id>
-	progPinPath := filepath.Join(spec.PinPath(), fmt.Sprintf("prog_%d", kernelID))
+	progPinPath := filepath.Join(string(bpffsRoot), fmt.Sprintf("prog_%d", kernelID))
 	if err := prog.Pin(progPinPath); err != nil {
 		return bpfman.ManagedProgram{}, fmt.Errorf("failed to pin program: %w", err)
 	}
@@ -167,7 +168,7 @@ func (k *kernelAdapter) Load(ctx context.Context, spec bpfman.LoadSpec) (bpfman.
 			"maps_dir", mapsDir)
 	} else {
 		// Create our own maps directory: <root>/maps/<kernel_id>/
-		mapsDir = filepath.Join(spec.PinPath(), "maps", fmt.Sprintf("%d", kernelID))
+		mapsDir = filepath.Join(string(bpffsRoot), "maps", fmt.Sprintf("%d", kernelID))
 		if err := os.MkdirAll(mapsDir, 0755); err != nil {
 			cleanup()
 			return bpfman.ManagedProgram{}, fmt.Errorf("failed to create maps directory: %w", err)

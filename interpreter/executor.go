@@ -43,7 +43,7 @@ func (e *executor) Execute(ctx context.Context, a action.Action) error {
 		return e.store.DeleteLink(ctx, a.LinkID)
 
 	case action.LoadProgram:
-		_, err := e.kernel.Load(ctx, a.Spec)
+		_, err := e.kernel.Load(ctx, a.Spec, a.BpffsRoot)
 		return err
 
 	case action.UnloadProgram:

@@ -10,11 +10,14 @@ import (
 // LoadSpec is immutable after construction and can only be created via
 // the NewLoadSpec or NewAttachLoadSpec constructors, which enforce that
 // all required fields are present and valid.
+//
+// LoadSpec represents user intent (what to load), not runtime wiring
+// (where to pin). The bpffs root is provided separately by the Manager
+// when calling the kernel layer.
 type LoadSpec struct {
 	objectPath  string
 	programName string
 	programType ProgramType
-	pinPath     string
 	globalData  map[string][]byte
 	imageSource *ImageSource
 	attachFunc  string
@@ -105,17 +108,10 @@ func NewAttachLoadSpec(objectPath, programName string, programType ProgramType, 
 func (s LoadSpec) ObjectPath() string            { return s.objectPath }
 func (s LoadSpec) ProgramName() string           { return s.programName }
 func (s LoadSpec) ProgramType() ProgramType      { return s.programType }
-func (s LoadSpec) PinPath() string               { return s.pinPath }
 func (s LoadSpec) GlobalData() map[string][]byte { return s.globalData }
 func (s LoadSpec) ImageSource() *ImageSource     { return s.imageSource }
 func (s LoadSpec) AttachFunc() string            { return s.attachFunc }
 func (s LoadSpec) MapOwnerID() uint32            { return s.mapOwnerID }
-
-// WithPinPath returns a new LoadSpec with the pin path set.
-func (s LoadSpec) WithPinPath(pinPath string) LoadSpec {
-	s.pinPath = pinPath
-	return s
-}
 
 // WithGlobalData returns a new LoadSpec with global data set.
 func (s LoadSpec) WithGlobalData(data map[string][]byte) LoadSpec {
@@ -141,7 +137,6 @@ type loadSpecJSON struct {
 	ObjectPath  string            `json:"object_path"`
 	ProgramName string            `json:"program_name"`
 	ProgramType ProgramType       `json:"program_type"`
-	PinPath     string            `json:"pin_path,omitempty"`
 	GlobalData  map[string][]byte `json:"global_data,omitempty"`
 	ImageSource *ImageSource      `json:"image_source,omitempty"`
 	AttachFunc  string            `json:"attach_func,omitempty"`
@@ -154,7 +149,6 @@ func (s LoadSpec) MarshalJSON() ([]byte, error) {
 		ObjectPath:  s.objectPath,
 		ProgramName: s.programName,
 		ProgramType: s.programType,
-		PinPath:     s.pinPath,
 		GlobalData:  s.globalData,
 		ImageSource: s.imageSource,
 		AttachFunc:  s.attachFunc,
@@ -173,7 +167,6 @@ func (s *LoadSpec) UnmarshalJSON(data []byte) error {
 	s.objectPath = js.ObjectPath
 	s.programName = js.ProgramName
 	s.programType = js.ProgramType
-	s.pinPath = js.PinPath
 	s.globalData = js.GlobalData
 	s.imageSource = js.ImageSource
 	s.attachFunc = js.AttachFunc
