@@ -168,7 +168,7 @@ func (m *Manager) FindLoadedProgramByMetadata(ctx context.Context, key, value st
 		if !row.Presence.InStore || !row.Presence.InKernel {
 			continue
 		}
-		if row.Managed.UserMetadata[key] == value {
+		if row.Managed.Meta.Metadata[key] == value {
 			matches = append(matches, row)
 		}
 	}
@@ -184,7 +184,7 @@ func (m *Manager) FindLoadedProgramByMetadata(ctx context.Context, key, value st
 		// reference it via MapOwnerID.
 		var owners []inspect.ProgramView
 		for _, row := range matches {
-			if row.Managed.MapOwnerID == nil {
+			if row.Managed.Handles.MapOwnerID == nil {
 				owners = append(owners, row)
 			}
 		}
@@ -205,7 +205,7 @@ func (m *Manager) FindLoadedProgramByMetadata(ctx context.Context, key, value st
 				"value", value,
 				"total_matches", len(matches),
 				"owner_kernel_id", owners[0].KernelID,
-				"owner_name", owners[0].Managed.Name,
+				"owner_name", owners[0].Managed.Meta.Name,
 			)
 			return *owners[0].Managed, owners[0].KernelID, nil
 		default:

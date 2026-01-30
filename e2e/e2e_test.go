@@ -80,8 +80,8 @@ func TestTracepoint_LoadAttachDetachUnload(t *testing.T) {
 	// Verify bpfman-managed metadata has full name and pin path
 	require.NotNil(t, gotProg.Bpfman)
 	require.NotNil(t, gotProg.Bpfman.Program)
-	require.Equal(t, "tracepoint_kill_recorder", gotProg.Bpfman.Program.Name)
-	require.NotEmpty(t, gotProg.Bpfman.Program.PinPath, "program should have pin path")
+	require.Equal(t, "tracepoint_kill_recorder", gotProg.Bpfman.Program.Meta.Name)
+	require.NotEmpty(t, gotProg.Bpfman.Program.Handles.PinPath, "program should have pin path")
 	// Kernel-reported name is truncated (16 chars max), verify it's a prefix of the full name
 	kernelName := prog.Kernel.Name
 	require.True(t, strings.HasPrefix("tracepoint_kill_recorder", kernelName),
@@ -99,8 +99,8 @@ func TestTracepoint_LoadAttachDetachUnload(t *testing.T) {
 	require.False(t, listedProgs[0].KernelProgram.LoadedAt.IsZero())
 	// Metadata has full name
 	require.NotNil(t, listedProgs[0].Metadata)
-	require.Equal(t, "tracepoint_kill_recorder", listedProgs[0].Metadata.Name)
-	require.NotEmpty(t, listedProgs[0].Metadata.PinPath)
+	require.Equal(t, "tracepoint_kill_recorder", listedProgs[0].Metadata.Meta.Name)
+	require.NotEmpty(t, listedProgs[0].Metadata.Handles.PinPath)
 
 	// When: attach via client
 	tpSpec, err := bpfman.NewTracepointAttachSpec(prog.Kernel.ID, "syscalls", "sys_enter_kill")
@@ -201,8 +201,8 @@ func TestKprobe_LoadAttachDetachUnload(t *testing.T) {
 	require.False(t, gotProg.Kernel.Program.LoadedAt.IsZero(), "kernel should track LoadedAt")
 	require.NotNil(t, gotProg.Bpfman)
 	require.NotNil(t, gotProg.Bpfman.Program)
-	require.Equal(t, "kprobe_counter", gotProg.Bpfman.Program.Name)
-	require.NotEmpty(t, gotProg.Bpfman.Program.PinPath, "program should have pin path")
+	require.Equal(t, "kprobe_counter", gotProg.Bpfman.Program.Meta.Name)
+	require.NotEmpty(t, gotProg.Bpfman.Program.Handles.PinPath, "program should have pin path")
 
 	// Round-trip: List should include our program
 	listedProgs, err := env.Client.List(ctx)
@@ -213,8 +213,8 @@ func TestKprobe_LoadAttachDetachUnload(t *testing.T) {
 	require.NotEmpty(t, listedProgs[0].KernelProgram.Tag)
 	require.False(t, listedProgs[0].KernelProgram.LoadedAt.IsZero())
 	require.NotNil(t, listedProgs[0].Metadata)
-	require.Equal(t, "kprobe_counter", listedProgs[0].Metadata.Name)
-	require.NotEmpty(t, listedProgs[0].Metadata.PinPath)
+	require.Equal(t, "kprobe_counter", listedProgs[0].Metadata.Meta.Name)
+	require.NotEmpty(t, listedProgs[0].Metadata.Handles.PinPath)
 
 	// When: attach via client
 	kpSpec, err := bpfman.NewKprobeAttachSpec(prog.Kernel.ID, "try_to_wake_up")
@@ -314,8 +314,8 @@ func TestKretprobe_LoadAttachDetachUnload(t *testing.T) {
 	require.False(t, gotProg.Kernel.Program.LoadedAt.IsZero(), "kernel should track LoadedAt")
 	require.NotNil(t, gotProg.Bpfman)
 	require.NotNil(t, gotProg.Bpfman.Program)
-	require.Equal(t, "kprobe_counter", gotProg.Bpfman.Program.Name)
-	require.NotEmpty(t, gotProg.Bpfman.Program.PinPath, "program should have pin path")
+	require.Equal(t, "kprobe_counter", gotProg.Bpfman.Program.Meta.Name)
+	require.NotEmpty(t, gotProg.Bpfman.Program.Handles.PinPath, "program should have pin path")
 
 	// Round-trip: List should include our program
 	listedProgs, err := env.Client.List(ctx)
@@ -326,8 +326,8 @@ func TestKretprobe_LoadAttachDetachUnload(t *testing.T) {
 	require.NotEmpty(t, listedProgs[0].KernelProgram.Tag)
 	require.False(t, listedProgs[0].KernelProgram.LoadedAt.IsZero())
 	require.NotNil(t, listedProgs[0].Metadata)
-	require.Equal(t, "kprobe_counter", listedProgs[0].Metadata.Name)
-	require.NotEmpty(t, listedProgs[0].Metadata.PinPath)
+	require.Equal(t, "kprobe_counter", listedProgs[0].Metadata.Meta.Name)
+	require.NotEmpty(t, listedProgs[0].Metadata.Handles.PinPath)
 
 	// When: attach via client (kretprobe uses AttachKprobe API)
 	kpSpec, err := bpfman.NewKprobeAttachSpec(prog.Kernel.ID, "try_to_wake_up")
@@ -431,8 +431,8 @@ func TestUprobe_LoadAttachDetachUnload(t *testing.T) {
 	require.False(t, gotProg.Kernel.Program.LoadedAt.IsZero(), "kernel should track LoadedAt")
 	require.NotNil(t, gotProg.Bpfman)
 	require.NotNil(t, gotProg.Bpfman.Program)
-	require.Equal(t, "uprobe_counter", gotProg.Bpfman.Program.Name)
-	require.NotEmpty(t, gotProg.Bpfman.Program.PinPath, "program should have pin path")
+	require.Equal(t, "uprobe_counter", gotProg.Bpfman.Program.Meta.Name)
+	require.NotEmpty(t, gotProg.Bpfman.Program.Handles.PinPath, "program should have pin path")
 
 	// Round-trip: List should include our program
 	listedProgs, err := env.Client.List(ctx)
@@ -443,8 +443,8 @@ func TestUprobe_LoadAttachDetachUnload(t *testing.T) {
 	require.NotEmpty(t, listedProgs[0].KernelProgram.Tag)
 	require.False(t, listedProgs[0].KernelProgram.LoadedAt.IsZero())
 	require.NotNil(t, listedProgs[0].Metadata)
-	require.Equal(t, "uprobe_counter", listedProgs[0].Metadata.Name)
-	require.NotEmpty(t, listedProgs[0].Metadata.PinPath)
+	require.Equal(t, "uprobe_counter", listedProgs[0].Metadata.Meta.Name)
+	require.NotEmpty(t, listedProgs[0].Metadata.Handles.PinPath)
 
 	// When: attach via client to malloc in libc
 	upSpec, err := bpfman.NewUprobeAttachSpec(prog.Kernel.ID, target)
@@ -549,8 +549,8 @@ func TestUretprobe_LoadAttachDetachUnload(t *testing.T) {
 	require.False(t, gotProg.Kernel.Program.LoadedAt.IsZero(), "kernel should track LoadedAt")
 	require.NotNil(t, gotProg.Bpfman)
 	require.NotNil(t, gotProg.Bpfman.Program)
-	require.Equal(t, "uprobe_counter", gotProg.Bpfman.Program.Name)
-	require.NotEmpty(t, gotProg.Bpfman.Program.PinPath, "program should have pin path")
+	require.Equal(t, "uprobe_counter", gotProg.Bpfman.Program.Meta.Name)
+	require.NotEmpty(t, gotProg.Bpfman.Program.Handles.PinPath, "program should have pin path")
 
 	// Round-trip: List should include our program
 	listedProgs, err := env.Client.List(ctx)
@@ -561,8 +561,8 @@ func TestUretprobe_LoadAttachDetachUnload(t *testing.T) {
 	require.NotEmpty(t, listedProgs[0].KernelProgram.Tag)
 	require.False(t, listedProgs[0].KernelProgram.LoadedAt.IsZero())
 	require.NotNil(t, listedProgs[0].Metadata)
-	require.Equal(t, "uprobe_counter", listedProgs[0].Metadata.Name)
-	require.NotEmpty(t, listedProgs[0].Metadata.PinPath)
+	require.Equal(t, "uprobe_counter", listedProgs[0].Metadata.Meta.Name)
+	require.NotEmpty(t, listedProgs[0].Metadata.Handles.PinPath)
 
 	// When: attach via client to malloc in libc (uretprobe uses AttachUprobe API)
 	upSpec, err := bpfman.NewUprobeAttachSpec(prog.Kernel.ID, target)
@@ -663,8 +663,8 @@ func TestFentry_LoadAttachDetachUnload(t *testing.T) {
 	require.False(t, gotProg.Kernel.Program.LoadedAt.IsZero(), "kernel should track LoadedAt")
 	require.NotNil(t, gotProg.Bpfman)
 	require.NotNil(t, gotProg.Bpfman.Program)
-	require.Equal(t, "test_fentry", gotProg.Bpfman.Program.Name)
-	require.NotEmpty(t, gotProg.Bpfman.Program.PinPath, "program should have pin path")
+	require.Equal(t, "test_fentry", gotProg.Bpfman.Program.Meta.Name)
+	require.NotEmpty(t, gotProg.Bpfman.Program.Handles.PinPath, "program should have pin path")
 
 	// Round-trip: List should include our program
 	listedProgs, err := env.Client.List(ctx)
@@ -675,8 +675,8 @@ func TestFentry_LoadAttachDetachUnload(t *testing.T) {
 	require.NotEmpty(t, listedProgs[0].KernelProgram.Tag)
 	require.False(t, listedProgs[0].KernelProgram.LoadedAt.IsZero())
 	require.NotNil(t, listedProgs[0].Metadata)
-	require.Equal(t, "test_fentry", listedProgs[0].Metadata.Name)
-	require.NotEmpty(t, listedProgs[0].Metadata.PinPath)
+	require.Equal(t, "test_fentry", listedProgs[0].Metadata.Meta.Name)
+	require.NotEmpty(t, listedProgs[0].Metadata.Handles.PinPath)
 
 	// When: attach via client (fentry doesn't need additional params - target is in program)
 	feSpec, err := bpfman.NewFentryAttachSpec(prog.Kernel.ID)
@@ -771,8 +771,8 @@ func TestFexit_LoadAttachDetachUnload(t *testing.T) {
 	require.False(t, gotProg.Kernel.Program.LoadedAt.IsZero(), "kernel should track LoadedAt")
 	require.NotNil(t, gotProg.Bpfman)
 	require.NotNil(t, gotProg.Bpfman.Program)
-	require.Equal(t, "test_fexit", gotProg.Bpfman.Program.Name)
-	require.NotEmpty(t, gotProg.Bpfman.Program.PinPath, "program should have pin path")
+	require.Equal(t, "test_fexit", gotProg.Bpfman.Program.Meta.Name)
+	require.NotEmpty(t, gotProg.Bpfman.Program.Handles.PinPath, "program should have pin path")
 
 	// Round-trip: List should include our program
 	listedProgs, err := env.Client.List(ctx)
@@ -783,8 +783,8 @@ func TestFexit_LoadAttachDetachUnload(t *testing.T) {
 	require.NotEmpty(t, listedProgs[0].KernelProgram.Tag)
 	require.False(t, listedProgs[0].KernelProgram.LoadedAt.IsZero())
 	require.NotNil(t, listedProgs[0].Metadata)
-	require.Equal(t, "test_fexit", listedProgs[0].Metadata.Name)
-	require.NotEmpty(t, listedProgs[0].Metadata.PinPath)
+	require.Equal(t, "test_fexit", listedProgs[0].Metadata.Meta.Name)
+	require.NotEmpty(t, listedProgs[0].Metadata.Handles.PinPath)
 
 	// When: attach via client
 	fxSpec, err := bpfman.NewFexitAttachSpec(prog.Kernel.ID)
@@ -881,8 +881,8 @@ func TestTC_LoadAttachDetachUnload(t *testing.T) {
 	require.False(t, gotProg.Kernel.Program.LoadedAt.IsZero(), "kernel should track LoadedAt")
 	require.NotNil(t, gotProg.Bpfman)
 	require.NotNil(t, gotProg.Bpfman.Program)
-	require.Equal(t, "stats", gotProg.Bpfman.Program.Name)
-	require.NotEmpty(t, gotProg.Bpfman.Program.PinPath, "program should have pin path")
+	require.Equal(t, "stats", gotProg.Bpfman.Program.Meta.Name)
+	require.NotEmpty(t, gotProg.Bpfman.Program.Handles.PinPath, "program should have pin path")
 
 	// Round-trip: List should include our program
 	listedProgs, err := env.Client.List(ctx)
@@ -893,8 +893,8 @@ func TestTC_LoadAttachDetachUnload(t *testing.T) {
 	require.NotEmpty(t, listedProgs[0].KernelProgram.Tag)
 	require.False(t, listedProgs[0].KernelProgram.LoadedAt.IsZero())
 	require.NotNil(t, listedProgs[0].Metadata)
-	require.Equal(t, "stats", listedProgs[0].Metadata.Name)
-	require.NotEmpty(t, listedProgs[0].Metadata.PinPath)
+	require.Equal(t, "stats", listedProgs[0].Metadata.Meta.Name)
+	require.NotEmpty(t, listedProgs[0].Metadata.Handles.PinPath)
 
 	// When: attach via client to lo interface (always available)
 	// TC uses dispatchers and supports both ingress and egress
@@ -1027,8 +1027,8 @@ func TestTCX_LoadAttachDetachUnload(t *testing.T) {
 	require.False(t, gotProg.Kernel.Program.LoadedAt.IsZero(), "kernel should track LoadedAt")
 	require.NotNil(t, gotProg.Bpfman)
 	require.NotNil(t, gotProg.Bpfman.Program)
-	require.Equal(t, "stats", gotProg.Bpfman.Program.Name)
-	require.NotEmpty(t, gotProg.Bpfman.Program.PinPath, "program should have pin path")
+	require.Equal(t, "stats", gotProg.Bpfman.Program.Meta.Name)
+	require.NotEmpty(t, gotProg.Bpfman.Program.Handles.PinPath, "program should have pin path")
 
 	// Round-trip: List should include our program
 	listedProgs, err := env.Client.List(ctx)
@@ -1039,8 +1039,8 @@ func TestTCX_LoadAttachDetachUnload(t *testing.T) {
 	require.NotEmpty(t, listedProgs[0].KernelProgram.Tag)
 	require.False(t, listedProgs[0].KernelProgram.LoadedAt.IsZero())
 	require.NotNil(t, listedProgs[0].Metadata)
-	require.Equal(t, "stats", listedProgs[0].Metadata.Name)
-	require.NotEmpty(t, listedProgs[0].Metadata.PinPath)
+	require.Equal(t, "stats", listedProgs[0].Metadata.Meta.Name)
+	require.NotEmpty(t, listedProgs[0].Metadata.Handles.PinPath)
 
 	// When: attach via client to lo interface
 	tcxSpec, err := bpfman.NewTCXAttachSpec(prog.Kernel.ID, "lo", 1, "ingress")
@@ -1142,8 +1142,8 @@ func TestXDP_LoadAttachDetachUnload(t *testing.T) {
 	require.False(t, gotProg.Kernel.Program.LoadedAt.IsZero(), "kernel should track LoadedAt")
 	require.NotNil(t, gotProg.Bpfman)
 	require.NotNil(t, gotProg.Bpfman.Program)
-	require.Equal(t, "pass", gotProg.Bpfman.Program.Name)
-	require.NotEmpty(t, gotProg.Bpfman.Program.PinPath, "program should have pin path")
+	require.Equal(t, "pass", gotProg.Bpfman.Program.Meta.Name)
+	require.NotEmpty(t, gotProg.Bpfman.Program.Handles.PinPath, "program should have pin path")
 
 	// Round-trip: List should include our program
 	listedProgs, err := env.Client.List(ctx)
@@ -1154,8 +1154,8 @@ func TestXDP_LoadAttachDetachUnload(t *testing.T) {
 	require.NotEmpty(t, listedProgs[0].KernelProgram.Tag)
 	require.False(t, listedProgs[0].KernelProgram.LoadedAt.IsZero())
 	require.NotNil(t, listedProgs[0].Metadata)
-	require.Equal(t, "pass", listedProgs[0].Metadata.Name)
-	require.NotEmpty(t, listedProgs[0].Metadata.PinPath)
+	require.Equal(t, "pass", listedProgs[0].Metadata.Meta.Name)
+	require.NotEmpty(t, listedProgs[0].Metadata.Handles.PinPath)
 
 	// When: attach via client to lo interface
 	xdpSpec, err := bpfman.NewXDPAttachSpec(prog.Kernel.ID, "lo", 1)
@@ -1262,17 +1262,17 @@ func TestLoadWithMetadataAndGlobalData(t *testing.T) {
 	require.NotNil(t, gotProg.Bpfman.Program)
 
 	// Verify user metadata is returned
-	require.Equal(t, "test-team", gotProg.Bpfman.Program.UserMetadata["owner"],
+	require.Equal(t, "test-team", gotProg.Bpfman.Program.Meta.Metadata["owner"],
 		"Get should return user metadata 'owner'")
-	require.Equal(t, "e2e-testing", gotProg.Bpfman.Program.UserMetadata["environment"],
+	require.Equal(t, "e2e-testing", gotProg.Bpfman.Program.Meta.Metadata["environment"],
 		"Get should return user metadata 'environment'")
-	require.Equal(t, "metadata-test", gotProg.Bpfman.Program.UserMetadata["bpfman.io/application"],
+	require.Equal(t, "metadata-test", gotProg.Bpfman.Program.Meta.Metadata["bpfman.io/application"],
 		"Get should return user metadata 'bpfman.io/application'")
 
 	// Verify global data is returned
-	require.Equal(t, []byte{0x42}, gotProg.Bpfman.Program.GlobalData["config_u8"],
+	require.Equal(t, []byte{0x42}, gotProg.Bpfman.Program.Load.GlobalData["config_u8"],
 		"Get should return global data 'config_u8'")
-	require.Equal(t, []byte{0xDE, 0xAD, 0xBE, 0xEF}, gotProg.Bpfman.Program.GlobalData["config_u32"],
+	require.Equal(t, []byte{0xDE, 0xAD, 0xBE, 0xEF}, gotProg.Bpfman.Program.Load.GlobalData["config_u32"],
 		"Get should return global data 'config_u32'")
 
 	// Then: List should also return the user metadata and global data
@@ -1282,15 +1282,15 @@ func TestLoadWithMetadataAndGlobalData(t *testing.T) {
 	require.NotNil(t, listedProgs[0].Metadata)
 
 	// Verify user metadata via List
-	require.Equal(t, "test-team", listedProgs[0].Metadata.UserMetadata["owner"],
+	require.Equal(t, "test-team", listedProgs[0].Metadata.Meta.Metadata["owner"],
 		"List should return user metadata 'owner'")
-	require.Equal(t, "e2e-testing", listedProgs[0].Metadata.UserMetadata["environment"],
+	require.Equal(t, "e2e-testing", listedProgs[0].Metadata.Meta.Metadata["environment"],
 		"List should return user metadata 'environment'")
 
 	// Verify global data via List
-	require.Equal(t, []byte{0x42}, listedProgs[0].Metadata.GlobalData["config_u8"],
+	require.Equal(t, []byte{0x42}, listedProgs[0].Metadata.Load.GlobalData["config_u8"],
 		"List should return global data 'config_u8'")
-	require.Equal(t, []byte{0xDE, 0xAD, 0xBE, 0xEF}, listedProgs[0].Metadata.GlobalData["config_u32"],
+	require.Equal(t, []byte{0xDE, 0xAD, 0xBE, 0xEF}, listedProgs[0].Metadata.Load.GlobalData["config_u32"],
 		"List should return global data 'config_u32'")
 
 	// When: unload

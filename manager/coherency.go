@@ -258,8 +258,8 @@ func GatherState(ctx context.Context, store interpreter.Store, kernel interprete
 	// Build DB indexes.
 	for kernelID, prog := range s.dbPrograms {
 		s.dbProgIDs[kernelID] = true
-		if prog.PinPath != "" {
-			s.dbProgPins[prog.PinPath] = true
+		if prog.Handles.PinPath != "" {
+			s.dbProgPins[prog.Handles.PinPath] = true
 		}
 	}
 	for _, d := range s.dbDispatchers {
@@ -321,8 +321,8 @@ func GatherState(ctx context.Context, store interpreter.Store, kernel interprete
 
 	// Program pin paths from DB.
 	for _, prog := range s.dbPrograms {
-		if prog.PinPath != "" {
-			pathsToStat[prog.PinPath] = struct{}{}
+		if prog.Handles.PinPath != "" {
+			pathsToStat[prog.Handles.PinPath] = struct{}{}
 		}
 	}
 
@@ -508,10 +508,10 @@ func (s *ObservedState) Programs() []ProgramState {
 			KernelID: id,
 			DB:       &prog,
 			Kernel:   s.kernelProgs[id],
-			PinPath:  prog.PinPath,
+			PinPath:  prog.Handles.PinPath,
 		}
-		if prog.PinPath != "" {
-			if exists, ok := s.fsPinExists[prog.PinPath]; ok {
+		if prog.Handles.PinPath != "" {
+			if exists, ok := s.fsPinExists[prog.Handles.PinPath]; ok {
 				ps.PinExist = &exists
 			}
 			// Path not in map = stat failed with unknown error.

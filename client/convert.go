@@ -205,12 +205,18 @@ func protoListResponseToPrograms(resp *pb.ListResponse) ([]manager.ManagedProgra
 			}
 
 			mp.Metadata = &bpfman.ProgramRecord{
-				Name:         r.Info.Name,
-				ProgramType:  progType,
-				ObjectPath:   objectPath,
-				PinPath:      r.Info.MapPinPath,
-				GlobalData:   r.Info.GlobalData,
-				UserMetadata: r.Info.Metadata,
+				Load: bpfman.ProgramLoadSpec{
+					ProgramType: progType,
+					ObjectPath:  objectPath,
+					GlobalData:  r.Info.GlobalData,
+				},
+				Handles: bpfman.ProgramHandles{
+					PinPath: r.Info.MapPinPath,
+				},
+				Meta: bpfman.ProgramMeta{
+					Name:     r.Info.Name,
+					Metadata: r.Info.Metadata,
+				},
 			}
 		}
 
@@ -261,12 +267,18 @@ func protoGetResponseToInfo(resp *pb.GetResponse, kernelID uint32) (manager.Prog
 		}
 
 		prog := &bpfman.ProgramRecord{
-			Name:         resp.Info.Name,
-			ProgramType:  progType,
-			ObjectPath:   objectPath,
-			PinPath:      resp.Info.MapPinPath,
-			GlobalData:   resp.Info.GlobalData,
-			UserMetadata: resp.Info.Metadata,
+			Load: bpfman.ProgramLoadSpec{
+				ProgramType: progType,
+				ObjectPath:  objectPath,
+				GlobalData:  resp.Info.GlobalData,
+			},
+			Handles: bpfman.ProgramHandles{
+				PinPath: resp.Info.MapPinPath,
+			},
+			Meta: bpfman.ProgramMeta{
+				Name:     resp.Info.Name,
+				Metadata: resp.Info.Metadata,
+			},
 		}
 		// GPL compatibility is stored in the database at load time (from the
 		// ELF license section). Despite the field name, KernelInfo.GplCompatible
@@ -274,7 +286,7 @@ func protoGetResponseToInfo(resp *pb.GetResponse, kernelID uint32) (manager.Prog
 		// expose GPL compatibility after load. The field is in KernelProgramInfo
 		// because the protobuf schema is a stable API that we cannot modify.
 		if resp.KernelInfo != nil {
-			prog.GPLCompatible = resp.KernelInfo.GplCompatible
+			prog.Load.GPLCompatible = resp.KernelInfo.GplCompatible
 		}
 
 		// Convert link IDs to LinkRecord (summary only, no details from this RPC)

@@ -55,7 +55,7 @@ func FilterMetadata(
 // Pure function.
 func FilterByTag(metadata map[uint32]bpfman.ProgramRecord, tag string) map[uint32]bpfman.ProgramRecord {
 	return FilterMetadata(metadata, func(_ uint32, m bpfman.ProgramRecord) bool {
-		for _, t := range m.Tags {
+		for _, t := range m.Meta.Tags {
 			if t == tag {
 				return true
 			}
@@ -68,6 +68,6 @@ func FilterByTag(metadata map[uint32]bpfman.ProgramRecord, tag string) map[uint3
 // Pure function.
 func FilterByOwner(metadata map[uint32]bpfman.ProgramRecord, owner string) map[uint32]bpfman.ProgramRecord {
 	return FilterMetadata(metadata, func(_ uint32, m bpfman.ProgramRecord) bool {
-		return m.Owner == owner
+		return m.Meta.Owner == owner
 	})
 }

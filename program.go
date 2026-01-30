@@ -104,6 +104,37 @@ func ParseProgramType(s string) (ProgramType, bool) {
 	}
 }
 
+// ProgramLoadSpec contains inputs for loading a program.
+// Reads like a load request: "what bytecode, what config?"
+type ProgramLoadSpec struct {
+	ProgramType ProgramType       `json:"program_type"`
+	ObjectPath  string            `json:"object_path,omitempty"`
+	ImageSource *ImageSource      `json:"image_source,omitempty"`
+	AttachFunc  string            `json:"attach_func,omitempty"` // For fentry/fexit
+	GlobalData  map[string][]byte `json:"global_data,omitempty"`
+	// GPLCompatible is determined at load time from the ELF licence.
+	// Persisted because it cannot be recovered reliably from the kernel later.
+	GPLCompatible bool `json:"gpl_compatible"`
+}
+
+// ProgramHandles contains stable filesystem handles for management.
+// These are outputs of load, used for lifecycle operations.
+type ProgramHandles struct {
+	PinPath    string  `json:"pin_path"`
+	MapPinPath string  `json:"map_pin_path,omitempty"`
+	MapOwnerID *uint32 `json:"map_owner_id,omitempty"`
+}
+
+// ProgramMeta contains operator-facing management metadata.
+// Searchable/editable without affecting the loaded program.
+type ProgramMeta struct {
+	Name        string            `json:"name"`            // human-readable label
+	Owner       string            `json:"owner,omitempty"` // who manages this
+	Description string            `json:"description,omitempty"`
+	Tags        []string          `json:"tags,omitempty"`
+	Metadata    map[string]string `json:"metadata,omitempty"` // arbitrary key/value for selection
+}
+
 // ProgramSpec is what bpfman intends to manage (DB-backed).
 // This is the "desired state" - what was loaded.
 // KernelID is the DB primary key and user-facing identity.
@@ -113,27 +144,12 @@ func ParseProgramType(s string) (ProgramType, bool) {
 // state (stored output). They share some fields but serve different purposes.
 type ProgramSpec struct {
 	// Identity - KernelID is the DB primary key and user-facing ID
-	KernelID    uint32      `json:"kernel_id"`
-	Name        string      `json:"name"` // human-readable label (not identity)
-	ProgramType ProgramType `json:"program_type"`
-	ObjectPath  string      `json:"object_path,omitempty"`
-	PinPath     string      `json:"pin_path"`               // stable handle
-	MapPinPath  string      `json:"map_pin_path,omitempty"` // directory where maps are pinned
-
-	// Load-time configuration (stored for reference/potential reload)
-	GlobalData    map[string][]byte `json:"global_data,omitempty"`
-	ImageSource   *ImageSource      `json:"image_source,omitempty"`
-	AttachFunc    string            `json:"attach_func,omitempty"`  // For fentry/fexit
-	MapOwnerID    *uint32           `json:"map_owner_id,omitempty"` // nil means self/no owner (matches DB NULL)
-	GPLCompatible bool              `json:"gpl_compatible"`         // Whether program has GPL-compatible license
-
-	// Management metadata
-	Tags         []string          `json:"tags,omitempty"`
-	UserMetadata map[string]string `json:"user_metadata,omitempty"`
-	Description  string            `json:"description,omitempty"`
-	Owner        string            `json:"owner,omitempty"`
-	CreatedAt    time.Time         `json:"created_at"`
-	UpdatedAt    time.Time         `json:"updated_at"`
+	KernelID  uint32          `json:"kernel_id"`
+	Load      ProgramLoadSpec `json:"load"`
+	Handles   ProgramHandles  `json:"handles"`
+	Meta      ProgramMeta     `json:"meta"`
+	CreatedAt time.Time       `json:"created_at"`
+	UpdatedAt time.Time       `json:"updated_at"`
 }
 
 // ProgramStatus is observed state (kernel + filesystem).
@@ -160,19 +176,19 @@ type ProgramRecord = ProgramSpec
 // WithTag returns a new ProgramSpec with the tag added.
 func (p ProgramSpec) WithTag(tag string) ProgramSpec {
 	cp := p
-	cp.Tags = append(slices.Clone(p.Tags), tag)
-	cp.UserMetadata = cloneMap(p.UserMetadata)
-	cp.GlobalData = cloneMap(p.GlobalData)
+	cp.Meta.Tags = append(slices.Clone(p.Meta.Tags), tag)
+	cp.Meta.Metadata = cloneMap(p.Meta.Metadata)
+	cp.Load.GlobalData = cloneMap(p.Load.GlobalData)
 	return cp
 }
 
 // WithDescription returns a new ProgramSpec with the description set.
 func (p ProgramSpec) WithDescription(desc string) ProgramSpec {
 	cp := p
-	cp.Description = desc
-	cp.Tags = slices.Clone(p.Tags)
-	cp.UserMetadata = cloneMap(p.UserMetadata)
-	cp.GlobalData = cloneMap(p.GlobalData)
+	cp.Meta.Description = desc
+	cp.Meta.Tags = slices.Clone(p.Meta.Tags)
+	cp.Meta.Metadata = cloneMap(p.Meta.Metadata)
+	cp.Load.GlobalData = cloneMap(p.Load.GlobalData)
 	return cp
 }
 

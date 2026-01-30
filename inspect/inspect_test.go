@@ -124,8 +124,8 @@ func TestSnapshot_ManagedPrograms(t *testing.T) {
 
 	store := &fakeStore{
 		programs: map[uint32]bpfman.ProgramSpec{
-			100: {KernelID: 100, Name: "xdp_pass", ProgramType: bpfman.ProgramTypeXDP, PinPath: "/run/bpfman/fs/prog_100"},
-			200: {KernelID: 200, Name: "tc_filter", ProgramType: bpfman.ProgramTypeTC, PinPath: "/run/bpfman/fs/prog_200"},
+			100: {KernelID: 100, Load: bpfman.ProgramLoadSpec{ProgramType: bpfman.ProgramTypeXDP}, Handles: bpfman.ProgramHandles{PinPath: "/run/bpfman/fs/prog_100"}, Meta: bpfman.ProgramMeta{Name: "xdp_pass"}},
+			200: {KernelID: 200, Load: bpfman.ProgramLoadSpec{ProgramType: bpfman.ProgramTypeTC}, Handles: bpfman.ProgramHandles{PinPath: "/run/bpfman/fs/prog_200"}, Meta: bpfman.ProgramMeta{Name: "tc_filter"}},
 		},
 	}
 
@@ -155,7 +155,7 @@ func TestSnapshot_KernelOnlyPrograms(t *testing.T) {
 
 	store := &fakeStore{
 		programs: map[uint32]bpfman.ProgramSpec{
-			100: {KernelID: 100, Name: "managed", ProgramType: bpfman.ProgramTypeXDP},
+			100: {KernelID: 100, Load: bpfman.ProgramLoadSpec{ProgramType: bpfman.ProgramTypeXDP}, Meta: bpfman.ProgramMeta{Name: "managed"}},
 		},
 	}
 
@@ -390,7 +390,7 @@ func TestGetProgram_FullyPresent(t *testing.T) {
 
 	store := &fakeStore{
 		programs: map[uint32]bpfman.ProgramSpec{
-			100: {KernelID: 100, Name: "xdp_pass", ProgramType: bpfman.ProgramTypeXDP, PinPath: pinPath},
+			100: {KernelID: 100, Load: bpfman.ProgramLoadSpec{ProgramType: bpfman.ProgramTypeXDP}, Handles: bpfman.ProgramHandles{PinPath: pinPath}, Meta: bpfman.ProgramMeta{Name: "xdp_pass"}},
 		},
 	}
 
@@ -407,7 +407,7 @@ func TestGetProgram_FullyPresent(t *testing.T) {
 	assert.True(t, row.Presence.InFS)
 	assert.NotNil(t, row.Managed)
 	assert.NotNil(t, row.Kernel)
-	assert.Equal(t, "xdp_pass", row.Managed.Name)
+	assert.Equal(t, "xdp_pass", row.Managed.Meta.Name)
 	assert.Equal(t, "xdp_pass", row.Kernel.Name)
 }
 
@@ -417,7 +417,7 @@ func TestGetProgram_StoreOnly(t *testing.T) {
 
 	store := &fakeStore{
 		programs: map[uint32]bpfman.ProgramSpec{
-			100: {KernelID: 100, Name: "stale_prog", ProgramType: bpfman.ProgramTypeXDP},
+			100: {KernelID: 100, Load: bpfman.ProgramLoadSpec{ProgramType: bpfman.ProgramTypeXDP}, Meta: bpfman.ProgramMeta{Name: "stale_prog"}},
 		},
 	}
 

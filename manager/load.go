@@ -62,21 +62,26 @@ func (m *Manager) Load(ctx context.Context, spec bpfman.LoadSpec, opts LoadOpts)
 	}
 
 	metadata := bpfman.ProgramSpec{
-		KernelID:      loaded.Kernel.ID,
-		Name:          spec.ProgramName(),
-		ProgramType:   loaded.Managed.Type,
-		ObjectPath:    spec.ObjectPath(),
-		PinPath:       loaded.Managed.PinPath,
-		MapPinPath:    loaded.Managed.PinDir, // Maps directory for CSI/unload
-		GlobalData:    spec.GlobalData(),
-		ImageSource:   spec.ImageSource(),
-		AttachFunc:    spec.AttachFunc(),
-		MapOwnerID:    mapOwnerID,
-		GPLCompatible: bpfman.ExtractGPLCompatible(loaded.Kernel),
-		UserMetadata:  opts.UserMetadata,
-		Tags:          nil,
-		Owner:         opts.Owner,
-		CreatedAt:     now,
+		KernelID: loaded.Kernel.ID,
+		Load: bpfman.ProgramLoadSpec{
+			ProgramType:   loaded.Managed.Type,
+			ObjectPath:    spec.ObjectPath(),
+			ImageSource:   spec.ImageSource(),
+			AttachFunc:    spec.AttachFunc(),
+			GlobalData:    spec.GlobalData(),
+			GPLCompatible: bpfman.ExtractGPLCompatible(loaded.Kernel),
+		},
+		Handles: bpfman.ProgramHandles{
+			PinPath:    loaded.Managed.PinPath,
+			MapPinPath: loaded.Managed.PinDir, // Maps directory for CSI/unload
+			MapOwnerID: mapOwnerID,
+		},
+		Meta: bpfman.ProgramMeta{
+			Name:     spec.ProgramName(),
+			Owner:    opts.Owner,
+			Metadata: opts.UserMetadata,
+		},
+		CreatedAt: now,
 	}
 
 	// Save atomically persists program metadata. RunInTransaction ensures

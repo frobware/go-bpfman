@@ -43,7 +43,7 @@ func (s *Server) List(ctx context.Context, req *pb.ListRequest) (*pb.ListRespons
 		kp := row.Kernel
 
 		// Filter by program type if specified
-		if req.ProgramType != nil && *req.ProgramType != uint32(prog.ProgramType) {
+		if req.ProgramType != nil && *req.ProgramType != uint32(prog.Load.ProgramType) {
 			continue
 		}
 
@@ -51,7 +51,7 @@ func (s *Server) List(ctx context.Context, req *pb.ListRequest) (*pb.ListRespons
 		if len(req.MatchMetadata) > 0 {
 			match := true
 			for k, v := range req.MatchMetadata {
-				if prog.UserMetadata[k] != v {
+				if prog.Meta.Metadata[k] != v {
 					match = false
 					break
 				}
@@ -62,14 +62,14 @@ func (s *Server) List(ctx context.Context, req *pb.ListRequest) (*pb.ListRespons
 		}
 
 		info := &pb.ProgramInfo{
-			Name:       prog.Name,
-			Bytecode:   &pb.BytecodeLocation{Location: &pb.BytecodeLocation_File{File: prog.ObjectPath}},
-			Metadata:   prog.UserMetadata,
-			GlobalData: prog.GlobalData,
-			MapPinPath: prog.MapPinPath,
+			Name:       prog.Meta.Name,
+			Bytecode:   &pb.BytecodeLocation{Location: &pb.BytecodeLocation_File{File: prog.Load.ObjectPath}},
+			Metadata:   prog.Meta.Metadata,
+			GlobalData: prog.Load.GlobalData,
+			MapPinPath: prog.Handles.MapPinPath,
 		}
-		if prog.MapOwnerID != nil {
-			info.MapOwnerId = prog.MapOwnerID
+		if prog.Handles.MapOwnerID != nil {
+			info.MapOwnerId = prog.Handles.MapOwnerID
 		}
 
 		results = append(results, &pb.ListResponse_ListResult{
@@ -77,7 +77,7 @@ func (s *Server) List(ctx context.Context, req *pb.ListRequest) (*pb.ListRespons
 			KernelInfo: &pb.KernelProgramInfo{
 				Id:          row.KernelID,
 				Name:        kp.Name,
-				ProgramType: uint32(prog.ProgramType),
+				ProgramType: uint32(prog.Load.ProgramType),
 				Tag:         kp.Tag,
 				LoadedAt:    kp.LoadedAt.Format(time.RFC3339),
 				MapIds:      kp.MapIDs,
@@ -137,18 +137,18 @@ func (s *Server) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, 
 		linkIDs = append(linkIDs, uint32(link.ID))
 	}
 
-	s.logger.InfoContext(ctx, "Get", "program_id", req.Id, "program_name", prog.Name, "links", len(linkIDs))
+	s.logger.InfoContext(ctx, "Get", "program_id", req.Id, "program_name", prog.Meta.Name, "links", len(linkIDs))
 
 	info := &pb.ProgramInfo{
-		Name:       prog.Name,
-		Bytecode:   &pb.BytecodeLocation{Location: &pb.BytecodeLocation_File{File: prog.ObjectPath}},
-		Metadata:   prog.UserMetadata,
-		GlobalData: prog.GlobalData,
-		MapPinPath: prog.MapPinPath,
+		Name:       prog.Meta.Name,
+		Bytecode:   &pb.BytecodeLocation{Location: &pb.BytecodeLocation_File{File: prog.Load.ObjectPath}},
+		Metadata:   prog.Meta.Metadata,
+		GlobalData: prog.Load.GlobalData,
+		MapPinPath: prog.Handles.MapPinPath,
 		Links:      linkIDs,
 	}
-	if prog.MapOwnerID != nil {
-		info.MapOwnerId = prog.MapOwnerID
+	if prog.Handles.MapOwnerID != nil {
+		info.MapOwnerId = prog.Handles.MapOwnerID
 	}
 
 	// Note: GplCompatible is stored in the database at load time (from the
@@ -161,10 +161,10 @@ func (s *Server) Get(ctx context.Context, req *pb.GetRequest) (*pb.GetResponse, 
 		KernelInfo: &pb.KernelProgramInfo{
 			Id:            req.Id,
 			Name:          kp.Name,
-			ProgramType:   uint32(prog.ProgramType),
+			ProgramType:   uint32(prog.Load.ProgramType),
 			Tag:           kp.Tag,
 			LoadedAt:      kp.LoadedAt.Format(time.RFC3339),
-			GplCompatible: prog.GPLCompatible,
+			GplCompatible: prog.Load.GPLCompatible,
 			MapIds:        kp.MapIDs,
 			BtfId:         kp.BTFId,
 			BytesXlated:   kp.XlatedSize,

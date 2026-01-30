@@ -32,11 +32,11 @@ func (s *sqliteStore) Get(ctx context.Context, kernelID uint32) (bpfman.ProgramS
 	s.logger.Debug("sql", "stmt", "GetProgram", "args", []any{kernelID}, "duration_ms", msec(time.Since(start)), "rows", 1)
 
 	// Get user metadata (tags are already included via JOIN)
-	metadata, err := s.getUserMetadata(ctx, kernelID)
+	userMetadata, err := s.getUserMetadata(ctx, kernelID)
 	if err != nil {
 		return bpfman.ProgramSpec{}, err
 	}
-	prog.UserMetadata = metadata
+	prog.Meta.Metadata = userMetadata
 	prog.KernelID = kernelID
 
 	return prog, nil
@@ -117,31 +117,37 @@ func (s *sqliteStore) scanProgram(row *sql.Row) (bpfman.ProgramSpec, error) {
 		return bpfman.ProgramSpec{}, fmt.Errorf("invalid updated_at timestamp %q: %w", updatedAtStr, err)
 	}
 
-	// Build the Program directly from the stored fields
+	// Build the ProgramSpec from the stored fields using nested structs
 	prog := bpfman.ProgramSpec{
-		Name:          programName,
-		ProgramType:   programType,
-		ObjectPath:    objectPath,
-		PinPath:       pinPath,
-		MapPinPath:    mapPinPathVal,
-		GlobalData:    globalData,
-		ImageSource:   imageSource,
-		AttachFunc:    attachFuncVal,
-		MapOwnerID:    mapOwnerIDPtr,
-		GPLCompatible: gplCompatible != 0,
-		CreatedAt:     createdAt,
-		UpdatedAt:     updatedAt,
+		Load: bpfman.ProgramLoadSpec{
+			ProgramType:   programType,
+			ObjectPath:    objectPath,
+			ImageSource:   imageSource,
+			AttachFunc:    attachFuncVal,
+			GlobalData:    globalData,
+			GPLCompatible: gplCompatible != 0,
+		},
+		Handles: bpfman.ProgramHandles{
+			PinPath:    pinPath,
+			MapPinPath: mapPinPathVal,
+			MapOwnerID: mapOwnerIDPtr,
+		},
+		Meta: bpfman.ProgramMeta{
+			Name: programName,
+		},
+		CreatedAt: createdAt,
+		UpdatedAt: updatedAt,
 	}
 	if owner.Valid {
-		prog.Owner = owner.String
+		prog.Meta.Owner = owner.String
 	}
 	if description.Valid {
-		prog.Description = description.String
+		prog.Meta.Description = description.String
 	}
 
 	// Parse tags from GROUP_CONCAT result
 	if tagsStr.Valid && tagsStr.String != "" {
-		prog.Tags = strings.Split(tagsStr.String, ",")
+		prog.Meta.Tags = strings.Split(tagsStr.String, ",")
 	}
 
 	return prog, nil
@@ -184,15 +190,15 @@ func (s *sqliteStore) getUserMetadata(ctx context.Context, kernelID uint32) (map
 func (s *sqliteStore) Save(ctx context.Context, kernelID uint32, metadata bpfman.ProgramSpec) error {
 	// Marshal only opaque fields to JSON
 	var globalDataJSON, imageSourceJSON sql.NullString
-	if metadata.GlobalData != nil {
-		data, err := json.Marshal(metadata.GlobalData)
+	if metadata.Load.GlobalData != nil {
+		data, err := json.Marshal(metadata.Load.GlobalData)
 		if err != nil {
 			return fmt.Errorf("failed to marshal global_data: %w", err)
 		}
 		globalDataJSON = sql.NullString{String: string(data), Valid: true}
 	}
-	if metadata.ImageSource != nil {
-		data, err := json.Marshal(metadata.ImageSource)
+	if metadata.Load.ImageSource != nil {
+		data, err := json.Marshal(metadata.Load.ImageSource)
 		if err != nil {
 			return fmt.Errorf("failed to marshal image_source: %w", err)
 		}
@@ -201,39 +207,39 @@ func (s *sqliteStore) Save(ctx context.Context, kernelID uint32, metadata bpfman
 
 	// Handle nullable fields
 	var mapOwnerID sql.NullInt64
-	if metadata.MapOwnerID != nil {
-		mapOwnerID = sql.NullInt64{Int64: int64(*metadata.MapOwnerID), Valid: true}
+	if metadata.Handles.MapOwnerID != nil {
+		mapOwnerID = sql.NullInt64{Int64: int64(*metadata.Handles.MapOwnerID), Valid: true}
 	}
 	var mapPinPath sql.NullString
-	if metadata.MapPinPath != "" {
-		mapPinPath = sql.NullString{String: metadata.MapPinPath, Valid: true}
+	if metadata.Handles.MapPinPath != "" {
+		mapPinPath = sql.NullString{String: metadata.Handles.MapPinPath, Valid: true}
 	}
 	var attachFunc, owner, description sql.NullString
-	if metadata.AttachFunc != "" {
-		attachFunc = sql.NullString{String: metadata.AttachFunc, Valid: true}
+	if metadata.Load.AttachFunc != "" {
+		attachFunc = sql.NullString{String: metadata.Load.AttachFunc, Valid: true}
 	}
-	if metadata.Owner != "" {
-		owner = sql.NullString{String: metadata.Owner, Valid: true}
+	if metadata.Meta.Owner != "" {
+		owner = sql.NullString{String: metadata.Meta.Owner, Valid: true}
 	}
-	if metadata.Description != "" {
-		description = sql.NullString{String: metadata.Description, Valid: true}
+	if metadata.Meta.Description != "" {
+		description = sql.NullString{String: metadata.Meta.Description, Valid: true}
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
 
 	// Convert bool to int for SQLite
 	var gplCompatibleInt int
-	if metadata.GPLCompatible {
+	if metadata.Load.GPLCompatible {
 		gplCompatibleInt = 1
 	}
 
 	start := time.Now()
 	result, err := s.stmtSaveProgram.ExecContext(ctx,
 		kernelID,
-		metadata.Name,
-		metadata.ProgramType.String(),
-		metadata.ObjectPath,
-		metadata.PinPath,
+		metadata.Meta.Name,
+		metadata.Load.ProgramType.String(),
+		metadata.Load.ObjectPath,
+		metadata.Handles.PinPath,
 		attachFunc,
 		globalDataJSON,
 		mapOwnerID,
@@ -246,11 +252,11 @@ func (s *sqliteStore) Save(ctx context.Context, kernelID uint32, metadata bpfman
 		now,
 	)
 	if err != nil {
-		s.logger.Debug("sql", "stmt", "SaveProgram", "args", []any{kernelID, metadata.Name, "(columns)"}, "duration_ms", msec(time.Since(start)), "error", err)
+		s.logger.Debug("sql", "stmt", "SaveProgram", "args", []any{kernelID, metadata.Meta.Name, "(columns)"}, "duration_ms", msec(time.Since(start)), "error", err)
 		return fmt.Errorf("failed to insert program: %w", err)
 	}
 	rows, _ := result.RowsAffected()
-	s.logger.Debug("sql", "stmt", "SaveProgram", "args", []any{kernelID, metadata.Name, "(columns)"}, "duration_ms", msec(time.Since(start)), "rows_affected", rows)
+	s.logger.Debug("sql", "stmt", "SaveProgram", "args", []any{kernelID, metadata.Meta.Name, "(columns)"}, "duration_ms", msec(time.Since(start)), "rows_affected", rows)
 
 	// Clear old tags and insert new ones
 	start = time.Now()
@@ -262,7 +268,7 @@ func (s *sqliteStore) Save(ctx context.Context, kernelID uint32, metadata bpfman
 	rows, _ = result.RowsAffected()
 	s.logger.Debug("sql", "stmt", "DeleteTags", "args", []any{kernelID}, "duration_ms", msec(time.Since(start)), "rows_affected", rows)
 
-	for _, tag := range metadata.Tags {
+	for _, tag := range metadata.Meta.Tags {
 		start = time.Now()
 		_, err = s.stmtInsertTag.ExecContext(ctx, kernelID, tag)
 		if err != nil {
@@ -282,8 +288,8 @@ func (s *sqliteStore) Save(ctx context.Context, kernelID uint32, metadata bpfman
 	rows, _ = result.RowsAffected()
 	s.logger.Debug("sql", "stmt", "DeleteProgramMetadataIndex", "args", []any{kernelID}, "duration_ms", msec(time.Since(start)), "rows_affected", rows)
 
-	// Insert metadata index entries for UserMetadata
-	for key, value := range metadata.UserMetadata {
+	// Insert metadata index entries for Metadata
+	for key, value := range metadata.Meta.Metadata {
 		start = time.Now()
 		_, err = s.stmtInsertProgramMetadataIndex.ExecContext(ctx, kernelID, key, value)
 		if err != nil {
@@ -331,7 +337,7 @@ func (s *sqliteStore) GC(ctx context.Context, kernelProgramIDs, kernelLinkIDs ma
 		var dependents, owners []uint32
 		for id, prog := range stored {
 			if !kernelProgramIDs[id] {
-				if prog.MapOwnerID != nil {
+				if prog.Handles.MapOwnerID != nil {
 					dependents = append(dependents, id)
 				} else {
 					owners = append(owners, id)
@@ -473,11 +479,11 @@ func (s *sqliteStore) List(ctx context.Context) (map[uint32]bpfman.ProgramSpec, 
 
 	// Fetch metadata for each program (tags are already included via JOIN)
 	for kernelID, prog := range result {
-		metadata, err := s.getUserMetadata(ctx, kernelID)
+		userMetadata, err := s.getUserMetadata(ctx, kernelID)
 		if err != nil {
 			return nil, err
 		}
-		prog.UserMetadata = metadata
+		prog.Meta.Metadata = userMetadata
 		result[kernelID] = prog
 	}
 
@@ -562,32 +568,38 @@ func (s *sqliteStore) scanProgramFromRows(rows *sql.Rows) (uint32, bpfman.Progra
 		return 0, bpfman.ProgramSpec{}, fmt.Errorf("invalid updated_at timestamp for %d: %q: %w", kernelID, updatedAtStr, err)
 	}
 
-	// Build the ProgramSpec directly from the stored fields
+	// Build the ProgramSpec from the stored fields using nested structs
 	prog := bpfman.ProgramSpec{
-		KernelID:      kernelID,
-		Name:          programName,
-		ProgramType:   programType,
-		ObjectPath:    objectPath,
-		PinPath:       pinPath,
-		MapPinPath:    mapPinPathVal,
-		GlobalData:    globalData,
-		ImageSource:   imageSource,
-		AttachFunc:    attachFuncVal,
-		MapOwnerID:    mapOwnerIDPtr,
-		GPLCompatible: gplCompatible != 0,
-		CreatedAt:     createdAt,
-		UpdatedAt:     updatedAt,
+		KernelID: kernelID,
+		Load: bpfman.ProgramLoadSpec{
+			ProgramType:   programType,
+			ObjectPath:    objectPath,
+			ImageSource:   imageSource,
+			AttachFunc:    attachFuncVal,
+			GlobalData:    globalData,
+			GPLCompatible: gplCompatible != 0,
+		},
+		Handles: bpfman.ProgramHandles{
+			PinPath:    pinPath,
+			MapPinPath: mapPinPathVal,
+			MapOwnerID: mapOwnerIDPtr,
+		},
+		Meta: bpfman.ProgramMeta{
+			Name: programName,
+		},
+		CreatedAt: createdAt,
+		UpdatedAt: updatedAt,
 	}
 	if owner.Valid {
-		prog.Owner = owner.String
+		prog.Meta.Owner = owner.String
 	}
 	if description.Valid {
-		prog.Description = description.String
+		prog.Meta.Description = description.String
 	}
 
 	// Parse tags from GROUP_CONCAT result
 	if tagsStr.Valid && tagsStr.String != "" {
-		prog.Tags = strings.Split(tagsStr.String, ",")
+		prog.Meta.Tags = strings.Split(tagsStr.String, ",")
 	}
 
 	return kernelID, prog, nil
@@ -618,11 +630,11 @@ func (s *sqliteStore) FindProgramByMetadata(ctx context.Context, key, value stri
 	s.logger.Debug("sql", "stmt", "FindProgramByMetadata", "args", []any{key, value}, "duration_ms", msec(time.Since(start)), "rows", 1)
 
 	// Get user metadata (tags are already included via JOIN)
-	metadata, err := s.getUserMetadata(ctx, kernelID)
+	userMetadata, err := s.getUserMetadata(ctx, kernelID)
 	if err != nil {
 		return bpfman.ProgramSpec{}, 0, err
 	}
-	prog.UserMetadata = metadata
+	prog.Meta.Metadata = userMetadata
 
 	return prog, kernelID, nil
 }
@@ -662,11 +674,11 @@ func (s *sqliteStore) FindAllProgramsByMetadata(ctx context.Context, key, value 
 
 	// Fetch metadata for each program (tags are already included via JOIN)
 	for i := range result {
-		metadata, err := s.getUserMetadata(ctx, result[i].KernelID)
+		userMetadata, err := s.getUserMetadata(ctx, result[i].KernelID)
 		if err != nil {
 			return nil, err
 		}
-		result[i].Metadata.UserMetadata = metadata
+		result[i].Metadata.Meta.Metadata = userMetadata
 	}
 
 	s.logger.Debug("sql", "stmt", "FindAllProgramsByMetadata", "args", []any{key, value}, "duration_ms", msec(time.Since(start)), "rows", len(result))

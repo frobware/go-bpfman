@@ -128,7 +128,7 @@ type ProgramRow = ProgramView
 // Name returns the program name (from store if available, else kernel).
 func (v ProgramView) Name() string {
 	if v.Managed != nil {
-		return v.Managed.Name
+		return v.Managed.Meta.Name
 	}
 	if v.Kernel != nil {
 		return v.Kernel.Name
@@ -139,7 +139,7 @@ func (v ProgramView) Name() string {
 // Type returns the program type (from store if available, else kernel).
 func (v ProgramView) Type() string {
 	if v.Managed != nil {
-		return v.Managed.ProgramType.String()
+		return v.Managed.Load.ProgramType.String()
 	}
 	if v.Kernel != nil {
 		return v.Kernel.ProgramType
@@ -149,8 +149,8 @@ func (v ProgramView) Type() string {
 
 // PinPath returns the pin path (from store if available, else FS).
 func (v ProgramView) PinPath() string {
-	if v.Managed != nil && v.Managed.PinPath != "" {
-		return v.Managed.PinPath
+	if v.Managed != nil && v.Managed.Handles.PinPath != "" {
+		return v.Managed.Handles.PinPath
 	}
 	return v.FSPinPath
 }
@@ -609,9 +609,9 @@ func GetProgram(
 
 	// Try filesystem
 	// If we have store metadata with a pin path, check that specific path
-	if row.Managed != nil && row.Managed.PinPath != "" {
-		if scanner.PathExists(row.Managed.PinPath) {
-			row.FSPinPath = row.Managed.PinPath
+	if row.Managed != nil && row.Managed.Handles.PinPath != "" {
+		if scanner.PathExists(row.Managed.Handles.PinPath) {
+			row.FSPinPath = row.Managed.Handles.PinPath
 			row.Presence.InFS = true
 		}
 	}

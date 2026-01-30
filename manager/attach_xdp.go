@@ -84,15 +84,15 @@ func (m *Manager) AttachXDP(ctx context.Context, spec bpfman.XDPAttachSpec, opts
 
 	// COMPUTE: Use the program's MapPinPath which points to the correct maps
 	// directory (either the program's own or the map owner's if sharing).
-	mapPinDir := prog.MapPinPath
+	mapPinDir := prog.Handles.MapPinPath
 
 	// KERNEL I/O: Attach user program as extension
 	progPinPath := dispatcher.DispatcherProgPath(revisionDir)
 	link, err := m.kernel.AttachXDPExtension(
 		ctx,
 		progPinPath,
-		prog.ObjectPath,
-		prog.Name,
+		prog.Load.ObjectPath,
+		prog.Meta.Name,
 		position,
 		linkPinPath,
 		mapPinDir,
@@ -129,8 +129,8 @@ func (m *Manager) AttachXDP(ctx context.Context, spec bpfman.XDPAttachSpec, opts
 		link, err = m.kernel.AttachXDPExtension(
 			ctx,
 			progPinPath,
-			prog.ObjectPath,
-			prog.Name,
+			prog.Load.ObjectPath,
+			prog.Meta.Name,
 			position,
 			linkPinPath,
 			mapPinDir,

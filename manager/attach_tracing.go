@@ -85,7 +85,7 @@ func (m *Manager) AttachKprobe(ctx context.Context, spec bpfman.KprobeAttachSpec
 	}
 
 	// Derive retprobe from program type
-	retprobe := prog.ProgramType == bpfman.ProgramTypeKretprobe
+	retprobe := prog.Load.ProgramType == bpfman.ProgramTypeKretprobe
 
 	// COMPUTE: Construct paths from convention (kernel ID + bpffs root)
 	progPinPath := m.dirs.ProgPinPath(programKernelID)
@@ -161,7 +161,7 @@ func (m *Manager) AttachUprobe(ctx context.Context, scope lock.WriterScope, spec
 	}
 
 	// Derive retprobe from program type
-	retprobe := prog.ProgramType == bpfman.ProgramTypeUretprobe
+	retprobe := prog.Load.ProgramType == bpfman.ProgramTypeUretprobe
 
 	// COMPUTE: Construct paths from convention (kernel ID + bpffs root)
 	progPinPath := m.dirs.ProgPinPath(programKernelID)
@@ -240,7 +240,7 @@ func (m *Manager) AttachFentry(ctx context.Context, spec bpfman.FentryAttachSpec
 		return bpfman.Link{}, fmt.Errorf("get program %d: %w", programKernelID, err)
 	}
 
-	fnName := prog.AttachFunc
+	fnName := prog.Load.AttachFunc
 	if fnName == "" {
 		return bpfman.Link{}, fmt.Errorf("program %d has no attach function (fentry requires attach function at load time)", programKernelID)
 	}
@@ -302,7 +302,7 @@ func (m *Manager) AttachFexit(ctx context.Context, spec bpfman.FexitAttachSpec, 
 		return bpfman.Link{}, fmt.Errorf("get program %d: %w", programKernelID, err)
 	}
 
-	fnName := prog.AttachFunc
+	fnName := prog.Load.AttachFunc
 	if fnName == "" {
 		return bpfman.Link{}, fmt.Errorf("program %d has no attach function (fexit requires attach function at load time)", programKernelID)
 	}

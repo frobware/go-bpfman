@@ -15,9 +15,9 @@ import (
 func TestReconcileActions_OrphanedPrograms(t *testing.T) {
 	// Programs in store but not in kernel should be deleted
 	stored := map[uint32]bpfman.ProgramSpec{
-		1: {Owner: "bpfman"},
-		2: {Owner: "bpfman"},
-		3: {Owner: "bpfman"},
+		1: {Meta: bpfman.ProgramMeta{Owner: "bpfman"}},
+		2: {Meta: bpfman.ProgramMeta{Owner: "bpfman"}},
+		3: {Meta: bpfman.ProgramMeta{Owner: "bpfman"}},
 	}
 
 	kps := []kernel.Program{
@@ -43,7 +43,7 @@ func TestReconcileActions_OrphanedPrograms(t *testing.T) {
 
 func TestReconcileActions_NoOrphans(t *testing.T) {
 	stored := map[uint32]bpfman.ProgramSpec{
-		1: {Owner: "bpfman"},
+		1: {Meta: bpfman.ProgramMeta{Owner: "bpfman"}},
 	}
 
 	kps := []kernel.Program{
@@ -70,8 +70,8 @@ func TestReconcileActions_EmptyStore(t *testing.T) {
 
 func TestOrphanedPrograms(t *testing.T) {
 	stored := map[uint32]bpfman.ProgramSpec{
-		1: {Owner: "bpfman"},
-		2: {Owner: "bpfman"},
+		1: {Meta: bpfman.ProgramMeta{Owner: "bpfman"}},
+		2: {Meta: bpfman.ProgramMeta{Owner: "bpfman"}},
 	}
 
 	kps := []kernel.Program{
@@ -86,7 +86,7 @@ func TestOrphanedPrograms(t *testing.T) {
 
 func TestUnmanagedPrograms(t *testing.T) {
 	stored := map[uint32]bpfman.ProgramSpec{
-		1: {Owner: "bpfman"},
+		1: {Meta: bpfman.ProgramMeta{Owner: "bpfman"}},
 	}
 
 	kps := []kernel.Program{
@@ -110,9 +110,9 @@ func TestReconcileActions_MapOwnerOrdering(t *testing.T) {
 	// If owner (100) is deleted before dependents (101, 102), FK fails.
 	ownerID := uint32(100)
 	stored := map[uint32]bpfman.ProgramSpec{
-		100: {KernelID: 100, Name: "owner", MapOwnerID: nil},     // Owner - owns maps
-		101: {KernelID: 101, Name: "dep1", MapOwnerID: &ownerID}, // Dependent - uses owner's maps
-		102: {KernelID: 102, Name: "dep2", MapOwnerID: &ownerID}, // Dependent - uses owner's maps
+		100: {KernelID: 100, Meta: bpfman.ProgramMeta{Name: "owner"}, Handles: bpfman.ProgramHandles{MapOwnerID: nil}},     // Owner - owns maps
+		101: {KernelID: 101, Meta: bpfman.ProgramMeta{Name: "dep1"}, Handles: bpfman.ProgramHandles{MapOwnerID: &ownerID}}, // Dependent - uses owner's maps
+		102: {KernelID: 102, Meta: bpfman.ProgramMeta{Name: "dep2"}, Handles: bpfman.ProgramHandles{MapOwnerID: &ownerID}}, // Dependent - uses owner's maps
 	}
 
 	// All programs are gone from kernel

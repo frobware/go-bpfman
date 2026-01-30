@@ -156,8 +156,8 @@ func formatProgramInfoTree(info manager.ProgramInfo) string {
 		if !p.CreatedAt.IsZero() {
 			fmt.Fprintf(&b, "   ├─ created:    %s\n", p.CreatedAt.Format(time.RFC3339))
 		}
-		fmt.Fprintf(&b, "   ├─ source:     %s\n", p.ObjectPath)
-		fmt.Fprintf(&b, "   └─ pin_path:   %s\n", p.PinPath)
+		fmt.Fprintf(&b, "   ├─ source:     %s\n", p.Load.ObjectPath)
+		fmt.Fprintf(&b, "   └─ pin_path:   %s\n", p.Handles.PinPath)
 	}
 
 	return b.String()
@@ -171,12 +171,12 @@ func formatProgramInfoTable(info manager.ProgramInfo) string {
 		p := info.Bpfman.Program
 		b.WriteString(" Bpfman State\n")
 		bw := tabwriter.NewWriter(&b, 0, 0, 1, ' ', 0)
-		fmt.Fprintf(bw, " BPF Function:\t%s\n", p.Name)
-		fmt.Fprintf(bw, " Program Type:\t%s\n", p.ProgramType)
-		fmt.Fprintf(bw, " Path:\t%s\n", p.ObjectPath)
+		fmt.Fprintf(bw, " BPF Function:\t%s\n", p.Meta.Name)
+		fmt.Fprintf(bw, " Program Type:\t%s\n", p.Load.ProgramType)
+		fmt.Fprintf(bw, " Path:\t%s\n", p.Load.ObjectPath)
 		fmt.Fprintf(bw, " Global:\tNone\n")
 		fmt.Fprintf(bw, " Metadata:\tNone\n")
-		fmt.Fprintf(bw, " Map Pin Path:\t%s\n", p.PinPath)
+		fmt.Fprintf(bw, " Map Pin Path:\t%s\n", p.Handles.PinPath)
 		fmt.Fprintf(bw, " Map Owner ID:\tNone\n")
 		fmt.Fprintf(bw, " Maps Used By:\tNone\n")
 
@@ -209,7 +209,7 @@ func formatProgramInfoTable(info manager.ProgramInfo) string {
 		} else {
 			fmt.Fprintf(bw, " Links:\tNone\n")
 		}
-		fmt.Fprintf(bw, " GPL Compatible:\t%t\n", p.GPLCompatible)
+		fmt.Fprintf(bw, " GPL Compatible:\t%t\n", p.Load.GPLCompatible)
 		bw.Flush()
 		b.WriteString("\n")
 	}
@@ -289,10 +289,10 @@ func formatProgramListTable(programs []manager.ManagedProgram) string {
 
 		// Prefer full name from metadata over kernel-truncated name
 		if p.Metadata != nil {
-			if p.Metadata.Name != "" {
-				name = p.Metadata.Name
+			if p.Metadata.Meta.Name != "" {
+				name = p.Metadata.Meta.Name
 			}
-			source = p.Metadata.ObjectPath
+			source = p.Metadata.Load.ObjectPath
 		}
 
 		fmt.Fprintf(w, "%d\t%s\t%s\t%s\n", id, progType, name, source)

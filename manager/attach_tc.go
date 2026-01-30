@@ -102,15 +102,15 @@ func (m *Manager) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts b
 
 	// COMPUTE: Use the program's MapPinPath which points to the correct maps
 	// directory (either the program's own or the map owner's if sharing).
-	mapPinDir := prog.MapPinPath
+	mapPinDir := prog.Handles.MapPinPath
 
 	// KERNEL I/O: Attach user program as extension
 	progPinPath := dispatcher.DispatcherProgPath(revisionDir)
 	link, err := m.kernel.AttachTCExtension(
 		ctx,
 		progPinPath,
-		prog.ObjectPath,
-		prog.Name,
+		prog.Load.ObjectPath,
+		prog.Meta.Name,
 		position,
 		linkPinPath,
 		mapPinDir,
@@ -149,8 +149,8 @@ func (m *Manager) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts b
 		link, err = m.kernel.AttachTCExtension(
 			ctx,
 			progPinPath,
-			prog.ObjectPath,
-			prog.Name,
+			prog.Load.ObjectPath,
+			prog.Meta.Name,
 			position,
 			linkPinPath,
 			mapPinDir,
@@ -230,8 +230,8 @@ func (m *Manager) AttachTCX(ctx context.Context, spec bpfman.TCXAttachSpec, opts
 	}
 
 	// Verify program type is TCX
-	if prog.ProgramType != bpfman.ProgramTypeTCX {
-		return bpfman.Link{}, fmt.Errorf("program %d is type %s, not tcx", programKernelID, prog.ProgramType)
+	if prog.Load.ProgramType != bpfman.ProgramTypeTCX {
+		return bpfman.Link{}, fmt.Errorf("program %d is type %s, not tcx", programKernelID, prog.Load.ProgramType)
 	}
 
 	// FETCH: Get network namespace ID (from target namespace if specified)
@@ -258,7 +258,7 @@ func (m *Manager) AttachTCX(ctx context.Context, spec bpfman.TCXAttachSpec, opts
 	}
 
 	// COMPUTE: Use the stored program pin path directly
-	progPinPath := prog.PinPath
+	progPinPath := prog.Handles.PinPath
 
 	// FETCH: Get existing TCX links for this interface/direction to compute order
 	existingLinks, err := m.store.ListTCXLinksByInterface(ctx, nsid, uint32(ifindex), direction)

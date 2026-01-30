@@ -29,11 +29,17 @@ func testLogger() *slog.Logger {
 // testProgram returns a valid ProgramRecord for testing.
 func testProgram() bpfman.ProgramRecord {
 	return bpfman.ProgramRecord{
-		Name:        "test_program",
-		ProgramType: bpfman.ProgramTypeTracepoint,
-		ObjectPath:  "/test/path/program.o",
-		PinPath:     "/sys/fs/bpf/test",
-		CreatedAt:   time.Now(),
+		Load: bpfman.ProgramLoadSpec{
+			ProgramType: bpfman.ProgramTypeTracepoint,
+			ObjectPath:  "/test/path/program.o",
+		},
+		Handles: bpfman.ProgramHandles{
+			PinPath: "/sys/fs/bpf/test",
+		},
+		Meta: bpfman.ProgramMeta{
+			Name: "test_program",
+		},
+		CreatedAt: time.Now(),
 	}
 }
 
@@ -107,7 +113,7 @@ func TestForeignKey_CascadeDeleteRemovesMetadataIndex(t *testing.T) {
 	// Create a program with metadata.
 	kernelID := uint32(42)
 	prog := testProgram()
-	prog.UserMetadata = map[string]string{
+	prog.Meta.Metadata = map[string]string{
 		"app":     "test",
 		"version": "1.0",
 	}
@@ -118,7 +124,7 @@ func TestForeignKey_CascadeDeleteRemovesMetadataIndex(t *testing.T) {
 	found, foundID, err := store.FindProgramByMetadata(ctx, "app", "test")
 	require.NoError(t, err, "FindProgramByMetadata failed")
 	assert.Equal(t, kernelID, foundID, "kernel_id mismatch")
-	assert.Equal(t, "test", found.UserMetadata["app"], "metadata mismatch")
+	assert.Equal(t, "test", found.Meta.Metadata["app"], "metadata mismatch")
 
 	// Delete the program.
 	require.NoError(t, store.Delete(ctx, kernelID), "Delete failed")
@@ -139,7 +145,7 @@ func TestProgramName_DuplicatesAllowed(t *testing.T) {
 
 	// Create first program with a name.
 	prog1 := testProgram()
-	prog1.UserMetadata = map[string]string{
+	prog1.Meta.Metadata = map[string]string{
 		"bpfman.io/ProgramName": "my-program",
 	}
 
@@ -147,7 +153,7 @@ func TestProgramName_DuplicatesAllowed(t *testing.T) {
 
 	// Create second program with the same name - this should succeed.
 	prog2 := testProgram()
-	prog2.UserMetadata = map[string]string{
+	prog2.Meta.Metadata = map[string]string{
 		"bpfman.io/ProgramName": "my-program", // same name, allowed
 	}
 
@@ -165,7 +171,7 @@ func TestUniqueIndex_DifferentNamesAllowed(t *testing.T) {
 	// Create two programs with different names.
 	for i, name := range []string{"program-a", "program-b"} {
 		prog := testProgram()
-		prog.UserMetadata = map[string]string{
+		prog.Meta.Metadata = map[string]string{
 			"bpfman.io/ProgramName": name,
 		}
 
@@ -187,7 +193,7 @@ func TestUniqueIndex_NameCanBeReusedAfterDelete(t *testing.T) {
 
 	// Create a program with a name.
 	prog := testProgram()
-	prog.UserMetadata = map[string]string{
+	prog.Meta.Metadata = map[string]string{
 		"bpfman.io/ProgramName": "reusable-name",
 	}
 
@@ -198,7 +204,7 @@ func TestUniqueIndex_NameCanBeReusedAfterDelete(t *testing.T) {
 
 	// Create a new program with the same name.
 	prog2 := testProgram()
-	prog2.UserMetadata = map[string]string{
+	prog2.Meta.Metadata = map[string]string{
 		"bpfman.io/ProgramName": "reusable-name", // same name, should work
 	}
 
@@ -208,7 +214,7 @@ func TestUniqueIndex_NameCanBeReusedAfterDelete(t *testing.T) {
 	found, kernelID, err := store.FindProgramByMetadata(ctx, "bpfman.io/ProgramName", "reusable-name")
 	require.NoError(t, err, "FindProgramByMetadata failed")
 	assert.Equal(t, uint32(200), kernelID, "kernel_id mismatch")
-	assert.Equal(t, "reusable-name", found.UserMetadata["bpfman.io/ProgramName"], "name mismatch")
+	assert.Equal(t, "reusable-name", found.Meta.Metadata["bpfman.io/ProgramName"], "name mismatch")
 }
 
 func TestLinkRegistry_TracepointRoundTrip(t *testing.T) {
@@ -528,8 +534,8 @@ func TestMapOwnership_CountDependentPrograms(t *testing.T) {
 	// Create the owner program (first program from an image).
 	ownerID := uint32(100)
 	ownerProg := testProgram()
-	ownerProg.Name = "kprobe_counter"
-	ownerProg.MapPinPath = "/sys/fs/bpf/bpfman/100"
+	ownerProg.Meta.Name = "kprobe_counter"
+	ownerProg.Handles.MapPinPath = "/sys/fs/bpf/bpfman/100"
 	require.NoError(t, store.Save(ctx, ownerID, ownerProg), "Save owner failed")
 
 	// Initially no dependents.
@@ -540,9 +546,9 @@ func TestMapOwnership_CountDependentPrograms(t *testing.T) {
 	// Create dependent programs that share the owner's maps.
 	for i := uint32(1); i <= 3; i++ {
 		depProg := testProgram()
-		depProg.Name = "dependent_" + string(rune('0'+i))
-		depProg.MapOwnerID = &ownerID
-		depProg.MapPinPath = "/sys/fs/bpf/bpfman/100" // Same as owner
+		depProg.Meta.Name = "dependent_" + string(rune('0'+i))
+		depProg.Handles.MapOwnerID = &ownerID
+		depProg.Handles.MapPinPath = "/sys/fs/bpf/bpfman/100" // Same as owner
 		require.NoError(t, store.Save(ctx, 100+i, depProg), "Save dependent %d failed", i)
 	}
 
@@ -570,15 +576,15 @@ func TestMapOwnership_ForeignKeyPreventsDeletingOwner(t *testing.T) {
 	// Create the owner program.
 	ownerID := uint32(100)
 	ownerProg := testProgram()
-	ownerProg.Name = "owner"
-	ownerProg.MapPinPath = "/sys/fs/bpf/bpfman/100"
+	ownerProg.Meta.Name = "owner"
+	ownerProg.Handles.MapPinPath = "/sys/fs/bpf/bpfman/100"
 	require.NoError(t, store.Save(ctx, ownerID, ownerProg), "Save owner failed")
 
 	// Create a dependent program.
 	depProg := testProgram()
-	depProg.Name = "dependent"
-	depProg.MapOwnerID = &ownerID
-	depProg.MapPinPath = "/sys/fs/bpf/bpfman/100"
+	depProg.Meta.Name = "dependent"
+	depProg.Handles.MapOwnerID = &ownerID
+	depProg.Handles.MapPinPath = "/sys/fs/bpf/bpfman/100"
 	require.NoError(t, store.Save(ctx, 101, depProg), "Save dependent failed")
 
 	// Attempt to delete the owner while dependent exists - should fail due to FK.
@@ -604,14 +610,14 @@ func TestMapOwnership_MapPinPathPersisted(t *testing.T) {
 	// Create a program with MapPinPath set.
 	kernelID := uint32(42)
 	prog := testProgram()
-	prog.MapPinPath = "/sys/fs/bpf/bpfman/42"
+	prog.Handles.MapPinPath = "/sys/fs/bpf/bpfman/42"
 
 	require.NoError(t, store.Save(ctx, kernelID, prog), "Save failed")
 
 	// Retrieve and verify MapPinPath is persisted.
 	got, err := store.Get(ctx, kernelID)
 	require.NoError(t, err, "Get failed")
-	assert.Equal(t, "/sys/fs/bpf/bpfman/42", got.MapPinPath, "MapPinPath mismatch")
+	assert.Equal(t, "/sys/fs/bpf/bpfman/42", got.Handles.MapPinPath, "MapPinPath mismatch")
 }
 
 func TestMapOwnership_MapOwnerIDPersisted(t *testing.T) {
@@ -624,23 +630,23 @@ func TestMapOwnership_MapOwnerIDPersisted(t *testing.T) {
 	// Create the owner program first.
 	ownerID := uint32(100)
 	ownerProg := testProgram()
-	ownerProg.Name = "owner"
+	ownerProg.Meta.Name = "owner"
 	require.NoError(t, store.Save(ctx, ownerID, ownerProg), "Save owner failed")
 
 	// Create a dependent program with MapOwnerID set.
 	depID := uint32(101)
 	depProg := testProgram()
-	depProg.Name = "dependent"
-	depProg.MapOwnerID = &ownerID
-	depProg.MapPinPath = "/sys/fs/bpf/bpfman/100"
+	depProg.Meta.Name = "dependent"
+	depProg.Handles.MapOwnerID = &ownerID
+	depProg.Handles.MapPinPath = "/sys/fs/bpf/bpfman/100"
 
 	require.NoError(t, store.Save(ctx, depID, depProg), "Save dependent failed")
 
 	// Retrieve and verify MapOwnerID is persisted.
 	got, err := store.Get(ctx, depID)
 	require.NoError(t, err, "Get failed")
-	require.NotNil(t, got.MapOwnerID, "MapOwnerID should not be nil")
-	assert.Equal(t, ownerID, *got.MapOwnerID, "MapOwnerID mismatch")
+	require.NotNil(t, got.Handles.MapOwnerID, "MapOwnerID should not be nil")
+	assert.Equal(t, ownerID, *got.Handles.MapOwnerID, "MapOwnerID mismatch")
 }
 
 func TestMapOwnership_ListIncludesMapFields(t *testing.T) {
@@ -653,16 +659,16 @@ func TestMapOwnership_ListIncludesMapFields(t *testing.T) {
 	// Create owner.
 	ownerID := uint32(100)
 	ownerProg := testProgram()
-	ownerProg.Name = "owner"
-	ownerProg.MapPinPath = "/sys/fs/bpf/bpfman/100"
+	ownerProg.Meta.Name = "owner"
+	ownerProg.Handles.MapPinPath = "/sys/fs/bpf/bpfman/100"
 	require.NoError(t, store.Save(ctx, ownerID, ownerProg), "Save owner failed")
 
 	// Create dependent.
 	depID := uint32(101)
 	depProg := testProgram()
-	depProg.Name = "dependent"
-	depProg.MapOwnerID = &ownerID
-	depProg.MapPinPath = "/sys/fs/bpf/bpfman/100"
+	depProg.Meta.Name = "dependent"
+	depProg.Handles.MapOwnerID = &ownerID
+	depProg.Handles.MapPinPath = "/sys/fs/bpf/bpfman/100"
 	require.NoError(t, store.Save(ctx, depID, depProg), "Save dependent failed")
 
 	// List all programs.
@@ -672,14 +678,14 @@ func TestMapOwnership_ListIncludesMapFields(t *testing.T) {
 
 	// Verify owner has MapPinPath but no MapOwnerID.
 	owner := programs[ownerID]
-	assert.Equal(t, "/sys/fs/bpf/bpfman/100", owner.MapPinPath, "owner MapPinPath mismatch")
-	assert.Nil(t, owner.MapOwnerID, "owner should have no MapOwnerID")
+	assert.Equal(t, "/sys/fs/bpf/bpfman/100", owner.Handles.MapPinPath, "owner MapPinPath mismatch")
+	assert.Nil(t, owner.Handles.MapOwnerID, "owner should have no MapOwnerID")
 
 	// Verify dependent has both fields.
 	dep := programs[depID]
-	assert.Equal(t, "/sys/fs/bpf/bpfman/100", dep.MapPinPath, "dependent MapPinPath mismatch")
-	require.NotNil(t, dep.MapOwnerID, "dependent should have MapOwnerID set")
-	assert.Equal(t, ownerID, *dep.MapOwnerID, "dependent MapOwnerID mismatch")
+	assert.Equal(t, "/sys/fs/bpf/bpfman/100", dep.Handles.MapPinPath, "dependent MapPinPath mismatch")
+	require.NotNil(t, dep.Handles.MapOwnerID, "dependent should have MapOwnerID set")
+	assert.Equal(t, ownerID, *dep.Handles.MapOwnerID, "dependent MapOwnerID mismatch")
 }
 
 // TestListTCXLinksByInterface_OrderByPriority verifies that TCX links are
@@ -695,7 +701,7 @@ func TestListTCXLinksByInterface_OrderByPriority(t *testing.T) {
 	// Create a program for the links to reference.
 	progID := uint32(100)
 	prog := testProgram()
-	prog.ProgramType = bpfman.ProgramTypeTCX
+	prog.Load.ProgramType = bpfman.ProgramTypeTCX
 	require.NoError(t, store.Save(ctx, progID, prog), "Save program failed")
 
 	// Create TCX links with varying priorities (insert out of order).
@@ -762,7 +768,7 @@ func TestListTCXLinksByInterface_FiltersByInterfaceAndDirection(t *testing.T) {
 	// Create a program for the links to reference.
 	progID := uint32(100)
 	prog := testProgram()
-	prog.ProgramType = bpfman.ProgramTypeTCX
+	prog.Load.ProgramType = bpfman.ProgramTypeTCX
 	require.NoError(t, store.Save(ctx, progID, prog), "Save program failed")
 
 	const nsid = uint64(4026531840)
@@ -917,21 +923,21 @@ func TestGC_MapOwnerOrdering(t *testing.T) {
 
 	// Create owner first (must exist for FK)
 	owner := testProgram()
-	owner.Name = "owner"
+	owner.Meta.Name = "owner"
 	err = store.Save(ctx, 100, owner)
 	require.NoError(t, err)
 
 	// Create dependents that reference the owner
 	ownerID := uint32(100)
 	dep1 := testProgram()
-	dep1.Name = "dep1"
-	dep1.MapOwnerID = &ownerID
+	dep1.Meta.Name = "dep1"
+	dep1.Handles.MapOwnerID = &ownerID
 	err = store.Save(ctx, 101, dep1)
 	require.NoError(t, err)
 
 	dep2 := testProgram()
-	dep2.Name = "dep2"
-	dep2.MapOwnerID = &ownerID
+	dep2.Meta.Name = "dep2"
+	dep2.Handles.MapOwnerID = &ownerID
 	err = store.Save(ctx, 102, dep2)
 	require.NoError(t, err)
 
@@ -1045,14 +1051,14 @@ func TestGC_Comprehensive(t *testing.T) {
 	require.NoError(t, err)
 
 	ownerProg := testProgram()
-	ownerProg.Name = "stale_owner"
+	ownerProg.Meta.Name = "stale_owner"
 	err = store.Save(ctx, 101, ownerProg)
 	require.NoError(t, err)
 
 	staleOwnerID := uint32(101)
 	depProg := testProgram()
-	depProg.Name = "stale_dep"
-	depProg.MapOwnerID = &staleOwnerID
+	depProg.Meta.Name = "stale_dep"
+	depProg.Handles.MapOwnerID = &staleOwnerID
 	err = store.Save(ctx, 102, depProg)
 	require.NoError(t, err)
 
