@@ -22,7 +22,7 @@ func FilterPrograms(
 
 // FilterByType returns programs of the specified type.
 // Pure function.
-func FilterByType(programs []kernel.Program, programType string) []kernel.Program {
+func FilterByType(programs []kernel.Program, programType kernel.ProgramType) []kernel.Program {
 	return FilterPrograms(programs, func(p kernel.Program) bool {
 		return p.ProgramType == programType
 	})

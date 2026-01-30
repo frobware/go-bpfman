@@ -2,13 +2,11 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
 	"text/tabwriter"
 
-	"github.com/frobware/go-bpfman/client"
 	"github.com/frobware/go-bpfman/manager"
 )
 
@@ -40,16 +38,13 @@ type DoctorCheckupCmd struct{}
 
 // Run executes the doctor check command.
 func (c *DoctorCheckupCmd) Run(cli *CLI, ctx context.Context) error {
-	b, err := cli.Client(ctx)
+	runtime, err := cli.NewCLIRuntime(ctx)
 	if err != nil {
-		return fmt.Errorf("create client: %w", err)
+		return fmt.Errorf("create runtime: %w", err)
 	}
-	defer b.Close()
+	defer runtime.Close()
 
-	report, err := b.Doctor(ctx)
-	if errors.Is(err, client.ErrNotSupported) {
-		return fmt.Errorf("doctor is only available in local mode")
-	}
+	report, err := runtime.Manager.Doctor(ctx)
 	if err != nil {
 		return fmt.Errorf("doctor failed: %w", err)
 	}

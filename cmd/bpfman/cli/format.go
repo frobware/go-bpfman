@@ -223,7 +223,7 @@ func formatProgramInfoTable(info manager.ProgramInfo) string {
 		fmt.Fprintf(kw, " BPF Function:\t%s\n", p.Name)
 
 		// Convert program type to kernel type
-		progType, _ := bpfman.ParseProgramType(p.ProgramType)
+		progType, _ := bpfman.ParseProgramType(p.ProgramType.String())
 		fmt.Fprintf(kw, " Kernel Type:\t%s\n", toKernelType(progType))
 
 		if !p.LoadedAt.IsZero() {
@@ -788,8 +788,34 @@ func FormatProgramsComposite(result manager.ProgramListResult, flags *OutputFlag
 	case OutputFormatJSONPath:
 		return executeJSONPath(result, flags.JSONPathExpr())
 	case OutputFormatTable:
-		return "", fmt.Errorf("--local requires --json output")
+		return formatProgramsCompositeTable(result), nil
 	default:
-		return "", fmt.Errorf("unsupported format for --local: %v", format)
+		return formatProgramsCompositeTable(result), nil
 	}
+}
+
+func formatProgramsCompositeTable(result manager.ProgramListResult) string {
+	var b strings.Builder
+	w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
+
+	fmt.Fprintln(w, "KERNEL ID\tTYPE\tNAME\tSOURCE")
+
+	for _, p := range result.Programs {
+		id := uint32(0)
+
+		// Get kernel ID from status (status.Kernel may be nil)
+		if p.Status.Kernel != nil {
+			id = p.Status.Kernel.ID
+		}
+
+		// Get info from spec (always present as value type)
+		name := p.Spec.Meta.Name
+		progType := p.Spec.Load.ProgramType.String()
+		source := p.Spec.Load.ObjectPath
+
+		fmt.Fprintf(w, "%d\t%s\t%s\t%s\n", id, progType, name, source)
+	}
+
+	w.Flush()
+	return b.String()
 }

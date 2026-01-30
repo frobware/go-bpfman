@@ -40,7 +40,7 @@ func ToKernelProgram(info *ebpf.ProgramInfo, license string) *kernel.Program {
 	return &kernel.Program{
 		ID:                   uint32(id),
 		Name:                 info.Name,
-		ProgramType:          info.Type.String(),
+		ProgramType:          kernel.NewProgramType(info.Type.String()),
 		Tag:                  info.Tag,
 		LoadedAt:             loadedAt,
 		UID:                  0,     // Not available from ProgramInfo

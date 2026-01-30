@@ -144,7 +144,7 @@ func (v ProgramView) Type() string {
 		return v.Managed.Load.ProgramType.String()
 	}
 	if v.Kernel != nil {
-		return v.Kernel.ProgramType
+		return v.Kernel.ProgramType.String()
 	}
 	return ""
 }

@@ -91,7 +91,7 @@ func infoToProgram(info *ebpf.ProgramInfo, id uint32) kernel.Program {
 	kp := kernel.Program{
 		ID:          id,
 		Name:        info.Name,
-		ProgramType: info.Type.String(),
+		ProgramType: kernel.NewProgramType(info.Type.String()),
 		Tag:         info.Tag,
 	}
 
@@ -154,7 +154,7 @@ func infoToMap(info *ebpf.MapInfo, id uint32) kernel.Map {
 	km := kernel.Map{
 		ID:         id,
 		Name:       info.Name,
-		MapType:    info.Type.String(),
+		MapType:    kernel.NewMapType(info.Type.String()),
 		KeySize:    info.KeySize,
 		ValueSize:  info.ValueSize,
 		MaxEntries: info.MaxEntries,

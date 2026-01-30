@@ -1,5 +1,5 @@
 // Package cli provides the command-line interface for bpfman.
-// It uses Kong for argument parsing and delegates to the client package
+// It uses Kong for argument parsing and calls the manager directly
 // for BPF operations.
 package cli
 
@@ -17,7 +17,6 @@ import (
 
 	"github.com/alecthomas/kong"
 
-	"github.com/frobware/go-bpfman/client"
 	"github.com/frobware/go-bpfman/config"
 	"github.com/frobware/go-bpfman/lock"
 	"github.com/frobware/go-bpfman/logging"
@@ -29,7 +28,6 @@ type CLI struct {
 	RuntimeDir  string        `name:"runtime-dir" help:"Runtime directory base path." default:"${default_runtime_dir}"`
 	Config      string        `name:"config" help:"Config file path." default:"${default_config_path}"`
 	Log         string        `name:"log" help:"Log spec (e.g., 'info,manager=debug')." env:"BPFMAN_LOG"`
-	Remote      string        `name:"remote" short:"r" help:"Remote endpoint (unix:///path or host:port). Connects via gRPC instead of local manager."`
 	LockTimeout time.Duration `name:"lock-timeout" help:"Timeout for acquiring the global writer lock (0 for indefinite)." default:"30s"`
 
 	// Out is the writer for command output. Defaults to os.Stdout.
@@ -262,37 +260,9 @@ func (c *CLI) LoggerFromConfig() (*slog.Logger, error) {
 	return logging.New(opts)
 }
 
-// Client returns a client appropriate for the configured transport.
-// If --remote is set, returns a client connected via gRPC to the remote daemon.
-// Otherwise, returns a client that spawns an in-process gRPC server,
-// ensuring all operations use the same code path as remote clients.
-// The returned client must be closed when no longer needed.
-func (c *CLI) Client(ctx context.Context) (client.Client, error) {
-	logger, err := c.Logger()
-	if err != nil {
-		return nil, err
-	}
-
-	if c.Remote != "" {
-		return client.Dial(c.Remote, client.WithLogger(logger))
-	}
-
-	cfg, err := c.LoadConfig()
-	if err != nil {
-		return nil, fmt.Errorf("failed to load config: %w", err)
-	}
-
-	return client.Open(ctx,
-		client.WithLogger(logger),
-		client.WithRuntimeDir(c.RuntimeDir),
-		client.WithConfig(cfg),
-	)
-}
-
-// RunWithLock wraps mutating CLI operations with the global writer lock when
-// running in local (ephemeral) mode. Remote mode relies on the server's lock
-// interceptor, so the client must avoid taking the same lock to prevent
-// deadlock.
+// RunWithLock wraps mutating CLI operations with the global writer lock.
+// The lock ensures serialised access to BPF state across concurrent CLI
+// invocations.
 func (c *CLI) RunWithLock(ctx context.Context, fn func(context.Context) error) error {
 	_, err := RunWithLockValue(ctx, c, func(ctx context.Context) (struct{}, error) {
 		return struct{}{}, fn(ctx)
@@ -305,10 +275,6 @@ func (c *CLI) RunWithLock(ctx context.Context, fn func(context.Context) error) e
 // emit output outside the lock to minimise critical section duration.
 func RunWithLockValue[T any](ctx context.Context, c *CLI, fn func(context.Context) (T, error)) (T, error) {
 	var result T
-
-	if c.Remote != "" {
-		return fn(ctx)
-	}
 
 	// Apply lock timeout if set (0 means indefinite)
 	if c.LockTimeout > 0 {
@@ -333,7 +299,41 @@ func RunWithLockValue[T any](ctx context.Context, c *CLI, fn func(context.Contex
 
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
-			return result, fmt.Errorf("timed out waiting for lock %s (local mode, --lock-timeout=%v)", dirs.Lock, c.LockTimeout)
+			return result, fmt.Errorf("timed out waiting for lock %s (--lock-timeout=%v)", dirs.Lock, c.LockTimeout)
+		}
+		return result, err
+	}
+	return result, nil
+}
+
+// RunWithLockValueAndScope is like RunWithLockValue but provides the
+// WriterScope to the callback. This is needed for operations like uprobe
+// attachment that may spawn subprocesses requiring lock inheritance.
+func RunWithLockValueAndScope[T any](ctx context.Context, c *CLI, fn func(context.Context, lock.WriterScope) (T, error)) (T, error) {
+	var result T
+
+	// Apply lock timeout if set (0 means indefinite)
+	if c.LockTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, c.LockTimeout)
+		defer cancel()
+	}
+
+	dirs := c.RuntimeDirs()
+	logger, logErr := c.Logger()
+	if logErr != nil {
+		logger = slog.Default()
+	}
+
+	err := lock.RunWithTiming(ctx, dirs.Lock, logger, func(ctx context.Context, scope lock.WriterScope) error {
+		var fnErr error
+		result, fnErr = fn(ctx, scope)
+		return fnErr
+	})
+
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return result, fmt.Errorf("timed out waiting for lock %s (--lock-timeout=%v)", dirs.Lock, c.LockTimeout)
 		}
 		return result, err
 	}

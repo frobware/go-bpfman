@@ -2,10 +2,9 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
-	"github.com/frobware/go-bpfman/client"
+	"github.com/frobware/go-bpfman"
 )
 
 // DetachCmd detaches a link.
@@ -15,21 +14,15 @@ type DetachCmd struct {
 
 // Run executes the detach command: mutation under lock, output outside.
 func (c *DetachCmd) Run(cli *CLI, ctx context.Context) error {
-	b, err := cli.Client(ctx)
+	runtime, err := cli.NewCLIRuntime(ctx)
 	if err != nil {
-		return fmt.Errorf("create client: %w", err)
+		return fmt.Errorf("create runtime: %w", err)
 	}
-	defer b.Close()
+	defer runtime.Close()
 
 	// Mutation under lock
 	if err := cli.RunWithLock(ctx, func(ctx context.Context) error {
-		if err := b.Detach(ctx, c.LinkID.Value); err != nil {
-			if errors.Is(err, client.ErrNotSupported) {
-				return fmt.Errorf("detach is only available in local mode")
-			}
-			return err
-		}
-		return nil
+		return runtime.Manager.Detach(ctx, bpfman.LinkID(c.LinkID.Value))
 	}); err != nil {
 		return err
 	}

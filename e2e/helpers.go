@@ -19,19 +19,25 @@ import (
 	"github.com/vishvananda/netlink"
 
 	"github.com/frobware/go-bpfman"
-	"github.com/frobware/go-bpfman/client"
 	"github.com/frobware/go-bpfman/config"
+	"github.com/frobware/go-bpfman/interpreter"
+	"github.com/frobware/go-bpfman/interpreter/image/oci"
+	"github.com/frobware/go-bpfman/interpreter/image/verify"
+	"github.com/frobware/go-bpfman/lock"
 	"github.com/frobware/go-bpfman/logging"
+	"github.com/frobware/go-bpfman/manager"
 )
 
 // TestEnv provides an isolated test environment for e2e tests.
 // Each test gets a fully isolated environment with unique directories,
 // database, and socket, enabling t.Parallel() across all tests.
 type TestEnv struct {
-	T      *testing.T
-	Dirs   config.RuntimeDirs
-	Client client.Client
-	logger *slog.Logger
+	T       *testing.T
+	Dirs    config.RuntimeDirs
+	Manager *manager.Manager
+	Puller  interpreter.ImagePuller
+	env     *manager.RuntimeEnv
+	logger  *slog.Logger
 }
 
 // NewTestEnv creates an isolated test environment for e2e testing.
@@ -39,7 +45,7 @@ type TestEnv struct {
 //   - A unique runtime directory in /tmp/bpfman-e2e-<pid>-<testname>/
 //   - A fresh SQLite database
 //   - A bpffs mount
-//   - An ephemeral gRPC server and client
+//   - A manager instance for BPF operations
 //
 // The environment is automatically cleaned up via t.Cleanup().
 func NewTestEnv(t *testing.T) *TestEnv {
@@ -73,24 +79,28 @@ func NewTestEnv(t *testing.T) *TestEnv {
 		}))
 	}
 
-	// Create client with test-specific runtime directory
-	// The client.Open function handles all setup: directories, bpffs, store, server
-	cfg := config.DefaultConfig()
-	cfg.Signing.AllowUnsigned = true  // Allow unsigned images
-	cfg.Signing.VerifyEnabled = false // Disable signature verification for tests
+	// Set up runtime environment (ensures directories, opens store, creates manager)
+	ctx := context.Background()
+	runtimeEnv, err := manager.SetupRuntimeEnv(ctx, dirs, logger)
+	require.NoError(t, err, "failed to setup runtime environment")
 
-	c, err := client.Open(context.Background(),
-		client.WithRuntimeDir(baseDir),
-		client.WithLogger(logger),
-		client.WithConfig(cfg),
+	// Create signature verifier (disabled for tests)
+	verifier := verify.NoSign()
+
+	// Create image puller for OCI images
+	puller, err := oci.NewPuller(
+		oci.WithLogger(logger),
+		oci.WithVerifier(verifier),
 	)
-	require.NoError(t, err, "failed to create client")
+	require.NoError(t, err, "failed to create image puller")
 
 	env := &TestEnv{
-		T:      t,
-		Dirs:   dirs,
-		Client: c,
-		logger: logger,
+		T:       t,
+		Dirs:    dirs,
+		Manager: runtimeEnv.Manager,
+		Puller:  puller,
+		env:     runtimeEnv,
+		logger:  logger,
 	}
 
 	// Register cleanup
@@ -103,8 +113,8 @@ func NewTestEnv(t *testing.T) *TestEnv {
 
 // cleanup releases resources and removes test directories.
 func (e *TestEnv) cleanup() {
-	if e.Client != nil {
-		e.Client.Close()
+	if e.env != nil {
+		e.env.Close()
 	}
 
 	// Unmount bpffs if mounted
@@ -123,6 +133,251 @@ func (e *TestEnv) cleanup() {
 	}
 }
 
+// runWithLock executes a function under the writer lock.
+func (e *TestEnv) runWithLock(ctx context.Context, fn func(context.Context) error) error {
+	return lock.Run(ctx, e.Dirs.Lock, func(ctx context.Context, _ lock.WriterScope) error {
+		return fn(ctx)
+	})
+}
+
+// runWithLockAndScope executes a function under the writer lock with scope access.
+func (e *TestEnv) runWithLockAndScope(ctx context.Context, fn func(context.Context, lock.WriterScope) error) error {
+	return lock.Run(ctx, e.Dirs.Lock, fn)
+}
+
+// LoadImage loads BPF programs from an OCI image.
+func (e *TestEnv) LoadImage(ctx context.Context, ref interpreter.ImageRef, programs []manager.ImageProgramSpec, opts manager.LoadImageOpts) ([]bpfman.ManagedProgram, error) {
+	var result manager.LoadImageResult
+	err := e.runWithLock(ctx, func(ctx context.Context) error {
+		var loadErr error
+		result, loadErr = e.Manager.LoadImage(ctx, e.Puller, ref, programs, opts)
+		return loadErr
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result.Programs, nil
+}
+
+// Load loads a BPF program from a file.
+func (e *TestEnv) Load(ctx context.Context, spec bpfman.LoadSpec, opts manager.LoadOpts) (bpfman.ManagedProgram, error) {
+	var result bpfman.ManagedProgram
+	err := e.runWithLock(ctx, func(ctx context.Context) error {
+		var loadErr error
+		result, loadErr = e.Manager.Load(ctx, spec, opts)
+		return loadErr
+	})
+	return result, err
+}
+
+// Unload unloads a BPF program.
+func (e *TestEnv) Unload(ctx context.Context, kernelID uint32) error {
+	return e.runWithLock(ctx, func(ctx context.Context) error {
+		return e.Manager.Unload(ctx, kernelID)
+	})
+}
+
+// List returns all managed programs.
+// This provides compatibility with the old client.Client interface.
+func (e *TestEnv) List(ctx context.Context) ([]manager.ManagedProgram, error) {
+	result, err := e.Manager.ListPrograms(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert []bpfman.Program to []manager.ManagedProgram
+	managed := make([]manager.ManagedProgram, 0, len(result.Programs))
+	for _, p := range result.Programs {
+		mp := manager.ManagedProgram{}
+		if p.Status.Kernel != nil {
+			mp.KernelProgram = *p.Status.Kernel
+		}
+		if p.Spec.Load.ProgramType != bpfman.ProgramTypeUnspecified {
+			spec := &bpfman.ProgramSpec{
+				Load: p.Spec.Load,
+				Handles: bpfman.ProgramHandles{
+					PinPath: p.Spec.Handles.PinPath,
+				},
+				Meta: p.Spec.Meta,
+			}
+			mp.Metadata = spec
+		}
+		managed = append(managed, mp)
+	}
+	return managed, nil
+}
+
+// Get returns detailed information about a program.
+func (e *TestEnv) Get(ctx context.Context, kernelID uint32) (manager.ProgramInfo, error) {
+	return e.Manager.Get(ctx, kernelID)
+}
+
+// AttachTracepoint attaches a tracepoint program.
+func (e *TestEnv) AttachTracepoint(ctx context.Context, spec bpfman.TracepointAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkRecord, error) {
+	var result bpfman.Link
+	err := e.runWithLock(ctx, func(ctx context.Context) error {
+		var attachErr error
+		result, attachErr = e.Manager.AttachTracepoint(ctx, spec, opts)
+		return attachErr
+	})
+	if err != nil {
+		return bpfman.LinkRecord{}, err
+	}
+	// Fetch full link record for consistent return value
+	record, err := e.Manager.GetLink(ctx, result.Spec.ID)
+	if err != nil {
+		return bpfman.LinkRecord{ID: result.Spec.ID, Kind: bpfman.LinkKindTracepoint}, nil
+	}
+	return record, nil
+}
+
+// AttachXDP attaches an XDP program.
+func (e *TestEnv) AttachXDP(ctx context.Context, spec bpfman.XDPAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkRecord, error) {
+	var result bpfman.Link
+	err := e.runWithLock(ctx, func(ctx context.Context) error {
+		var attachErr error
+		result, attachErr = e.Manager.AttachXDP(ctx, spec, opts)
+		return attachErr
+	})
+	if err != nil {
+		return bpfman.LinkRecord{}, err
+	}
+	record, err := e.Manager.GetLink(ctx, result.Spec.ID)
+	if err != nil {
+		return bpfman.LinkRecord{ID: result.Spec.ID, Kind: bpfman.LinkKindXDP}, nil
+	}
+	return record, nil
+}
+
+// AttachTC attaches a TC program.
+func (e *TestEnv) AttachTC(ctx context.Context, spec bpfman.TCAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkRecord, error) {
+	var result bpfman.Link
+	err := e.runWithLock(ctx, func(ctx context.Context) error {
+		var attachErr error
+		result, attachErr = e.Manager.AttachTC(ctx, spec, opts)
+		return attachErr
+	})
+	if err != nil {
+		return bpfman.LinkRecord{}, err
+	}
+	record, err := e.Manager.GetLink(ctx, result.Spec.ID)
+	if err != nil {
+		return bpfman.LinkRecord{ID: result.Spec.ID, Kind: bpfman.LinkKindTC}, nil
+	}
+	return record, nil
+}
+
+// AttachTCX attaches a TCX program.
+func (e *TestEnv) AttachTCX(ctx context.Context, spec bpfman.TCXAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkRecord, error) {
+	var result bpfman.Link
+	err := e.runWithLock(ctx, func(ctx context.Context) error {
+		var attachErr error
+		result, attachErr = e.Manager.AttachTCX(ctx, spec, opts)
+		return attachErr
+	})
+	if err != nil {
+		return bpfman.LinkRecord{}, err
+	}
+	record, err := e.Manager.GetLink(ctx, result.Spec.ID)
+	if err != nil {
+		return bpfman.LinkRecord{ID: result.Spec.ID, Kind: bpfman.LinkKindTCX}, nil
+	}
+	return record, nil
+}
+
+// AttachKprobe attaches a kprobe/kretprobe program.
+func (e *TestEnv) AttachKprobe(ctx context.Context, spec bpfman.KprobeAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkRecord, error) {
+	var result bpfman.Link
+	err := e.runWithLock(ctx, func(ctx context.Context) error {
+		var attachErr error
+		result, attachErr = e.Manager.AttachKprobe(ctx, spec, opts)
+		return attachErr
+	})
+	if err != nil {
+		return bpfman.LinkRecord{}, err
+	}
+	record, err := e.Manager.GetLink(ctx, result.Spec.ID)
+	if err != nil {
+		return bpfman.LinkRecord{ID: result.Spec.ID, Kind: bpfman.LinkKindKprobe}, nil
+	}
+	return record, nil
+}
+
+// AttachUprobe attaches a uprobe/uretprobe program.
+func (e *TestEnv) AttachUprobe(ctx context.Context, spec bpfman.UprobeAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkRecord, error) {
+	var result bpfman.Link
+	err := e.runWithLockAndScope(ctx, func(ctx context.Context, scope lock.WriterScope) error {
+		var attachErr error
+		result, attachErr = e.Manager.AttachUprobe(ctx, scope, spec, opts)
+		return attachErr
+	})
+	if err != nil {
+		return bpfman.LinkRecord{}, err
+	}
+	record, err := e.Manager.GetLink(ctx, result.Spec.ID)
+	if err != nil {
+		return bpfman.LinkRecord{ID: result.Spec.ID, Kind: bpfman.LinkKindUprobe}, nil
+	}
+	return record, nil
+}
+
+// AttachFentry attaches a fentry program.
+func (e *TestEnv) AttachFentry(ctx context.Context, spec bpfman.FentryAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkRecord, error) {
+	var result bpfman.Link
+	err := e.runWithLock(ctx, func(ctx context.Context) error {
+		var attachErr error
+		result, attachErr = e.Manager.AttachFentry(ctx, spec, opts)
+		return attachErr
+	})
+	if err != nil {
+		return bpfman.LinkRecord{}, err
+	}
+	record, err := e.Manager.GetLink(ctx, result.Spec.ID)
+	if err != nil {
+		return bpfman.LinkRecord{ID: result.Spec.ID, Kind: bpfman.LinkKindFentry}, nil
+	}
+	return record, nil
+}
+
+// AttachFexit attaches a fexit program.
+func (e *TestEnv) AttachFexit(ctx context.Context, spec bpfman.FexitAttachSpec, opts bpfman.AttachOpts) (bpfman.LinkRecord, error) {
+	var result bpfman.Link
+	err := e.runWithLock(ctx, func(ctx context.Context) error {
+		var attachErr error
+		result, attachErr = e.Manager.AttachFexit(ctx, spec, opts)
+		return attachErr
+	})
+	if err != nil {
+		return bpfman.LinkRecord{}, err
+	}
+	record, err := e.Manager.GetLink(ctx, result.Spec.ID)
+	if err != nil {
+		return bpfman.LinkRecord{ID: result.Spec.ID, Kind: bpfman.LinkKindFexit}, nil
+	}
+	return record, nil
+}
+
+// Detach detaches a link.
+func (e *TestEnv) Detach(ctx context.Context, kernelLinkID uint32) error {
+	return e.runWithLock(ctx, func(ctx context.Context) error {
+		return e.Manager.Detach(ctx, bpfman.LinkID(kernelLinkID))
+	})
+}
+
+// ListLinks returns all managed links.
+func (e *TestEnv) ListLinks(ctx context.Context) ([]bpfman.LinkRecord, error) {
+	return e.Manager.ListLinks(ctx)
+}
+
+// GetLink returns detailed information about a link.
+func (e *TestEnv) GetLink(ctx context.Context, kernelLinkID uint32) (bpfman.LinkRecord, bpfman.LinkDetails, error) {
+	record, err := e.Manager.GetLink(ctx, bpfman.LinkID(kernelLinkID))
+	if err != nil {
+		return bpfman.LinkRecord{}, nil, err
+	}
+	return record, record.Details, nil
+}
+
 // AssertCleanState verifies that no programs or links are managed.
 func (e *TestEnv) AssertCleanState() {
 	e.T.Helper()
@@ -130,32 +385,32 @@ func (e *TestEnv) AssertCleanState() {
 	e.AssertLinkCount(0)
 }
 
-// AssertProgramCount verifies the number of managed programs via Client.List().
+// AssertProgramCount verifies the number of managed programs.
 func (e *TestEnv) AssertProgramCount(expected int) {
 	e.T.Helper()
 	ctx := context.Background()
 
-	programs, err := e.Client.List(ctx)
+	programs, err := e.List(ctx)
 	require.NoError(e.T, err, "failed to list programs")
 	require.Len(e.T, programs, expected, "unexpected program count")
 }
 
-// AssertLinkCount verifies the total number of managed links via Client.ListLinks().
+// AssertLinkCount verifies the total number of managed links.
 func (e *TestEnv) AssertLinkCount(expected int) {
 	e.T.Helper()
 	ctx := context.Background()
 
-	links, err := e.Client.ListLinks(ctx)
+	links, err := e.ListLinks(ctx)
 	require.NoError(e.T, err, "failed to list links")
 	require.Len(e.T, links, expected, "unexpected link count")
 }
 
-// AssertLinkCountByType verifies the number of links of a specific type.
+// AssertLinkCountByKind verifies the number of links of a specific kind.
 func (e *TestEnv) AssertLinkCountByKind(linkKind bpfman.LinkKind, expected int) {
 	e.T.Helper()
 	ctx := context.Background()
 
-	links, err := e.Client.ListLinks(ctx)
+	links, err := e.ListLinks(ctx)
 	require.NoError(e.T, err, "failed to list links")
 
 	count := 0

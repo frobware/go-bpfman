@@ -2,10 +2,9 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
-	"github.com/frobware/go-bpfman/client"
+	"github.com/frobware/go-bpfman"
 )
 
 // GetCmd gets details of a program or link.
@@ -22,13 +21,13 @@ type GetProgramCmd struct {
 
 // Run executes the get program command.
 func (c *GetProgramCmd) Run(cli *CLI, ctx context.Context) error {
-	b, err := cli.Client(ctx)
+	runtime, err := cli.NewCLIRuntime(ctx)
 	if err != nil {
-		return fmt.Errorf("create client: %w", err)
+		return fmt.Errorf("create runtime: %w", err)
 	}
-	defer b.Close()
+	defer runtime.Close()
 
-	info, err := b.Get(ctx, c.ProgramID.Value)
+	info, err := runtime.Manager.Get(ctx, c.ProgramID.Value)
 	if err != nil {
 		return err
 	}
@@ -48,16 +47,13 @@ type GetLinkCmd struct {
 
 // Run executes the get link command.
 func (c *GetLinkCmd) Run(cli *CLI, ctx context.Context) error {
-	b, err := cli.Client(ctx)
+	runtime, err := cli.NewCLIRuntime(ctx)
 	if err != nil {
-		return fmt.Errorf("create client: %w", err)
+		return fmt.Errorf("create runtime: %w", err)
 	}
-	defer b.Close()
+	defer runtime.Close()
 
-	record, details, err := b.GetLink(ctx, c.LinkID.Value)
-	if errors.Is(err, client.ErrNotSupported) {
-		return fmt.Errorf("getting link details is only available in local mode")
-	}
+	record, err := runtime.Manager.GetLink(ctx, bpfman.LinkID(c.LinkID.Value))
 	if err != nil {
 		return err
 	}
@@ -65,13 +61,13 @@ func (c *GetLinkCmd) Run(cli *CLI, ctx context.Context) error {
 	// Look up program to get the BPF function name
 	var bpfFunction string
 	if record.ProgramID != 0 {
-		progInfo, err := b.Get(ctx, record.ProgramID)
+		progInfo, err := runtime.Manager.Get(ctx, record.ProgramID)
 		if err == nil && progInfo.Kernel != nil && progInfo.Kernel.Program != nil {
 			bpfFunction = progInfo.Kernel.Program.Name
 		}
 	}
 
-	output, err := FormatLinkInfo(bpfFunction, record, details, &c.OutputFlags)
+	output, err := FormatLinkInfo(bpfFunction, record, record.Details, &c.OutputFlags)
 	if err != nil {
 		return err
 	}

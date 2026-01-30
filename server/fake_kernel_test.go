@@ -255,7 +255,7 @@ func (f *fakeKernel) Load(_ context.Context, spec bpfman.LoadSpec) (bpfman.Manag
 		Kernel: &kernel.Program{
 			ID:            fp.id,
 			Name:          fp.name,
-			ProgramType:   fp.programType.String(),
+			ProgramType:   kernel.NewProgramType(fp.programType.String()),
 			GPLCompatible: true,
 		},
 	}, nil
@@ -300,7 +300,7 @@ func (f *fakeKernel) Programs(_ context.Context) iter.Seq2[kernel.Program, error
 			kp := kernel.Program{
 				ID:          id,
 				Name:        p.name,
-				ProgramType: p.programType.String(),
+				ProgramType: kernel.NewProgramType(p.programType.String()),
 			}
 			if !yield(kp, nil) {
 				return
@@ -317,7 +317,7 @@ func (f *fakeKernel) GetProgramByID(_ context.Context, id uint32) (kernel.Progra
 	return kernel.Program{
 		ID:          id,
 		Name:        p.name,
-		ProgramType: p.programType.String(),
+		ProgramType: kernel.NewProgramType(p.programType.String()),
 	}, nil
 }
 

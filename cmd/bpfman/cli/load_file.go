@@ -34,11 +34,11 @@ func (c *LoadFileCmd) Run(cli *CLI, ctx context.Context) error {
 		return err
 	}
 
-	b, err := cli.Client(ctx)
+	runtime, err := cli.NewCLIRuntime(ctx)
 	if err != nil {
-		return fmt.Errorf("create client: %w", err)
+		return fmt.Errorf("create runtime: %w", err)
 	}
-	defer b.Close()
+	defer runtime.Close()
 
 	dirs := cli.RuntimeDirs()
 
@@ -87,8 +87,8 @@ func (c *LoadFileCmd) Run(cli *CLI, ctx context.Context) error {
 				UserMetadata: metadata,
 			}
 
-			// Load through client
-			loaded, err := b.Load(ctx, spec, opts)
+			// Load through manager
+			loaded, err := runtime.Manager.Load(ctx, spec, opts)
 			if err != nil {
 				return nil, fmt.Errorf("failed to load program %q: %w", prog.Name, err)
 			}

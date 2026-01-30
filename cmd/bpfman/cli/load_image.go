@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	"github.com/frobware/go-bpfman"
-	"github.com/frobware/go-bpfman/client"
 	"github.com/frobware/go-bpfman/interpreter"
+	"github.com/frobware/go-bpfman/manager"
 )
 
 // LoadImageCmd loads BPF programs from an OCI container image.
@@ -27,28 +27,23 @@ type LoadImageCmd struct {
 
 // Run executes the load image command.
 func (c *LoadImageCmd) Run(cli *CLI, ctx context.Context) error {
-	logger, err := cli.Logger()
-	if err != nil {
-		return fmt.Errorf("failed to create logger: %w", err)
-	}
-
-	logger.Info("loading BPF programs from OCI image",
-		"image", c.ImageURL,
-		"programs", len(c.Programs),
-		"pull_policy", c.PullPolicy.Value,
-	)
-
 	// Parse pull policy (before acquiring lock)
 	pullPolicy, ok := bpfman.ParseImagePullPolicy(c.PullPolicy.Value)
 	if !ok {
 		return fmt.Errorf("invalid pull policy %q", c.PullPolicy.Value)
 	}
 
-	b, err := cli.Client(ctx)
+	runtime, err := cli.NewCLIRuntime(ctx)
 	if err != nil {
-		return fmt.Errorf("create client: %w", err)
+		return fmt.Errorf("create runtime: %w", err)
 	}
-	defer b.Close()
+	defer runtime.Close()
+
+	runtime.Logger.Info("loading BPF programs from OCI image",
+		"image", c.ImageURL,
+		"programs", len(c.Programs),
+		"pull_policy", c.PullPolicy.Value,
+	)
 
 	results, err := RunWithLockValue(ctx, cli, func(ctx context.Context) ([]bpfman.ManagedProgram, error) {
 		// Build auth config from base64-encoded registry-auth
@@ -58,7 +53,7 @@ func (c *LoadImageCmd) Run(cli *CLI, ctx context.Context) error {
 			if err != nil {
 				return nil, fmt.Errorf("invalid registry-auth: %w", err)
 			}
-			logger.Debug("using registry auth", "username", username)
+			runtime.Logger.Debug("using registry auth", "username", username)
 			authConfig = &interpreter.ImageAuth{
 				Username: username,
 				Password: password,
@@ -88,44 +83,36 @@ func (c *LoadImageCmd) Run(cli *CLI, ctx context.Context) error {
 		}
 
 		// Build ImageProgramSpecs for each program
-		programs := make([]client.ImageProgramSpec, 0, len(c.Programs))
+		programs := make([]manager.ImageProgramSpec, 0, len(c.Programs))
 		for _, spec := range c.Programs {
-			var progSpec client.ImageProgramSpec
-			var specErr error
-			if spec.Type.RequiresAttachFunc() {
-				progSpec, specErr = client.NewImageProgramSpecWithAttach(spec.Name, spec.Type, spec.AttachFunc)
-			} else {
-				progSpec, specErr = client.NewImageProgramSpec(spec.Name, spec.Type)
-			}
-			if specErr != nil {
-				return nil, fmt.Errorf("invalid program spec for %q: %w", spec.Name, specErr)
-			}
-			if globalData != nil {
-				progSpec = progSpec.WithGlobalData(globalData)
-			}
-			if c.MapOwnerID != 0 {
-				progSpec = progSpec.WithMapOwnerID(c.MapOwnerID)
+			progSpec := manager.ImageProgramSpec{
+				ProgramName: spec.Name,
+				ProgramType: spec.Type,
+				AttachFunc:  spec.AttachFunc,
+				GlobalData:  globalData,
+				MapOwnerID:  c.MapOwnerID,
 			}
 			programs = append(programs, progSpec)
 		}
 
-		// Load via gRPC - server handles image pulling
-		results, err := b.LoadImage(ctx, ref, programs, client.LoadImageOpts{
+		// Load via manager directly
+		result, err := runtime.Manager.LoadImage(ctx, runtime.Puller, ref, programs, manager.LoadImageOpts{
 			UserMetadata: metadata,
+			GlobalData:   globalData,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to load from image: %w", err)
 		}
 
-		for _, loaded := range results {
-			logger.Info("program loaded successfully",
+		for _, loaded := range result.Programs {
+			runtime.Logger.Info("program loaded successfully",
 				"name", loaded.Kernel.Name,
 				"kernel_id", loaded.Kernel.ID,
 				"pin_path", loaded.Managed.PinPath,
 			)
 		}
 
-		return results, nil
+		return result.Programs, nil
 	})
 	if err != nil {
 		return err

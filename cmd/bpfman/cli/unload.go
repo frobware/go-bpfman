@@ -12,15 +12,15 @@ type UnloadCmd struct {
 
 // Run executes the unload command: mutation under lock, output outside.
 func (c *UnloadCmd) Run(cli *CLI, ctx context.Context) error {
-	b, err := cli.Client(ctx)
+	runtime, err := cli.NewCLIRuntime(ctx)
 	if err != nil {
-		return fmt.Errorf("create client: %w", err)
+		return fmt.Errorf("create runtime: %w", err)
 	}
-	defer b.Close()
+	defer runtime.Close()
 
 	// Mutation under lock
 	if err := cli.RunWithLock(ctx, func(ctx context.Context) error {
-		return b.Unload(ctx, c.ProgramID.Value)
+		return runtime.Manager.Unload(ctx, c.ProgramID.Value)
 	}); err != nil {
 		return err
 	}

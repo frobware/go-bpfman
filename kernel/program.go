@@ -17,11 +17,11 @@ import "time"
 // by the Has* fields where relevant.
 type Program struct {
 	// Core identity
-	ID          uint32    `json:"id"`
-	Name        string    `json:"name"`
-	ProgramType string    `json:"program_type"`
-	Tag         string    `json:"tag,omitempty"`
-	LoadedAt    time.Time `json:"loaded_at"`
+	ID          uint32      `json:"id"`
+	Name        string      `json:"name"`
+	ProgramType ProgramType `json:"program_type"`
+	Tag         string      `json:"tag,omitempty"`
+	LoadedAt    time.Time   `json:"loaded_at"`
 
 	// Ownership and BTF
 	UID      uint32 `json:"uid"`
@@ -56,10 +56,10 @@ type Program struct {
 // PinnedProgram represents a BPF program pinned on the filesystem.
 // Used for CLI output when scanning bpffs directories.
 type PinnedProgram struct {
-	ID         uint32   `json:"id"`
-	Name       string   `json:"name"`
-	Type       string   `json:"type"`
-	Tag        string   `json:"tag,omitempty"`
-	PinnedPath string   `json:"pinned_path"`
-	MapIDs     []uint32 `json:"map_ids,omitempty"`
+	ID         uint32      `json:"id"`
+	Name       string      `json:"name"`
+	Type       ProgramType `json:"type"`
+	Tag        string      `json:"tag,omitempty"`
+	PinnedPath string      `json:"pinned_path"`
+	MapIDs     []uint32    `json:"map_ids,omitempty"`
 }

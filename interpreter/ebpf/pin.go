@@ -45,7 +45,7 @@ func (k *kernelAdapter) ListPinDir(ctx context.Context, pinDir string, includeMa
 				result.Programs = append(result.Programs, kernel.PinnedProgram{
 					ID:         uint32(id),
 					Name:       info.Name,
-					Type:       prog.Type().String(),
+					Type:       kernel.NewProgramType(prog.Type().String()),
 					Tag:        info.Tag,
 					PinnedPath: path,
 					MapIDs:     mapIDs,
@@ -65,7 +65,7 @@ func (k *kernelAdapter) ListPinDir(ctx context.Context, pinDir string, includeMa
 					result.Maps = append(result.Maps, kernel.PinnedMap{
 						ID:         uint32(id),
 						Name:       info.Name,
-						Type:       info.Type.String(),
+						Type:       kernel.NewMapType(info.Type.String()),
 						KeySize:    info.KeySize,
 						ValueSize:  info.ValueSize,
 						MaxEntries: info.MaxEntries,
@@ -106,7 +106,7 @@ func (k *kernelAdapter) GetPinned(ctx context.Context, pinPath string) (*kernel.
 	return &kernel.PinnedProgram{
 		ID:         uint32(id),
 		Name:       info.Name,
-		Type:       prog.Type().String(),
+		Type:       kernel.NewProgramType(prog.Type().String()),
 		Tag:        info.Tag,
 		PinnedPath: pinPath,
 		MapIDs:     mapIDs,

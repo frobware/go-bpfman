@@ -2,10 +2,8 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
-	"github.com/frobware/go-bpfman/client"
 	"github.com/frobware/go-bpfman/manager"
 )
 
@@ -50,18 +48,15 @@ func (c *GCCmd) Run(cli *CLI, ctx context.Context) error {
 		}
 	}
 
-	b, err := cli.Client(ctx)
+	runtime, err := cli.NewCLIRuntime(ctx)
 	if err != nil {
-		return fmt.Errorf("create client: %w", err)
+		return fmt.Errorf("create runtime: %w", err)
 	}
-	defer b.Close()
+	defer runtime.Close()
 
 	// Mutation under lock
 	result, err := RunWithLockValue(ctx, cli, func(ctx context.Context) (manager.GCResult, error) {
-		result, err := b.GCWithRules(ctx, c.Rules)
-		if errors.Is(err, client.ErrNotSupported) {
-			return manager.GCResult{}, fmt.Errorf("garbage collection is only available in local mode")
-		}
+		result, err := runtime.Manager.GCWithRules(ctx, c.Rules)
 		if err != nil {
 			return manager.GCResult{}, fmt.Errorf("gc failed: %w", err)
 		}

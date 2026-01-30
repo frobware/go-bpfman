@@ -4,13 +4,13 @@ package kernel
 // All fields from cilium/ebpf's MapInfo are captured here.
 type Map struct {
 	// Core identity and structure
-	ID         uint32 `json:"id"`
-	Name       string `json:"name"`
-	MapType    string `json:"map_type"`
-	KeySize    uint32 `json:"key_size"`
-	ValueSize  uint32 `json:"value_size"`
-	MaxEntries uint32 `json:"max_entries"`
-	Flags      uint32 `json:"flags,omitempty"`
+	ID         uint32  `json:"id"`
+	Name       string  `json:"name"`
+	MapType    MapType `json:"map_type"`
+	KeySize    uint32  `json:"key_size"`
+	ValueSize  uint32  `json:"value_size"`
+	MaxEntries uint32  `json:"max_entries"`
+	Flags      uint32  `json:"flags,omitempty"`
 
 	// BTF
 	BTFId    uint32 `json:"btf_id,omitempty"`
@@ -29,13 +29,13 @@ type Map struct {
 
 // PinnedMap represents a BPF map pinned on the filesystem.
 type PinnedMap struct {
-	ID         uint32 `json:"id"`
-	Name       string `json:"name"`
-	Type       string `json:"type"`
-	KeySize    uint32 `json:"key_size"`
-	ValueSize  uint32 `json:"value_size"`
-	MaxEntries uint32 `json:"max_entries"`
-	PinnedPath string `json:"pinned_path"`
+	ID         uint32  `json:"id"`
+	Name       string  `json:"name"`
+	Type       MapType `json:"type"`
+	KeySize    uint32  `json:"key_size"`
+	ValueSize  uint32  `json:"value_size"`
+	MaxEntries uint32  `json:"max_entries"`
+	PinnedPath string  `json:"pinned_path"`
 }
 
 // PinDirContents holds all BPF objects found in a pin directory.

@@ -13,7 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/frobware/go-bpfman"
-	"github.com/frobware/go-bpfman/client"
 	"github.com/frobware/go-bpfman/interpreter"
 	"github.com/frobware/go-bpfman/manager"
 )
@@ -46,12 +45,12 @@ func TestTracepoint_LoadAttachDetachUnload(t *testing.T) {
 	imageRef := interpreter.ImageRef{
 		URL: "quay.io/bpfman-bytecode/go-tracepoint-counter:latest",
 	}
-	programs, err := env.Client.LoadImage(ctx, imageRef, []client.ImageProgramSpec{
+	programs, err := env.LoadImage(ctx, imageRef, []manager.ImageProgramSpec{
 		{
 			ProgramType: bpfman.ProgramTypeTracepoint,
 			ProgramName: "tracepoint_kill_recorder",
 		},
-	}, client.LoadImageOpts{})
+	}, manager.LoadImageOpts{})
 	require.NoError(t, err)
 	require.Len(t, programs, 1)
 
@@ -59,15 +58,15 @@ func TestTracepoint_LoadAttachDetachUnload(t *testing.T) {
 
 	// Then: program has expected properties
 	require.NotZero(t, prog.Kernel.ID, "kernel should assign program ID")
-	require.Equal(t, bpfman.ProgramTypeTracepoint.String(), prog.Kernel.ProgramType)
+	require.Equal(t, bpfman.ProgramTypeTracepoint.String(), prog.Kernel.ProgramType.String())
 
 	// Register cleanup for the program
 	t.Cleanup(func() {
-		env.Client.Unload(context.Background(), prog.Kernel.ID)
+		env.Unload(context.Background(), prog.Kernel.ID)
 	})
 
 	// Round-trip: Get should return matching program info
-	gotProg, err := env.Client.Get(ctx, prog.Kernel.ID)
+	gotProg, err := env.Get(ctx, prog.Kernel.ID)
 	require.NoError(t, err)
 	require.NotNil(t, gotProg.Kernel)
 	require.NotNil(t, gotProg.Kernel.Program)
@@ -88,7 +87,7 @@ func TestTracepoint_LoadAttachDetachUnload(t *testing.T) {
 		"kernel name %q should be prefix of full name", kernelName)
 
 	// Round-trip: List should include our program
-	listedProgs, err := env.Client.List(ctx)
+	listedProgs, err := env.List(ctx)
 	require.NoError(t, err)
 	require.Len(t, listedProgs, 1)
 	require.Equal(t, prog.Kernel.ID, listedProgs[0].KernelProgram.ID)
@@ -105,7 +104,7 @@ func TestTracepoint_LoadAttachDetachUnload(t *testing.T) {
 	// When: attach via client
 	tpSpec, err := bpfman.NewTracepointAttachSpec(prog.Kernel.ID, "syscalls", "sys_enter_kill")
 	require.NoError(t, err)
-	link, err := env.Client.AttachTracepoint(ctx, tpSpec, bpfman.AttachOpts{})
+	link, err := env.AttachTracepoint(ctx, tpSpec, bpfman.AttachOpts{})
 	require.NoError(t, err)
 
 	// Then: link has expected properties
@@ -114,12 +113,12 @@ func TestTracepoint_LoadAttachDetachUnload(t *testing.T) {
 
 	// Register cleanup for the link
 	t.Cleanup(func() {
-		env.Client.Detach(context.Background(), uint32(link.ID))
+		env.Detach(context.Background(), uint32(link.ID))
 	})
 
 	// Round-trip: GetLink should return matching link info
 	// Note: link.ID from attach is the kernel link ID. We verify type/details instead.
-	gotLinkSummary, gotLinkDetails, err := env.Client.GetLink(ctx, uint32(link.ID))
+	gotLinkSummary, gotLinkDetails, err := env.GetLink(ctx, uint32(link.ID))
 	require.NoError(t, err)
 	require.NotZero(t, gotLinkSummary.ID, "should have kernel link ID")
 	require.Equal(t, link.Kind, gotLinkSummary.Kind)
@@ -130,28 +129,28 @@ func TestTracepoint_LoadAttachDetachUnload(t *testing.T) {
 	require.Equal(t, "sys_enter_kill", tpDetails.Name)
 
 	// Round-trip: ListLinks should include our link
-	listedLinks, err := env.Client.ListLinks(ctx)
+	listedLinks, err := env.ListLinks(ctx)
 	require.NoError(t, err)
 	require.Len(t, listedLinks, 1)
 	require.NotZero(t, listedLinks[0].ID, "should have kernel link ID")
 	require.Equal(t, link.Kind, listedLinks[0].Kind)
 
 	// When: detach
-	err = env.Client.Detach(ctx, uint32(link.ID))
+	err = env.Detach(ctx, uint32(link.ID))
 	require.NoError(t, err)
 
 	// Then: no links, and GetLink should return error
 	env.AssertLinkCount(0)
-	_, _, err = env.Client.GetLink(ctx, uint32(link.ID))
+	_, _, err = env.GetLink(ctx, uint32(link.ID))
 	require.Error(t, err, "GetLink should fail after detach")
 
 	// When: unload
-	err = env.Client.Unload(ctx, prog.Kernel.ID)
+	err = env.Unload(ctx, prog.Kernel.ID)
 	require.NoError(t, err)
 
 	// Then: clean state, and Get should return error
 	env.AssertCleanState()
-	_, err = env.Client.Get(ctx, prog.Kernel.ID)
+	_, err = env.Get(ctx, prog.Kernel.ID)
 	require.Error(t, err, "Get should fail after unload")
 }
 
@@ -170,12 +169,12 @@ func TestKprobe_LoadAttachDetachUnload(t *testing.T) {
 	imageRef := interpreter.ImageRef{
 		URL: "quay.io/bpfman-bytecode/go-kprobe-counter:latest",
 	}
-	programs, err := env.Client.LoadImage(ctx, imageRef, []client.ImageProgramSpec{
+	programs, err := env.LoadImage(ctx, imageRef, []manager.ImageProgramSpec{
 		{
 			ProgramType: bpfman.ProgramTypeKprobe,
 			ProgramName: "kprobe_counter",
 		},
-	}, client.LoadImageOpts{})
+	}, manager.LoadImageOpts{})
 	require.NoError(t, err)
 	require.Len(t, programs, 1)
 
@@ -183,14 +182,14 @@ func TestKprobe_LoadAttachDetachUnload(t *testing.T) {
 
 	// Then: program has expected properties
 	require.NotZero(t, prog.Kernel.ID, "kernel should assign program ID")
-	require.Equal(t, bpfman.ProgramTypeKprobe.String(), prog.Kernel.ProgramType)
+	require.Equal(t, bpfman.ProgramTypeKprobe.String(), prog.Kernel.ProgramType.String())
 
 	t.Cleanup(func() {
-		env.Client.Unload(context.Background(), prog.Kernel.ID)
+		env.Unload(context.Background(), prog.Kernel.ID)
 	})
 
 	// Round-trip: Get should return matching program info
-	gotProg, err := env.Client.Get(ctx, prog.Kernel.ID)
+	gotProg, err := env.Get(ctx, prog.Kernel.ID)
 	require.NoError(t, err)
 	require.NotNil(t, gotProg.Kernel)
 	require.NotNil(t, gotProg.Kernel.Program)
@@ -205,7 +204,7 @@ func TestKprobe_LoadAttachDetachUnload(t *testing.T) {
 	require.NotEmpty(t, gotProg.Bpfman.Program.Handles.PinPath, "program should have pin path")
 
 	// Round-trip: List should include our program
-	listedProgs, err := env.Client.List(ctx)
+	listedProgs, err := env.List(ctx)
 	require.NoError(t, err)
 	require.Len(t, listedProgs, 1)
 	require.Equal(t, prog.Kernel.ID, listedProgs[0].KernelProgram.ID)
@@ -219,7 +218,7 @@ func TestKprobe_LoadAttachDetachUnload(t *testing.T) {
 	// When: attach via client
 	kpSpec, err := bpfman.NewKprobeAttachSpec(prog.Kernel.ID, "try_to_wake_up")
 	require.NoError(t, err)
-	link, err := env.Client.AttachKprobe(ctx, kpSpec, bpfman.AttachOpts{})
+	link, err := env.AttachKprobe(ctx, kpSpec, bpfman.AttachOpts{})
 	require.NoError(t, err)
 
 	// Then: link has expected properties
@@ -227,11 +226,11 @@ func TestKprobe_LoadAttachDetachUnload(t *testing.T) {
 	require.Equal(t, bpfman.LinkKindKprobe, link.Kind)
 
 	t.Cleanup(func() {
-		env.Client.Detach(context.Background(), uint32(link.ID))
+		env.Detach(context.Background(), uint32(link.ID))
 	})
 
 	// Round-trip: GetLink should return matching link info
-	gotLinkSummary, gotLinkDetails, err := env.Client.GetLink(ctx, uint32(link.ID))
+	gotLinkSummary, gotLinkDetails, err := env.GetLink(ctx, uint32(link.ID))
 	require.NoError(t, err)
 	require.NotZero(t, gotLinkSummary.ID, "should have kernel link ID")
 	require.Equal(t, link.Kind, gotLinkSummary.Kind)
@@ -242,28 +241,28 @@ func TestKprobe_LoadAttachDetachUnload(t *testing.T) {
 	require.False(t, kprobeDetails.Retprobe)
 
 	// Round-trip: ListLinks should include our link
-	listedLinks, err := env.Client.ListLinks(ctx)
+	listedLinks, err := env.ListLinks(ctx)
 	require.NoError(t, err)
 	require.Len(t, listedLinks, 1)
 	require.NotZero(t, listedLinks[0].ID, "should have kernel link ID")
 	require.Equal(t, link.Kind, listedLinks[0].Kind)
 
 	// When: detach
-	err = env.Client.Detach(ctx, uint32(link.ID))
+	err = env.Detach(ctx, uint32(link.ID))
 	require.NoError(t, err)
 
 	// Then: no links, and GetLink should return error
 	env.AssertLinkCount(0)
-	_, _, err = env.Client.GetLink(ctx, uint32(link.ID))
+	_, _, err = env.GetLink(ctx, uint32(link.ID))
 	require.Error(t, err, "GetLink should fail after detach")
 
 	// When: unload
-	err = env.Client.Unload(ctx, prog.Kernel.ID)
+	err = env.Unload(ctx, prog.Kernel.ID)
 	require.NoError(t, err)
 
 	// Then: clean state, and Get should return error
 	env.AssertCleanState()
-	_, err = env.Client.Get(ctx, prog.Kernel.ID)
+	_, err = env.Get(ctx, prog.Kernel.ID)
 	require.Error(t, err, "Get should fail after unload")
 }
 
@@ -283,12 +282,12 @@ func TestKretprobe_LoadAttachDetachUnload(t *testing.T) {
 	imageRef := interpreter.ImageRef{
 		URL: "quay.io/bpfman-bytecode/go-kprobe-counter:latest",
 	}
-	programs, err := env.Client.LoadImage(ctx, imageRef, []client.ImageProgramSpec{
+	programs, err := env.LoadImage(ctx, imageRef, []manager.ImageProgramSpec{
 		{
 			ProgramType: bpfman.ProgramTypeKretprobe,
 			ProgramName: "kprobe_counter", // Same program as kprobe, loaded as kretprobe
 		},
-	}, client.LoadImageOpts{})
+	}, manager.LoadImageOpts{})
 	require.NoError(t, err)
 	require.Len(t, programs, 1)
 
@@ -296,14 +295,14 @@ func TestKretprobe_LoadAttachDetachUnload(t *testing.T) {
 
 	// Then: program has expected properties
 	require.NotZero(t, prog.Kernel.ID, "kernel should assign program ID")
-	require.Equal(t, bpfman.ProgramTypeKretprobe.String(), prog.Kernel.ProgramType)
+	require.Equal(t, bpfman.ProgramTypeKretprobe.String(), prog.Kernel.ProgramType.String())
 
 	t.Cleanup(func() {
-		env.Client.Unload(context.Background(), prog.Kernel.ID)
+		env.Unload(context.Background(), prog.Kernel.ID)
 	})
 
 	// Round-trip: Get should return matching program info
-	gotProg, err := env.Client.Get(ctx, prog.Kernel.ID)
+	gotProg, err := env.Get(ctx, prog.Kernel.ID)
 	require.NoError(t, err)
 	require.NotNil(t, gotProg.Kernel)
 	require.NotNil(t, gotProg.Kernel.Program)
@@ -318,7 +317,7 @@ func TestKretprobe_LoadAttachDetachUnload(t *testing.T) {
 	require.NotEmpty(t, gotProg.Bpfman.Program.Handles.PinPath, "program should have pin path")
 
 	// Round-trip: List should include our program
-	listedProgs, err := env.Client.List(ctx)
+	listedProgs, err := env.List(ctx)
 	require.NoError(t, err)
 	require.Len(t, listedProgs, 1)
 	require.Equal(t, prog.Kernel.ID, listedProgs[0].KernelProgram.ID)
@@ -332,7 +331,7 @@ func TestKretprobe_LoadAttachDetachUnload(t *testing.T) {
 	// When: attach via client (kretprobe uses AttachKprobe API)
 	kpSpec, err := bpfman.NewKprobeAttachSpec(prog.Kernel.ID, "try_to_wake_up")
 	require.NoError(t, err)
-	link, err := env.Client.AttachKprobe(ctx, kpSpec, bpfman.AttachOpts{})
+	link, err := env.AttachKprobe(ctx, kpSpec, bpfman.AttachOpts{})
 	require.NoError(t, err)
 
 	// Then: link has expected properties
@@ -341,11 +340,11 @@ func TestKretprobe_LoadAttachDetachUnload(t *testing.T) {
 	require.NotZero(t, link.ID, "kernel should assign link ID")
 
 	t.Cleanup(func() {
-		env.Client.Detach(context.Background(), uint32(link.ID))
+		env.Detach(context.Background(), uint32(link.ID))
 	})
 
 	// Round-trip: GetLink should return authoritative link info from server
-	gotLinkSummary, gotLinkDetails, err := env.Client.GetLink(ctx, uint32(link.ID))
+	gotLinkSummary, gotLinkDetails, err := env.GetLink(ctx, uint32(link.ID))
 	require.NoError(t, err)
 	require.NotZero(t, gotLinkSummary.ID, "should have kernel link ID")
 	require.Equal(t, bpfman.LinkKindKretprobe, gotLinkSummary.Kind, "server should report kretprobe link kind")
@@ -356,28 +355,28 @@ func TestKretprobe_LoadAttachDetachUnload(t *testing.T) {
 	require.True(t, kprobeDetails.Retprobe, "kretprobe should have Retprobe=true")
 
 	// Round-trip: ListLinks should include our link
-	listedLinks, err := env.Client.ListLinks(ctx)
+	listedLinks, err := env.ListLinks(ctx)
 	require.NoError(t, err)
 	require.Len(t, listedLinks, 1)
 	require.NotZero(t, listedLinks[0].ID, "should have kernel link ID")
 	require.Equal(t, bpfman.LinkKindKretprobe, listedLinks[0].Kind, "ListLinks should report kretprobe")
 
 	// When: detach
-	err = env.Client.Detach(ctx, uint32(link.ID))
+	err = env.Detach(ctx, uint32(link.ID))
 	require.NoError(t, err)
 
 	// Then: no links, and GetLink should return error
 	env.AssertLinkCount(0)
-	_, _, err = env.Client.GetLink(ctx, uint32(link.ID))
+	_, _, err = env.GetLink(ctx, uint32(link.ID))
 	require.Error(t, err, "GetLink should fail after detach")
 
 	// When: unload
-	err = env.Client.Unload(ctx, prog.Kernel.ID)
+	err = env.Unload(ctx, prog.Kernel.ID)
 	require.NoError(t, err)
 
 	// Then: clean state, and Get should return error
 	env.AssertCleanState()
-	_, err = env.Client.Get(ctx, prog.Kernel.ID)
+	_, err = env.Get(ctx, prog.Kernel.ID)
 	require.Error(t, err, "Get should fail after unload")
 }
 
@@ -400,12 +399,12 @@ func TestUprobe_LoadAttachDetachUnload(t *testing.T) {
 	imageRef := interpreter.ImageRef{
 		URL: "quay.io/bpfman-bytecode/go-uprobe-counter:latest",
 	}
-	programs, err := env.Client.LoadImage(ctx, imageRef, []client.ImageProgramSpec{
+	programs, err := env.LoadImage(ctx, imageRef, []manager.ImageProgramSpec{
 		{
 			ProgramType: bpfman.ProgramTypeUprobe,
 			ProgramName: "uprobe_counter",
 		},
-	}, client.LoadImageOpts{})
+	}, manager.LoadImageOpts{})
 	require.NoError(t, err)
 	require.Len(t, programs, 1)
 
@@ -413,14 +412,14 @@ func TestUprobe_LoadAttachDetachUnload(t *testing.T) {
 
 	// Then: program has expected properties
 	require.NotZero(t, prog.Kernel.ID, "kernel should assign program ID")
-	require.Equal(t, bpfman.ProgramTypeUprobe.String(), prog.Kernel.ProgramType)
+	require.Equal(t, bpfman.ProgramTypeUprobe.String(), prog.Kernel.ProgramType.String())
 
 	t.Cleanup(func() {
-		env.Client.Unload(context.Background(), prog.Kernel.ID)
+		env.Unload(context.Background(), prog.Kernel.ID)
 	})
 
 	// Round-trip: Get should return matching program info
-	gotProg, err := env.Client.Get(ctx, prog.Kernel.ID)
+	gotProg, err := env.Get(ctx, prog.Kernel.ID)
 	require.NoError(t, err)
 	require.NotNil(t, gotProg.Kernel)
 	require.NotNil(t, gotProg.Kernel.Program)
@@ -435,7 +434,7 @@ func TestUprobe_LoadAttachDetachUnload(t *testing.T) {
 	require.NotEmpty(t, gotProg.Bpfman.Program.Handles.PinPath, "program should have pin path")
 
 	// Round-trip: List should include our program
-	listedProgs, err := env.Client.List(ctx)
+	listedProgs, err := env.List(ctx)
 	require.NoError(t, err)
 	require.Len(t, listedProgs, 1)
 	require.Equal(t, prog.Kernel.ID, listedProgs[0].KernelProgram.ID)
@@ -450,7 +449,7 @@ func TestUprobe_LoadAttachDetachUnload(t *testing.T) {
 	upSpec, err := bpfman.NewUprobeAttachSpec(prog.Kernel.ID, target)
 	require.NoError(t, err)
 	upSpec = upSpec.WithFnName(fnName)
-	link, err := env.Client.AttachUprobe(ctx, upSpec, bpfman.AttachOpts{})
+	link, err := env.AttachUprobe(ctx, upSpec, bpfman.AttachOpts{})
 	require.NoError(t, err)
 
 	// Then: link has expected properties
@@ -458,11 +457,11 @@ func TestUprobe_LoadAttachDetachUnload(t *testing.T) {
 	require.Equal(t, bpfman.LinkKindUprobe, link.Kind)
 
 	t.Cleanup(func() {
-		env.Client.Detach(context.Background(), uint32(link.ID))
+		env.Detach(context.Background(), uint32(link.ID))
 	})
 
 	// Round-trip: GetLink should return matching link info
-	gotLinkSummary, gotLinkDetails, err := env.Client.GetLink(ctx, uint32(link.ID))
+	gotLinkSummary, gotLinkDetails, err := env.GetLink(ctx, uint32(link.ID))
 	require.NoError(t, err)
 	require.NotZero(t, gotLinkSummary.ID, "should have kernel link ID")
 	require.Equal(t, link.Kind, gotLinkSummary.Kind)
@@ -474,28 +473,28 @@ func TestUprobe_LoadAttachDetachUnload(t *testing.T) {
 	require.False(t, uprobeDetails.Retprobe)
 
 	// Round-trip: ListLinks should include our link
-	listedLinks, err := env.Client.ListLinks(ctx)
+	listedLinks, err := env.ListLinks(ctx)
 	require.NoError(t, err)
 	require.Len(t, listedLinks, 1)
 	require.NotZero(t, listedLinks[0].ID, "should have kernel link ID")
 	require.Equal(t, link.Kind, listedLinks[0].Kind)
 
 	// When: detach
-	err = env.Client.Detach(ctx, uint32(link.ID))
+	err = env.Detach(ctx, uint32(link.ID))
 	require.NoError(t, err)
 
 	// Then: no links, and GetLink should return error
 	env.AssertLinkCount(0)
-	_, _, err = env.Client.GetLink(ctx, uint32(link.ID))
+	_, _, err = env.GetLink(ctx, uint32(link.ID))
 	require.Error(t, err, "GetLink should fail after detach")
 
 	// When: unload
-	err = env.Client.Unload(ctx, prog.Kernel.ID)
+	err = env.Unload(ctx, prog.Kernel.ID)
 	require.NoError(t, err)
 
 	// Then: clean state, and Get should return error
 	env.AssertCleanState()
-	_, err = env.Client.Get(ctx, prog.Kernel.ID)
+	_, err = env.Get(ctx, prog.Kernel.ID)
 	require.Error(t, err, "Get should fail after unload")
 }
 
@@ -518,12 +517,12 @@ func TestUretprobe_LoadAttachDetachUnload(t *testing.T) {
 	imageRef := interpreter.ImageRef{
 		URL: "quay.io/bpfman-bytecode/go-uprobe-counter:latest",
 	}
-	programs, err := env.Client.LoadImage(ctx, imageRef, []client.ImageProgramSpec{
+	programs, err := env.LoadImage(ctx, imageRef, []manager.ImageProgramSpec{
 		{
 			ProgramType: bpfman.ProgramTypeUretprobe,
 			ProgramName: "uprobe_counter", // Same program as uprobe, loaded as uretprobe
 		},
-	}, client.LoadImageOpts{})
+	}, manager.LoadImageOpts{})
 	require.NoError(t, err)
 	require.Len(t, programs, 1)
 
@@ -531,14 +530,14 @@ func TestUretprobe_LoadAttachDetachUnload(t *testing.T) {
 
 	// Then: program has expected properties
 	require.NotZero(t, prog.Kernel.ID, "kernel should assign program ID")
-	require.Equal(t, bpfman.ProgramTypeUretprobe.String(), prog.Kernel.ProgramType)
+	require.Equal(t, bpfman.ProgramTypeUretprobe.String(), prog.Kernel.ProgramType.String())
 
 	t.Cleanup(func() {
-		env.Client.Unload(context.Background(), prog.Kernel.ID)
+		env.Unload(context.Background(), prog.Kernel.ID)
 	})
 
 	// Round-trip: Get should return matching program info
-	gotProg, err := env.Client.Get(ctx, prog.Kernel.ID)
+	gotProg, err := env.Get(ctx, prog.Kernel.ID)
 	require.NoError(t, err)
 	require.NotNil(t, gotProg.Kernel)
 	require.NotNil(t, gotProg.Kernel.Program)
@@ -553,7 +552,7 @@ func TestUretprobe_LoadAttachDetachUnload(t *testing.T) {
 	require.NotEmpty(t, gotProg.Bpfman.Program.Handles.PinPath, "program should have pin path")
 
 	// Round-trip: List should include our program
-	listedProgs, err := env.Client.List(ctx)
+	listedProgs, err := env.List(ctx)
 	require.NoError(t, err)
 	require.Len(t, listedProgs, 1)
 	require.Equal(t, prog.Kernel.ID, listedProgs[0].KernelProgram.ID)
@@ -568,7 +567,7 @@ func TestUretprobe_LoadAttachDetachUnload(t *testing.T) {
 	upSpec, err := bpfman.NewUprobeAttachSpec(prog.Kernel.ID, target)
 	require.NoError(t, err)
 	upSpec = upSpec.WithFnName(fnName)
-	link, err := env.Client.AttachUprobe(ctx, upSpec, bpfman.AttachOpts{})
+	link, err := env.AttachUprobe(ctx, upSpec, bpfman.AttachOpts{})
 	require.NoError(t, err)
 
 	// Then: link has expected properties
@@ -577,11 +576,11 @@ func TestUretprobe_LoadAttachDetachUnload(t *testing.T) {
 	require.NotZero(t, link.ID, "kernel should assign link ID")
 
 	t.Cleanup(func() {
-		env.Client.Detach(context.Background(), uint32(link.ID))
+		env.Detach(context.Background(), uint32(link.ID))
 	})
 
 	// Round-trip: GetLink should return authoritative link info from server
-	gotLinkSummary, gotLinkDetails, err := env.Client.GetLink(ctx, uint32(link.ID))
+	gotLinkSummary, gotLinkDetails, err := env.GetLink(ctx, uint32(link.ID))
 	require.NoError(t, err)
 	require.NotZero(t, gotLinkSummary.ID, "should have kernel link ID")
 	require.Equal(t, bpfman.LinkKindUretprobe, gotLinkSummary.Kind, "server should report uretprobe link kind")
@@ -593,28 +592,28 @@ func TestUretprobe_LoadAttachDetachUnload(t *testing.T) {
 	require.True(t, uprobeDetails.Retprobe, "uretprobe should have Retprobe=true")
 
 	// Round-trip: ListLinks should include our link
-	listedLinks, err := env.Client.ListLinks(ctx)
+	listedLinks, err := env.ListLinks(ctx)
 	require.NoError(t, err)
 	require.Len(t, listedLinks, 1)
 	require.NotZero(t, listedLinks[0].ID, "should have kernel link ID")
 	require.Equal(t, bpfman.LinkKindUretprobe, listedLinks[0].Kind, "ListLinks should report uretprobe")
 
 	// When: detach
-	err = env.Client.Detach(ctx, uint32(link.ID))
+	err = env.Detach(ctx, uint32(link.ID))
 	require.NoError(t, err)
 
 	// Then: no links, and GetLink should return error
 	env.AssertLinkCount(0)
-	_, _, err = env.Client.GetLink(ctx, uint32(link.ID))
+	_, _, err = env.GetLink(ctx, uint32(link.ID))
 	require.Error(t, err, "GetLink should fail after detach")
 
 	// When: unload
-	err = env.Client.Unload(ctx, prog.Kernel.ID)
+	err = env.Unload(ctx, prog.Kernel.ID)
 	require.NoError(t, err)
 
 	// Then: clean state, and Get should return error
 	env.AssertCleanState()
-	_, err = env.Client.Get(ctx, prog.Kernel.ID)
+	_, err = env.Get(ctx, prog.Kernel.ID)
 	require.Error(t, err, "Get should fail after unload")
 }
 
@@ -640,19 +639,19 @@ func TestFentry_LoadAttachDetachUnload(t *testing.T) {
 	// When: load from file via client
 	spec, err := bpfman.NewAttachLoadSpec(bytecodeFile, "test_fentry", bpfman.ProgramTypeFentry, "do_unlinkat")
 	require.NoError(t, err)
-	prog, err := env.Client.Load(ctx, spec, manager.LoadOpts{})
+	prog, err := env.Load(ctx, spec, manager.LoadOpts{})
 	require.NoError(t, err)
 
 	// Then: program has expected properties
 	require.NotZero(t, prog.Kernel.ID, "kernel should assign program ID")
-	require.Equal(t, bpfman.ProgramTypeFentry.String(), prog.Kernel.ProgramType)
+	require.Equal(t, bpfman.ProgramTypeFentry.String(), prog.Kernel.ProgramType.String())
 
 	t.Cleanup(func() {
-		env.Client.Unload(context.Background(), prog.Kernel.ID)
+		env.Unload(context.Background(), prog.Kernel.ID)
 	})
 
 	// Round-trip: Get should return matching program info
-	gotProg, err := env.Client.Get(ctx, prog.Kernel.ID)
+	gotProg, err := env.Get(ctx, prog.Kernel.ID)
 	require.NoError(t, err)
 	require.NotNil(t, gotProg.Kernel)
 	require.NotNil(t, gotProg.Kernel.Program)
@@ -667,7 +666,7 @@ func TestFentry_LoadAttachDetachUnload(t *testing.T) {
 	require.NotEmpty(t, gotProg.Bpfman.Program.Handles.PinPath, "program should have pin path")
 
 	// Round-trip: List should include our program
-	listedProgs, err := env.Client.List(ctx)
+	listedProgs, err := env.List(ctx)
 	require.NoError(t, err)
 	require.Len(t, listedProgs, 1)
 	require.Equal(t, prog.Kernel.ID, listedProgs[0].KernelProgram.ID)
@@ -681,7 +680,7 @@ func TestFentry_LoadAttachDetachUnload(t *testing.T) {
 	// When: attach via client (fentry doesn't need additional params - target is in program)
 	feSpec, err := bpfman.NewFentryAttachSpec(prog.Kernel.ID)
 	require.NoError(t, err)
-	link, err := env.Client.AttachFentry(ctx, feSpec, bpfman.AttachOpts{})
+	link, err := env.AttachFentry(ctx, feSpec, bpfman.AttachOpts{})
 	require.NoError(t, err)
 
 	// Then: link has expected properties
@@ -689,11 +688,11 @@ func TestFentry_LoadAttachDetachUnload(t *testing.T) {
 	require.Equal(t, bpfman.LinkKindFentry, link.Kind)
 
 	t.Cleanup(func() {
-		env.Client.Detach(context.Background(), uint32(link.ID))
+		env.Detach(context.Background(), uint32(link.ID))
 	})
 
 	// Round-trip: GetLink should return matching link info
-	gotLinkSummary, gotLinkDetails, err := env.Client.GetLink(ctx, uint32(link.ID))
+	gotLinkSummary, gotLinkDetails, err := env.GetLink(ctx, uint32(link.ID))
 	require.NoError(t, err)
 	require.NotZero(t, gotLinkSummary.ID, "should have kernel link ID")
 	require.Equal(t, link.Kind, gotLinkSummary.Kind)
@@ -702,28 +701,28 @@ func TestFentry_LoadAttachDetachUnload(t *testing.T) {
 	require.Equal(t, "do_unlinkat", fentryDetails.FnName)
 
 	// Round-trip: ListLinks should include our link
-	listedLinks, err := env.Client.ListLinks(ctx)
+	listedLinks, err := env.ListLinks(ctx)
 	require.NoError(t, err)
 	require.Len(t, listedLinks, 1)
 	require.NotZero(t, listedLinks[0].ID, "should have kernel link ID")
 	require.Equal(t, link.Kind, listedLinks[0].Kind)
 
 	// When: detach
-	err = env.Client.Detach(ctx, uint32(link.ID))
+	err = env.Detach(ctx, uint32(link.ID))
 	require.NoError(t, err)
 
 	// Then: no links, and GetLink should return error
 	env.AssertLinkCount(0)
-	_, _, err = env.Client.GetLink(ctx, uint32(link.ID))
+	_, _, err = env.GetLink(ctx, uint32(link.ID))
 	require.Error(t, err, "GetLink should fail after detach")
 
 	// When: unload
-	err = env.Client.Unload(ctx, prog.Kernel.ID)
+	err = env.Unload(ctx, prog.Kernel.ID)
 	require.NoError(t, err)
 
 	// Then: clean state, and Get should return error
 	env.AssertCleanState()
-	_, err = env.Client.Get(ctx, prog.Kernel.ID)
+	_, err = env.Get(ctx, prog.Kernel.ID)
 	require.Error(t, err, "Get should fail after unload")
 }
 
@@ -748,19 +747,19 @@ func TestFexit_LoadAttachDetachUnload(t *testing.T) {
 	// When: load from file via client
 	spec, err := bpfman.NewAttachLoadSpec(bytecodeFile, "test_fexit", bpfman.ProgramTypeFexit, "do_unlinkat")
 	require.NoError(t, err)
-	prog, err := env.Client.Load(ctx, spec, manager.LoadOpts{})
+	prog, err := env.Load(ctx, spec, manager.LoadOpts{})
 	require.NoError(t, err)
 
 	// Then: program has expected properties
 	require.NotZero(t, prog.Kernel.ID, "kernel should assign program ID")
-	require.Equal(t, bpfman.ProgramTypeFexit.String(), prog.Kernel.ProgramType)
+	require.Equal(t, bpfman.ProgramTypeFexit.String(), prog.Kernel.ProgramType.String())
 
 	t.Cleanup(func() {
-		env.Client.Unload(context.Background(), prog.Kernel.ID)
+		env.Unload(context.Background(), prog.Kernel.ID)
 	})
 
 	// Round-trip: Get should return matching program info
-	gotProg, err := env.Client.Get(ctx, prog.Kernel.ID)
+	gotProg, err := env.Get(ctx, prog.Kernel.ID)
 	require.NoError(t, err)
 	require.NotNil(t, gotProg.Kernel)
 	require.NotNil(t, gotProg.Kernel.Program)
@@ -775,7 +774,7 @@ func TestFexit_LoadAttachDetachUnload(t *testing.T) {
 	require.NotEmpty(t, gotProg.Bpfman.Program.Handles.PinPath, "program should have pin path")
 
 	// Round-trip: List should include our program
-	listedProgs, err := env.Client.List(ctx)
+	listedProgs, err := env.List(ctx)
 	require.NoError(t, err)
 	require.Len(t, listedProgs, 1)
 	require.Equal(t, prog.Kernel.ID, listedProgs[0].KernelProgram.ID)
@@ -789,7 +788,7 @@ func TestFexit_LoadAttachDetachUnload(t *testing.T) {
 	// When: attach via client
 	fxSpec, err := bpfman.NewFexitAttachSpec(prog.Kernel.ID)
 	require.NoError(t, err)
-	link, err := env.Client.AttachFexit(ctx, fxSpec, bpfman.AttachOpts{})
+	link, err := env.AttachFexit(ctx, fxSpec, bpfman.AttachOpts{})
 	require.NoError(t, err)
 
 	// Then: link has expected properties
@@ -797,11 +796,11 @@ func TestFexit_LoadAttachDetachUnload(t *testing.T) {
 	require.Equal(t, bpfman.LinkKindFexit, link.Kind)
 
 	t.Cleanup(func() {
-		env.Client.Detach(context.Background(), uint32(link.ID))
+		env.Detach(context.Background(), uint32(link.ID))
 	})
 
 	// Round-trip: GetLink should return matching link info
-	gotLinkSummary, gotLinkDetails, err := env.Client.GetLink(ctx, uint32(link.ID))
+	gotLinkSummary, gotLinkDetails, err := env.GetLink(ctx, uint32(link.ID))
 	require.NoError(t, err)
 	require.NotZero(t, gotLinkSummary.ID, "should have kernel link ID")
 	require.Equal(t, link.Kind, gotLinkSummary.Kind)
@@ -810,28 +809,28 @@ func TestFexit_LoadAttachDetachUnload(t *testing.T) {
 	require.Equal(t, "do_unlinkat", fexitDetails.FnName)
 
 	// Round-trip: ListLinks should include our link
-	listedLinks, err := env.Client.ListLinks(ctx)
+	listedLinks, err := env.ListLinks(ctx)
 	require.NoError(t, err)
 	require.Len(t, listedLinks, 1)
 	require.NotZero(t, listedLinks[0].ID, "should have kernel link ID")
 	require.Equal(t, link.Kind, listedLinks[0].Kind)
 
 	// When: detach
-	err = env.Client.Detach(ctx, uint32(link.ID))
+	err = env.Detach(ctx, uint32(link.ID))
 	require.NoError(t, err)
 
 	// Then: no links, and GetLink should return error
 	env.AssertLinkCount(0)
-	_, _, err = env.Client.GetLink(ctx, uint32(link.ID))
+	_, _, err = env.GetLink(ctx, uint32(link.ID))
 	require.Error(t, err, "GetLink should fail after detach")
 
 	// When: unload
-	err = env.Client.Unload(ctx, prog.Kernel.ID)
+	err = env.Unload(ctx, prog.Kernel.ID)
 	require.NoError(t, err)
 
 	// Then: clean state, and Get should return error
 	env.AssertCleanState()
-	_, err = env.Client.Get(ctx, prog.Kernel.ID)
+	_, err = env.Get(ctx, prog.Kernel.ID)
 	require.Error(t, err, "Get should fail after unload")
 }
 
@@ -850,12 +849,12 @@ func TestTC_LoadAttachDetachUnload(t *testing.T) {
 	imageRef := interpreter.ImageRef{
 		URL: "quay.io/bpfman-bytecode/go-tc-counter:latest",
 	}
-	programs, err := env.Client.LoadImage(ctx, imageRef, []client.ImageProgramSpec{
+	programs, err := env.LoadImage(ctx, imageRef, []manager.ImageProgramSpec{
 		{
 			ProgramType: bpfman.ProgramTypeTC,
 			ProgramName: "stats",
 		},
-	}, client.LoadImageOpts{})
+	}, manager.LoadImageOpts{})
 	require.NoError(t, err)
 	require.Len(t, programs, 1)
 
@@ -863,14 +862,14 @@ func TestTC_LoadAttachDetachUnload(t *testing.T) {
 
 	// Then: program has expected properties
 	require.NotZero(t, prog.Kernel.ID, "kernel should assign program ID")
-	require.Equal(t, bpfman.ProgramTypeTC.String(), prog.Kernel.ProgramType)
+	require.Equal(t, bpfman.ProgramTypeTC.String(), prog.Kernel.ProgramType.String())
 
 	t.Cleanup(func() {
-		env.Client.Unload(context.Background(), prog.Kernel.ID)
+		env.Unload(context.Background(), prog.Kernel.ID)
 	})
 
 	// Round-trip: Get should return matching program info
-	gotProg, err := env.Client.Get(ctx, prog.Kernel.ID)
+	gotProg, err := env.Get(ctx, prog.Kernel.ID)
 	require.NoError(t, err)
 	require.NotNil(t, gotProg.Kernel)
 	require.NotNil(t, gotProg.Kernel.Program)
@@ -885,7 +884,7 @@ func TestTC_LoadAttachDetachUnload(t *testing.T) {
 	require.NotEmpty(t, gotProg.Bpfman.Program.Handles.PinPath, "program should have pin path")
 
 	// Round-trip: List should include our program
-	listedProgs, err := env.Client.List(ctx)
+	listedProgs, err := env.List(ctx)
 	require.NoError(t, err)
 	require.Len(t, listedProgs, 1)
 	require.Equal(t, prog.Kernel.ID, listedProgs[0].KernelProgram.ID)
@@ -901,7 +900,7 @@ func TestTC_LoadAttachDetachUnload(t *testing.T) {
 	tcSpec, err := bpfman.NewTCAttachSpec(prog.Kernel.ID, "lo", 1, "ingress")
 	require.NoError(t, err)
 	tcSpec = tcSpec.WithPriority(50)
-	link, err := env.Client.AttachTC(ctx, tcSpec, bpfman.AttachOpts{})
+	link, err := env.AttachTC(ctx, tcSpec, bpfman.AttachOpts{})
 	require.NoError(t, err)
 
 	// Then: link has expected properties
@@ -914,13 +913,13 @@ func TestTC_LoadAttachDetachUnload(t *testing.T) {
 	require.GreaterOrEqual(t, filterCount, 1, "tc filter should be visible after attach")
 
 	t.Cleanup(func() {
-		env.Client.Detach(context.Background(), uint32(link.ID))
+		env.Detach(context.Background(), uint32(link.ID))
 	})
 
 	// Round-trip: GetLink should return matching link info
 	// Note: TC uses dispatchers, so ProgramID is the dispatcher's program ID,
 	// not the extension program ID used in attach. We verify the type/details instead.
-	gotLinkSummary, gotLinkDetails, err := env.Client.GetLink(ctx, uint32(link.ID))
+	gotLinkSummary, gotLinkDetails, err := env.GetLink(ctx, uint32(link.ID))
 	require.NoError(t, err)
 	require.NotZero(t, gotLinkSummary.ID, "should have kernel link ID")
 	require.Equal(t, link.Kind, gotLinkSummary.Kind)
@@ -947,19 +946,19 @@ func TestTC_LoadAttachDetachUnload(t *testing.T) {
 
 	// Round-trip: ListLinks should include our link
 	// Note: TC uses dispatchers, so ProgramID is the dispatcher's program ID.
-	listedLinks, err := env.Client.ListLinks(ctx)
+	listedLinks, err := env.ListLinks(ctx)
 	require.NoError(t, err)
 	require.Len(t, listedLinks, 1)
 	require.NotZero(t, listedLinks[0].ID, "should have kernel link ID")
 	require.Equal(t, link.Kind, listedLinks[0].Kind)
 
 	// When: detach
-	err = env.Client.Detach(ctx, uint32(link.ID))
+	err = env.Detach(ctx, uint32(link.ID))
 	require.NoError(t, err)
 
 	// Then: no links, and GetLink should return error
 	env.AssertLinkCount(0)
-	_, _, err = env.Client.GetLink(ctx, uint32(link.ID))
+	_, _, err = env.GetLink(ctx, uint32(link.ID))
 	require.Error(t, err, "GetLink should fail after detach")
 
 	// Verify tc filter has been removed by the detach
@@ -967,12 +966,12 @@ func TestTC_LoadAttachDetachUnload(t *testing.T) {
 	require.Equal(t, 0, filterCountAfter, "tc filter should be removed after detach")
 
 	// When: unload
-	err = env.Client.Unload(ctx, prog.Kernel.ID)
+	err = env.Unload(ctx, prog.Kernel.ID)
 	require.NoError(t, err)
 
 	// Then: clean state, and Get should return error
 	env.AssertCleanState()
-	_, err = env.Client.Get(ctx, prog.Kernel.ID)
+	_, err = env.Get(ctx, prog.Kernel.ID)
 	require.Error(t, err, "Get should fail after unload")
 
 	// Verify TC ingress filters are removed after detach/unload
@@ -996,12 +995,12 @@ func TestTCX_LoadAttachDetachUnload(t *testing.T) {
 	imageRef := interpreter.ImageRef{
 		URL: "quay.io/bpfman-bytecode/go-tc-counter:latest",
 	}
-	programs, err := env.Client.LoadImage(ctx, imageRef, []client.ImageProgramSpec{
+	programs, err := env.LoadImage(ctx, imageRef, []manager.ImageProgramSpec{
 		{
 			ProgramType: bpfman.ProgramTypeTCX,
 			ProgramName: "stats",
 		},
-	}, client.LoadImageOpts{})
+	}, manager.LoadImageOpts{})
 	require.NoError(t, err)
 	require.Len(t, programs, 1)
 
@@ -1009,14 +1008,14 @@ func TestTCX_LoadAttachDetachUnload(t *testing.T) {
 
 	// Then: program has expected properties
 	require.NotZero(t, prog.Kernel.ID, "kernel should assign program ID")
-	require.Equal(t, bpfman.ProgramTypeTCX.String(), prog.Kernel.ProgramType)
+	require.Equal(t, bpfman.ProgramTypeTCX.String(), prog.Kernel.ProgramType.String())
 
 	t.Cleanup(func() {
-		env.Client.Unload(context.Background(), prog.Kernel.ID)
+		env.Unload(context.Background(), prog.Kernel.ID)
 	})
 
 	// Round-trip: Get should return matching program info
-	gotProg, err := env.Client.Get(ctx, prog.Kernel.ID)
+	gotProg, err := env.Get(ctx, prog.Kernel.ID)
 	require.NoError(t, err)
 	require.NotNil(t, gotProg.Kernel)
 	require.NotNil(t, gotProg.Kernel.Program)
@@ -1031,7 +1030,7 @@ func TestTCX_LoadAttachDetachUnload(t *testing.T) {
 	require.NotEmpty(t, gotProg.Bpfman.Program.Handles.PinPath, "program should have pin path")
 
 	// Round-trip: List should include our program
-	listedProgs, err := env.Client.List(ctx)
+	listedProgs, err := env.List(ctx)
 	require.NoError(t, err)
 	require.Len(t, listedProgs, 1)
 	require.Equal(t, prog.Kernel.ID, listedProgs[0].KernelProgram.ID)
@@ -1046,7 +1045,7 @@ func TestTCX_LoadAttachDetachUnload(t *testing.T) {
 	tcxSpec, err := bpfman.NewTCXAttachSpec(prog.Kernel.ID, "lo", 1, "ingress")
 	require.NoError(t, err)
 	tcxSpec = tcxSpec.WithPriority(50)
-	link, err := env.Client.AttachTCX(ctx, tcxSpec, bpfman.AttachOpts{})
+	link, err := env.AttachTCX(ctx, tcxSpec, bpfman.AttachOpts{})
 	require.NoError(t, err)
 
 	// Then: link has expected properties
@@ -1054,11 +1053,11 @@ func TestTCX_LoadAttachDetachUnload(t *testing.T) {
 	require.Equal(t, bpfman.LinkKindTCX, link.Kind)
 
 	t.Cleanup(func() {
-		env.Client.Detach(context.Background(), uint32(link.ID))
+		env.Detach(context.Background(), uint32(link.ID))
 	})
 
 	// Round-trip: GetLink should return matching link info
-	gotLinkSummary, gotLinkDetails, err := env.Client.GetLink(ctx, uint32(link.ID))
+	gotLinkSummary, gotLinkDetails, err := env.GetLink(ctx, uint32(link.ID))
 	require.NoError(t, err)
 	require.NotZero(t, gotLinkSummary.ID, "should have kernel link ID")
 	require.Equal(t, link.Kind, gotLinkSummary.Kind)
@@ -1071,28 +1070,28 @@ func TestTCX_LoadAttachDetachUnload(t *testing.T) {
 	// TCX uses native kernel multi-prog support, not dispatchers
 
 	// Round-trip: ListLinks should include our link
-	listedLinks, err := env.Client.ListLinks(ctx)
+	listedLinks, err := env.ListLinks(ctx)
 	require.NoError(t, err)
 	require.Len(t, listedLinks, 1)
 	require.NotZero(t, listedLinks[0].ID, "should have kernel link ID")
 	require.Equal(t, link.Kind, listedLinks[0].Kind)
 
 	// When: detach
-	err = env.Client.Detach(ctx, uint32(link.ID))
+	err = env.Detach(ctx, uint32(link.ID))
 	require.NoError(t, err)
 
 	// Then: no links, and GetLink should return error
 	env.AssertLinkCount(0)
-	_, _, err = env.Client.GetLink(ctx, uint32(link.ID))
+	_, _, err = env.GetLink(ctx, uint32(link.ID))
 	require.Error(t, err, "GetLink should fail after detach")
 
 	// When: unload
-	err = env.Client.Unload(ctx, prog.Kernel.ID)
+	err = env.Unload(ctx, prog.Kernel.ID)
 	require.NoError(t, err)
 
 	// Then: clean state, and Get should return error
 	env.AssertCleanState()
-	_, err = env.Client.Get(ctx, prog.Kernel.ID)
+	_, err = env.Get(ctx, prog.Kernel.ID)
 	require.Error(t, err, "Get should fail after unload")
 }
 
@@ -1111,12 +1110,12 @@ func TestXDP_LoadAttachDetachUnload(t *testing.T) {
 	imageRef := interpreter.ImageRef{
 		URL: "quay.io/bpfman-bytecode/xdp_pass:latest",
 	}
-	programs, err := env.Client.LoadImage(ctx, imageRef, []client.ImageProgramSpec{
+	programs, err := env.LoadImage(ctx, imageRef, []manager.ImageProgramSpec{
 		{
 			ProgramType: bpfman.ProgramTypeXDP,
 			ProgramName: "pass",
 		},
-	}, client.LoadImageOpts{})
+	}, manager.LoadImageOpts{})
 	require.NoError(t, err)
 	require.Len(t, programs, 1)
 
@@ -1124,14 +1123,14 @@ func TestXDP_LoadAttachDetachUnload(t *testing.T) {
 
 	// Then: program has expected properties
 	require.NotZero(t, prog.Kernel.ID, "kernel should assign program ID")
-	require.Equal(t, bpfman.ProgramTypeXDP.String(), prog.Kernel.ProgramType)
+	require.Equal(t, bpfman.ProgramTypeXDP.String(), prog.Kernel.ProgramType.String())
 
 	t.Cleanup(func() {
-		env.Client.Unload(context.Background(), prog.Kernel.ID)
+		env.Unload(context.Background(), prog.Kernel.ID)
 	})
 
 	// Round-trip: Get should return matching program info
-	gotProg, err := env.Client.Get(ctx, prog.Kernel.ID)
+	gotProg, err := env.Get(ctx, prog.Kernel.ID)
 	require.NoError(t, err)
 	require.NotNil(t, gotProg.Kernel)
 	require.NotNil(t, gotProg.Kernel.Program)
@@ -1146,7 +1145,7 @@ func TestXDP_LoadAttachDetachUnload(t *testing.T) {
 	require.NotEmpty(t, gotProg.Bpfman.Program.Handles.PinPath, "program should have pin path")
 
 	// Round-trip: List should include our program
-	listedProgs, err := env.Client.List(ctx)
+	listedProgs, err := env.List(ctx)
 	require.NoError(t, err)
 	require.Len(t, listedProgs, 1)
 	require.Equal(t, prog.Kernel.ID, listedProgs[0].KernelProgram.ID)
@@ -1160,7 +1159,7 @@ func TestXDP_LoadAttachDetachUnload(t *testing.T) {
 	// When: attach via client to lo interface
 	xdpSpec, err := bpfman.NewXDPAttachSpec(prog.Kernel.ID, "lo", 1)
 	require.NoError(t, err)
-	link, err := env.Client.AttachXDP(ctx, xdpSpec, bpfman.AttachOpts{})
+	link, err := env.AttachXDP(ctx, xdpSpec, bpfman.AttachOpts{})
 	require.NoError(t, err)
 
 	// Then: link has expected properties
@@ -1168,13 +1167,13 @@ func TestXDP_LoadAttachDetachUnload(t *testing.T) {
 	require.Equal(t, bpfman.LinkKindXDP, link.Kind)
 
 	t.Cleanup(func() {
-		env.Client.Detach(context.Background(), uint32(link.ID))
+		env.Detach(context.Background(), uint32(link.ID))
 	})
 
 	// Round-trip: GetLink should return matching link info
 	// Note: XDP uses dispatchers, so ProgramID is the dispatcher's program ID,
 	// not the extension program ID used in attach. We verify the type/details instead.
-	gotLinkSummary, gotLinkDetails, err := env.Client.GetLink(ctx, uint32(link.ID))
+	gotLinkSummary, gotLinkDetails, err := env.GetLink(ctx, uint32(link.ID))
 	require.NoError(t, err)
 	require.NotZero(t, gotLinkSummary.ID, "should have kernel link ID")
 	require.Equal(t, link.Kind, gotLinkSummary.Kind)
@@ -1187,28 +1186,28 @@ func TestXDP_LoadAttachDetachUnload(t *testing.T) {
 
 	// Round-trip: ListLinks should include our link
 	// Note: XDP uses dispatchers, so ProgramID is the dispatcher's program ID.
-	listedLinks, err := env.Client.ListLinks(ctx)
+	listedLinks, err := env.ListLinks(ctx)
 	require.NoError(t, err)
 	require.Len(t, listedLinks, 1)
 	require.NotZero(t, listedLinks[0].ID, "should have kernel link ID")
 	require.Equal(t, link.Kind, listedLinks[0].Kind)
 
 	// When: detach
-	err = env.Client.Detach(ctx, uint32(link.ID))
+	err = env.Detach(ctx, uint32(link.ID))
 	require.NoError(t, err)
 
 	// Then: no links, and GetLink should return error
 	env.AssertLinkCount(0)
-	_, _, err = env.Client.GetLink(ctx, uint32(link.ID))
+	_, _, err = env.GetLink(ctx, uint32(link.ID))
 	require.Error(t, err, "GetLink should fail after detach")
 
 	// When: unload
-	err = env.Client.Unload(ctx, prog.Kernel.ID)
+	err = env.Unload(ctx, prog.Kernel.ID)
 	require.NoError(t, err)
 
 	// Then: clean state, and Get should return error
 	env.AssertCleanState()
-	_, err = env.Client.Get(ctx, prog.Kernel.ID)
+	_, err = env.Get(ctx, prog.Kernel.ID)
 	require.Error(t, err, "Get should fail after unload")
 }
 
@@ -1238,12 +1237,12 @@ func TestLoadWithMetadataAndGlobalData(t *testing.T) {
 	imageRef := interpreter.ImageRef{
 		URL: "quay.io/bpfman-bytecode/xdp_pass:latest",
 	}
-	programs, err := env.Client.LoadImage(ctx, imageRef, []client.ImageProgramSpec{
+	programs, err := env.LoadImage(ctx, imageRef, []manager.ImageProgramSpec{
 		{
 			ProgramType: bpfman.ProgramTypeXDP,
 			ProgramName: "pass",
 		},
-	}, client.LoadImageOpts{
+	}, manager.LoadImageOpts{
 		UserMetadata: userMetadata,
 		GlobalData:   globalData,
 	})
@@ -1252,11 +1251,11 @@ func TestLoadWithMetadataAndGlobalData(t *testing.T) {
 
 	prog := programs[0]
 	t.Cleanup(func() {
-		env.Client.Unload(context.Background(), prog.Kernel.ID)
+		env.Unload(context.Background(), prog.Kernel.ID)
 	})
 
 	// Then: Get should return the user metadata and global data
-	gotProg, err := env.Client.Get(ctx, prog.Kernel.ID)
+	gotProg, err := env.Get(ctx, prog.Kernel.ID)
 	require.NoError(t, err)
 	require.NotNil(t, gotProg.Bpfman)
 	require.NotNil(t, gotProg.Bpfman.Program)
@@ -1276,7 +1275,7 @@ func TestLoadWithMetadataAndGlobalData(t *testing.T) {
 		"Get should return global data 'config_u32'")
 
 	// Then: List should also return the user metadata and global data
-	listedProgs, err := env.Client.List(ctx)
+	listedProgs, err := env.List(ctx)
 	require.NoError(t, err)
 	require.Len(t, listedProgs, 1)
 	require.NotNil(t, listedProgs[0].Metadata)
@@ -1294,7 +1293,7 @@ func TestLoadWithMetadataAndGlobalData(t *testing.T) {
 		"List should return global data 'config_u32'")
 
 	// When: unload
-	err = env.Client.Unload(ctx, prog.Kernel.ID)
+	err = env.Unload(ctx, prog.Kernel.ID)
 	require.NoError(t, err)
 
 	// Then: clean state
