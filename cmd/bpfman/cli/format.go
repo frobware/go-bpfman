@@ -404,6 +404,9 @@ func formatLinkResultTable(bpfFunction string, record bpfman.LinkRecord, details
 	// Common fields
 	fmt.Fprintf(w, " BPF Function:\t%s\n", bpfFunction)
 	fmt.Fprintf(w, " Link Type:\t%s\n", record.Kind)
+	if record.KernelProgramID != 0 {
+		fmt.Fprintf(w, " Program ID:\t%d\n", record.KernelProgramID)
+	}
 	fmt.Fprintf(w, " Link ID:\t%d\n", record.ID)
 
 	// Type-specific fields
@@ -547,6 +550,9 @@ func formatLinkInfoTable(bpfFunction string, record bpfman.LinkRecord, details b
 		fmt.Fprintf(w, " BPF Function:\tNone\n")
 	}
 	fmt.Fprintf(w, " Link Type:\t%s\n", record.Kind)
+	if record.KernelProgramID != 0 {
+		fmt.Fprintf(w, " Program ID:\t%d\n", record.KernelProgramID)
+	}
 	fmt.Fprintf(w, " Link ID:\t%d\n", record.ID)
 
 	// Type-specific fields
