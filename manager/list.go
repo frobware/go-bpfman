@@ -177,7 +177,14 @@ func (m *Manager) ListLinksByProgram(ctx context.Context, programKernelID uint32
 
 // GetLink retrieves a link by link ID, returning the full record with details.
 func (m *Manager) GetLink(ctx context.Context, linkID bpfman.LinkID) (bpfman.LinkSpec, error) {
-	return m.store.GetLink(ctx, linkID)
+	record, err := m.store.GetLink(ctx, linkID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return bpfman.LinkSpec{}, bpfman.ErrLinkNotFound{LinkID: linkID}
+		}
+		return bpfman.LinkSpec{}, fmt.Errorf("get link %d: %w", linkID, err)
+	}
+	return record, nil
 }
 
 // FindLoadedProgramByMetadata finds a program by metadata key/value from
