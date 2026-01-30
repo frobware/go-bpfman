@@ -38,7 +38,7 @@ func (c *ListProgramsCmd) Run(cli *CLI, ctx context.Context) error {
 
 // runLocal returns the full Program composite with spec and status.
 func (c *ListProgramsCmd) runLocal(cli *CLI, ctx context.Context, b client.Client) error {
-	programs, err := b.ListPrograms(ctx)
+	result, err := b.ListPrograms(ctx)
 	if errors.Is(err, client.ErrNotSupported) {
 		return fmt.Errorf("--local requires local mode (not available with remote daemon)")
 	}
@@ -46,11 +46,11 @@ func (c *ListProgramsCmd) runLocal(cli *CLI, ctx context.Context, b client.Clien
 		return err
 	}
 
-	if len(programs) == 0 {
+	if len(result.Programs) == 0 {
 		return cli.PrintOut("No managed programs found\n")
 	}
 
-	output, err := FormatProgramsComposite(programs, &c.OutputFlags)
+	output, err := FormatProgramsComposite(result, &c.OutputFlags)
 	if err != nil {
 		return err
 	}

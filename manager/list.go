@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/frobware/go-bpfman"
 	"github.com/frobware/go-bpfman/bpffs"
@@ -35,6 +38,37 @@ type KernelInfo struct {
 type BpfmanInfo struct {
 	Program *bpfman.ProgramSpec `json:"program,omitempty"`
 	Links   []bpfman.LinkRecord `json:"links,omitempty"`
+}
+
+// HostInfo contains system information about the observed host.
+type HostInfo struct {
+	Sysname  string `json:"sysname"`
+	Nodename string `json:"nodename"`
+	Release  string `json:"release"`
+	Version  string `json:"version"`
+	Machine  string `json:"machine"`
+}
+
+// GetHostInfo returns system information from uname.
+func GetHostInfo() HostInfo {
+	var utsname unix.Utsname
+	if err := unix.Uname(&utsname); err != nil {
+		return HostInfo{}
+	}
+	return HostInfo{
+		Sysname:  unix.ByteSliceToString(utsname.Sysname[:]),
+		Nodename: unix.ByteSliceToString(utsname.Nodename[:]),
+		Release:  unix.ByteSliceToString(utsname.Release[:]),
+		Version:  unix.ByteSliceToString(utsname.Version[:]),
+		Machine:  unix.ByteSliceToString(utsname.Machine[:]),
+	}
+}
+
+// ProgramListResult contains programs with observation metadata.
+type ProgramListResult struct {
+	ObservedAt time.Time        `json:"observed_at"`
+	Host       HostInfo         `json:"host"`
+	Programs   []bpfman.Program `json:"programs"`
 }
 
 // ErrMultipleProgramsFound is returned when multiple programs match the
@@ -223,18 +257,22 @@ func (m *Manager) FindLoadedProgramByMetadata(ctx context.Context, key, value st
 // ListPrograms returns all managed programs with full spec and status.
 // This returns the canonical bpfman.Program type with both Spec (from store)
 // and Status (from kernel enumeration + filesystem checks).
-func (m *Manager) ListPrograms(ctx context.Context) ([]bpfman.Program, error) {
+func (m *Manager) ListPrograms(ctx context.Context) (ProgramListResult, error) {
 	scanner := bpffs.NewScanner(m.dirs.ScannerDirs())
 	world, err := inspect.Snapshot(ctx, m.store, m.kernel, scanner)
 	if err != nil {
-		return nil, fmt.Errorf("snapshot: %w", err)
+		return ProgramListResult{}, fmt.Errorf("snapshot: %w", err)
 	}
 
-	var result []bpfman.Program
+	var programs []bpfman.Program
 	for _, row := range world.ManagedPrograms() {
 		if prog, ok := row.AsProgram(); ok {
-			result = append(result, prog)
+			programs = append(programs, prog)
 		}
 	}
-	return result, nil
+	return ProgramListResult{
+		ObservedAt: world.Meta.ObservedAt,
+		Host:       GetHostInfo(),
+		Programs:   programs,
+	}, nil
 }

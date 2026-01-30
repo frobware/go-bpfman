@@ -252,7 +252,7 @@ func (e *ephemeralClient) Doctor(ctx context.Context) (manager.DoctorReport, err
 
 // ListPrograms returns all managed programs with full spec and status.
 // This bypasses gRPC and returns the canonical domain type directly.
-func (e *ephemeralClient) ListPrograms(ctx context.Context) ([]bpfman.Program, error) {
+func (e *ephemeralClient) ListPrograms(ctx context.Context) (manager.ProgramListResult, error) {
 	return e.env.Manager.ListPrograms(ctx)
 }
 
