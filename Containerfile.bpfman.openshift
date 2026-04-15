@@ -50,8 +50,9 @@ ARG BUILD_VERSION
 USER root
 
 # Static linking with CGO requires glibc-static (libc.a).
-RUN microdnf install -y --nodocs --setopt=keepcache=0 --setopt=tsflags=nodocs \
-    glibc-static && microdnf clean all
+# go-toolset uses dnf, not microdnf.
+RUN dnf install -y --nodocs --setopt=keepcache=0 --setopt=tsflags=nodocs \
+    glibc-static && dnf clean all
 
 WORKDIR /src
 
