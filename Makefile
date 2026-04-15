@@ -277,9 +277,11 @@ bpfman-vet: bpf-build
 # container builds where dispatcher objects are already present.
 bpfman-compile: | $(BIN_DIR)
 STATIC_TAGS := osusergo,netgo
+EXTRA_TAGS ?=
+BUILD_TAGS = $(if $(STATIC),$(STATIC_TAGS))$(if $(EXTRA_TAGS),$(if $(STATIC),$(comma))$(EXTRA_TAGS))
 
 bpfman-compile: | $(BIN_DIR)
-	CGO_ENABLED=1 go build $(if $(STATIC),-tags '$(STATIC_TAGS)') -ldflags "$(GO_LDFLAGS)" -o $(BIN_DIR)/bpfman ./cmd/bpfman
+	CGO_ENABLED=1 go build $(if $(BUILD_TAGS),-tags '$(BUILD_TAGS)') -ldflags "$(GO_LDFLAGS)" -o $(BIN_DIR)/bpfman ./cmd/bpfman
 
 # Ensure bin directory exists
 $(BIN_DIR):
