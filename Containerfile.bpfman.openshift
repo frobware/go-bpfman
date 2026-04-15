@@ -57,21 +57,14 @@ COPY --from=bpf-builder /build/dispatcher/*.bpf.o dispatcher/
 
 ENV GOEXPERIMENT=strictfipsruntime
 
-RUN VERSION_PKG="github.com/frobware/go-bpfman/version" && \
-    : "${BUILD_COMMIT:=$(git rev-parse HEAD 2>/dev/null || echo unknown)}" && \
-    : "${BUILD_BRANCH:=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)}" && \
-    : "${BUILD_DATE:=$(date -u +%Y-%m-%dT%H:%M:%SZ)}" && \
-    : "${BUILD_VERSION:=$(git describe --tags --always --dirty 2>/dev/null || echo unknown)}" && \
-    CGO_ENABLED=1 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -tags strictfipsruntime \
-      -mod vendor \
-      -ldflags " \
-        -X '${VERSION_PKG}.gitCommit=${BUILD_COMMIT}' \
-        -X '${VERSION_PKG}.gitBranch=${BUILD_BRANCH}' \
-        -X '${VERSION_PKG}.gitState=clean' \
-        -X '${VERSION_PKG}.buildDate=${BUILD_DATE}' \
-        -X '${VERSION_PKG}.version=${BUILD_VERSION}'" \
-      -o bin/bpfman ./cmd/bpfman
+RUN GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    make bpfman-compile STATIC=1 \
+    GIT_COMMIT="${BUILD_COMMIT}" \
+    GIT_BRANCH="${BUILD_BRANCH}" \
+    GIT_STATE=clean \
+    BUILD_DATE="${BUILD_DATE}" \
+    GIT_VERSION="${BUILD_VERSION}" \
+    EXTRA_GO_LDFLAGS="-s -w"
 
 # ---------------------------------------------------------------------------
 # Stage 3: Runtime
