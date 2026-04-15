@@ -17,19 +17,14 @@
 # are needed for the production binary; the dispatcher Go package
 # embeds them via go:embed.
 # ---------------------------------------------------------------------------
-FROM registry.access.redhat.com/ubi9/ubi:latest AS bpf-builder
+FROM registry.access.redhat.com/ubi9/ubi-minimal:latest AS bpf-builder
 
-# hadolint ignore=DL3041
-RUN dnf update -y && \
-    dnf install -y \
-        clang \
-        gcc \
-        llvm \
-        libbpf-devel \
-        pkgconf-pkg-config \
-        make \
-        kernel-headers && \
-    dnf clean all
+# Install build dependencies using pre-fetched RPM packages for hermetic builds.
+# In hermetic mode, Cachi2 has already downloaded these RPMs per rpms.lock.yaml
+# and microdnf installs from the local cache with no network access.
+RUN microdnf install -y --nodocs --setopt=keepcache=0 --setopt=tsflags=nodocs \
+    clang gcc kernel-headers libbpf-devel llvm make pkgconf-pkg-config && \
+    microdnf clean all
 
 WORKDIR /build
 COPY dispatcher/ dispatcher/
