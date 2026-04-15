@@ -50,8 +50,10 @@ ARG BUILD_VERSION
 USER root
 
 # Static linking with CGO requires glibc-static (libc.a).
-# go-toolset uses dnf, not microdnf.
-RUN dnf install -y --nodocs --setopt=keepcache=0 --setopt=tsflags=nodocs \
+# go-toolset uses dnf, not microdnf. Source cachi2.env so dnf can
+# find the prefetched RPMs in hermetic mode.
+RUN . /cachi2/cachi2.env && \
+    dnf install -y --nodocs --setopt=keepcache=0 --setopt=tsflags=nodocs \
     glibc-static && dnf clean all
 
 WORKDIR /src
