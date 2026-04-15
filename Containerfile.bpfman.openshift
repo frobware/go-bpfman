@@ -71,15 +71,22 @@ RUN GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
 # ---------------------------------------------------------------------------
 FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
 
+ARG BUILDVERSION
+ARG CPE_VERSION
+
 COPY --from=go-builder /src/bin/bpfman /bpfman
 COPY LICENSE /licenses/
 
 LABEL name="go-bpfman" \
+      com.redhat.component="go-bpfman" \
       summary="eBPF manager daemon (Go implementation)" \
       description="go-bpfman is a reimplementation of bpfman in Go." \
       io.k8s.display-name="go-bpfman" \
       io.k8s.description="go-bpfman is a reimplementation of bpfman in Go." \
       io.openshift.tags="go-bpfman" \
+      maintainer="support@redhat.com" \
+      version=$BUILDVERSION \
+      cpe="cpe:/a:redhat:openshift_bpfman_operator:${CPE_VERSION}::el9" \
       vendor="Red Hat, Inc."
 
 USER 65532:65532
