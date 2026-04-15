@@ -59,7 +59,6 @@ ENV GOEXPERIMENT=strictfipsruntime
 
 RUN GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     make bpfman-compile STATIC=1 \
-    STATIC_TAGS="strictfipsruntime,osusergo,netgo" \
     GIT_COMMIT="${BUILD_COMMIT}" \
     GIT_BRANCH="${BUILD_BRANCH}" \
     GIT_STATE=clean \
