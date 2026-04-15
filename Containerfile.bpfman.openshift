@@ -43,7 +43,9 @@ ARG TARGETARCH=amd64
 
 # Build metadata passed from the Konflux pipeline.
 ARG BUILD_COMMIT
+ARG BUILD_BRANCH
 ARG BUILD_DATE
+ARG BUILD_VERSION
 
 USER root
 WORKDIR /src
@@ -57,13 +59,18 @@ ENV GOEXPERIMENT=strictfipsruntime
 
 RUN VERSION_PKG="github.com/frobware/go-bpfman/version" && \
     : "${BUILD_COMMIT:=$(git rev-parse HEAD 2>/dev/null || echo unknown)}" && \
+    : "${BUILD_BRANCH:=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)}" && \
     : "${BUILD_DATE:=$(date -u +%Y-%m-%dT%H:%M:%SZ)}" && \
+    : "${BUILD_VERSION:=$(git describe --tags --always --dirty 2>/dev/null || echo unknown)}" && \
     CGO_ENABLED=1 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -tags strictfipsruntime \
       -mod vendor \
       -ldflags " \
         -X '${VERSION_PKG}.gitCommit=${BUILD_COMMIT}' \
-        -X '${VERSION_PKG}.buildDate=${BUILD_DATE}'" \
+        -X '${VERSION_PKG}.gitBranch=${BUILD_BRANCH}' \
+        -X '${VERSION_PKG}.gitState=clean' \
+        -X '${VERSION_PKG}.buildDate=${BUILD_DATE}' \
+        -X '${VERSION_PKG}.version=${BUILD_VERSION}'" \
       -o bin/bpfman ./cmd/bpfman
 
 # ---------------------------------------------------------------------------

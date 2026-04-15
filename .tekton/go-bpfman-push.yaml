@@ -39,6 +39,8 @@ spec:
   - name: build-args
     value:
     - BUILD_COMMIT={{revision}}
+    - BUILD_BRANCH={{target_branch}}
+    - BUILD_VERSION={{revision}}
   pipelineRef:
     name: build-pipeline
   taskRunTemplate:
