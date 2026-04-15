@@ -634,6 +634,13 @@ arches:
     name: vim-filesystem
     evr: 2:8.2.2637-23.el9_7.2
     sourcerpm: vim-8.2.2637-23.el9_7.2.src.rpm
+  - url: https://cdn.redhat.com/content/dist/rhel9/9/aarch64/codeready-builder/os/Packages/g/glibc-static-2.34-231.el9_7.10.aarch64.rpm
+    repoid: codeready-builder-for-rhel-9-aarch64-rpms
+    size: 1247918
+    checksum: sha256:c6f3ed380b4a678b2c522368169830dfdd77db7fa80bea14aa5f70e8905377ee
+    name: glibc-static
+    evr: 2.34-231.el9_7.10
+    sourcerpm: glibc-2.34-231.el9_7.10.src.rpm
   - url: https://cdn.redhat.com/content/dist/rhel9/9/aarch64/codeready-builder/os/Packages/l/libbpf-devel-1.5.0-2.el9.aarch64.rpm
     repoid: codeready-builder-for-rhel-9-aarch64-rpms
     size: 91512
@@ -641,6 +648,13 @@ arches:
     name: libbpf-devel
     evr: 2:1.5.0-2.el9
     sourcerpm: libbpf-1.5.0-2.el9.src.rpm
+  - url: https://cdn.redhat.com/content/dist/rhel9/9/aarch64/codeready-builder/os/Packages/l/libxcrypt-static-4.4.18-3.el9.aarch64.rpm
+    repoid: codeready-builder-for-rhel-9-aarch64-rpms
+    size: 111974
+    checksum: sha256:8bb8a0eb808c389cfec8a0b29ef66a608cc04711b5d4a0ad515f3a32522ae6e0
+    name: libxcrypt-static
+    evr: 4.4.18-3.el9
+    sourcerpm: libxcrypt-4.4.18-3.el9.src.rpm
   source: []
   module_metadata: []
 - arch: ppc64le
@@ -1282,6 +1296,13 @@ arches:
     name: vim-filesystem
     evr: 2:8.2.2637-23.el9_7.2
     sourcerpm: vim-8.2.2637-23.el9_7.2.src.rpm
+  - url: https://cdn.redhat.com/content/dist/rhel9/9/ppc64le/codeready-builder/os/Packages/g/glibc-static-2.34-231.el9_7.10.ppc64le.rpm
+    repoid: codeready-builder-for-rhel-9-ppc64le-rpms
+    size: 1579994
+    checksum: sha256:468af30e48d0f1298d0c3e44c27054293d2be75867761403abce8cca1de26d7d
+    name: glibc-static
+    evr: 2.34-231.el9_7.10
+    sourcerpm: glibc-2.34-231.el9_7.10.src.rpm
   - url: https://cdn.redhat.com/content/dist/rhel9/9/ppc64le/codeready-builder/os/Packages/l/libbpf-devel-1.5.0-2.el9.ppc64le.rpm
     repoid: codeready-builder-for-rhel-9-ppc64le-rpms
     size: 91538
@@ -1289,6 +1310,13 @@ arches:
     name: libbpf-devel
     evr: 2:1.5.0-2.el9
     sourcerpm: libbpf-1.5.0-2.el9.src.rpm
+  - url: https://cdn.redhat.com/content/dist/rhel9/9/ppc64le/codeready-builder/os/Packages/l/libxcrypt-static-4.4.18-3.el9.ppc64le.rpm
+    repoid: codeready-builder-for-rhel-9-ppc64le-rpms
+    size: 123100
+    checksum: sha256:e81338b13512e1543f15bf63dfe2dce7ad8bd4d8cbd24c30d320ead90a8d01a1
+    name: libxcrypt-static
+    evr: 4.4.18-3.el9
+    sourcerpm: libxcrypt-4.4.18-3.el9.src.rpm
   source: []
   module_metadata: []
 - arch: s390x
@@ -1930,6 +1958,13 @@ arches:
     name: vim-filesystem
     evr: 2:8.2.2637-23.el9_7.2
     sourcerpm: vim-8.2.2637-23.el9_7.2.src.rpm
+  - url: https://cdn.redhat.com/content/dist/rhel9/9/s390x/codeready-builder/os/Packages/g/glibc-static-2.34-231.el9_7.10.s390x.rpm
+    repoid: codeready-builder-for-rhel-9-s390x-rpms
+    size: 1199279
+    checksum: sha256:f0a55d4943a2a9f19a0e6b55a0c7dbe50e166aee0917ebb659b07415af82ed83
+    name: glibc-static
+    evr: 2.34-231.el9_7.10
+    sourcerpm: glibc-2.34-231.el9_7.10.src.rpm
   - url: https://cdn.redhat.com/content/dist/rhel9/9/s390x/codeready-builder/os/Packages/l/libbpf-devel-1.5.0-2.el9.s390x.rpm
     repoid: codeready-builder-for-rhel-9-s390x-rpms
     size: 91517
@@ -1937,6 +1972,13 @@ arches:
     name: libbpf-devel
     evr: 2:1.5.0-2.el9
     sourcerpm: libbpf-1.5.0-2.el9.src.rpm
+  - url: https://cdn.redhat.com/content/dist/rhel9/9/s390x/codeready-builder/os/Packages/l/libxcrypt-static-4.4.18-3.el9.s390x.rpm
+    repoid: codeready-builder-for-rhel-9-s390x-rpms
+    size: 106736
+    checksum: sha256:c1b21e2c2dadba8339f04831ea075af70f0c3d04ecd1272d9b33ab340695e589
+    name: libxcrypt-static
+    evr: 4.4.18-3.el9
+    sourcerpm: libxcrypt-4.4.18-3.el9.src.rpm
   source: []
   module_metadata: []
 - arch: x86_64
@@ -2578,6 +2620,13 @@ arches:
     name: vim-filesystem
     evr: 2:8.2.2637-23.el9_7.2
     sourcerpm: vim-8.2.2637-23.el9_7.2.src.rpm
+  - url: https://cdn.redhat.com/content/dist/rhel9/9/x86_64/codeready-builder/os/Packages/g/glibc-static-2.34-231.el9_7.10.x86_64.rpm
+    repoid: codeready-builder-for-rhel-9-x86_64-rpms
+    size: 1524011
+    checksum: sha256:49c75219fac2a99561c31a5b0690871709950f9193d37063f721eab8148a7cb7
+    name: glibc-static
+    evr: 2.34-231.el9_7.10
+    sourcerpm: glibc-2.34-231.el9_7.10.src.rpm
   - url: https://cdn.redhat.com/content/dist/rhel9/9/x86_64/codeready-builder/os/Packages/l/libbpf-devel-1.5.0-2.el9.x86_64.rpm
     repoid: codeready-builder-for-rhel-9-x86_64-rpms
     size: 91544
@@ -2585,5 +2634,12 @@ arches:
     name: libbpf-devel
     evr: 2:1.5.0-2.el9
     sourcerpm: libbpf-1.5.0-2.el9.src.rpm
+  - url: https://cdn.redhat.com/content/dist/rhel9/9/x86_64/codeready-builder/os/Packages/l/libxcrypt-static-4.4.18-3.el9.x86_64.rpm
+    repoid: codeready-builder-for-rhel-9-x86_64-rpms
+    size: 105711
+    checksum: sha256:e2b914f5e136df3c90367dc222e9d893d0c34662f9f2d496b0cadd7d277c579a
+    name: libxcrypt-static
+    evr: 4.4.18-3.el9
+    sourcerpm: libxcrypt-4.4.18-3.el9.src.rpm
   source: []
   module_metadata: []

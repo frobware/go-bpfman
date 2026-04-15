@@ -1,6 +1,7 @@
 packages:
   - clang
   - gcc
+  - glibc-static
   - kernel-headers
   - libbpf-devel
   - llvm

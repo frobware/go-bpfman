@@ -44,9 +44,15 @@ ARG TARGETARCH=amd64
 # Build metadata passed from the Konflux pipeline.
 ARG BUILD_COMMIT
 ARG BUILD_BRANCH
+ARG BUILD_DATE
 ARG BUILD_VERSION
 
 USER root
+
+# Static linking with CGO requires glibc-static (libc.a).
+RUN microdnf install -y --nodocs --setopt=keepcache=0 --setopt=tsflags=nodocs \
+    glibc-static && microdnf clean all
+
 WORKDIR /src
 
 COPY . .
@@ -61,6 +67,7 @@ RUN GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     GIT_COMMIT="${BUILD_COMMIT}" \
     GIT_BRANCH="${BUILD_BRANCH}" \
     GIT_STATE=clean \
+    BUILD_DATE="${BUILD_DATE}" \
     GIT_VERSION="${BUILD_VERSION}" \
     EXTRA_GO_LDFLAGS="-s -w"
 
