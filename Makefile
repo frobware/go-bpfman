@@ -128,6 +128,17 @@ STATIC ?=
 override STATIC := $(filter 1,$(STATIC))
 
 # ---------------------------------------------------------------------------
+# Runtime image dispatch. A static binary has no runtime libc
+# dependency, so it can ship on a glibc-mismatched base like
+# ubi9-minimal (RHEL CVE feed, OpenShift ecosystem). A dynamic
+# binary needs a runtime whose glibc matches the Fedora 43 builder,
+# so it ships on fedora-minimal:43 (glibc 2.42 on both ends).
+# Override RUNTIME_IMAGE on the command line to pin a specific tag
+# or digest.
+# ---------------------------------------------------------------------------
+RUNTIME_IMAGE ?= $(if $(STATIC),registry.access.redhat.com/ubi9/ubi-minimal:latest,registry.fedoraproject.org/fedora-minimal:43)
+
+# ---------------------------------------------------------------------------
 # Version information injected at build time.
 # ---------------------------------------------------------------------------
 VERSION_PKG := github.com/frobware/go-bpfman/version
@@ -758,6 +769,7 @@ build-image-dev: bpfman-build
 	docker build \
 		$(if $(filter-out 0,$(DOCKER_IS_PODMAN)),--ignorefile=Dockerfile.bpfman.dev.dockerignore) \
 		-t $(BPFMAN_IMAGE):$(IMAGE_TAG) \
+		--build-arg RUNTIME_IMAGE=$(RUNTIME_IMAGE) \
 		-f Dockerfile.bpfman.dev \
 		$(EXTRA_DOCKER_BUILD_ARGS) .
 
@@ -811,6 +823,8 @@ build-image:
 		--build-arg GIT_BRANCH=$(GIT_BRANCH) \
 		--build-arg GIT_VERSION=$(GIT_VERSION) \
 		--build-arg BUILD_DATE=$(BUILD_DATE) \
+		$(if $(STATIC),--build-arg STATIC=1) \
+		--build-arg RUNTIME_IMAGE=$(RUNTIME_IMAGE) \
 		--build-arg EXTRA_GOFLAGS="$(EXTRA_GOFLAGS)" \
 		--build-arg EXTRA_GO_LDFLAGS="$(EXTRA_GO_LDFLAGS)" \
 		--build-arg IMAGE_REF="$(IMAGE_REF)" \
