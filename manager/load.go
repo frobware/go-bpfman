@@ -121,6 +121,17 @@ func (m *Manager) Load(ctx context.Context, source LoadSource, programs []Progra
 		return nil, fmt.Errorf("build load specs: %w", err)
 	}
 
+	// Reap store records for programs whose kernel object is gone
+	// before loading the new generation. Such rows are left behind by
+	// a prior generation that died without an Unload (daemon restart,
+	// external unload, or a ClusterBpfApplication deleted and
+	// recreated) and they poison later TCX attaches with ENOENT (see
+	// reapDeadProgramRecords). Best-effort: a reap failure must not
+	// block the load.
+	if err := m.reapDeadProgramRecords(ctx); err != nil {
+		m.logger.WarnContext(ctx, "reaping dead program records before load failed (continuing)", "error", err)
+	}
+
 	// Decide whether the load needs the cross-process writer
 	// lock. Loads of objects without LIBBPF_PIN_BY_NAME maps touch
 	// no shared bpffs state and remain lockless. Loads of objects
@@ -157,6 +168,85 @@ func (m *Manager) Load(ctx context.Context, source LoadSource, programs []Progra
 		return lerr
 	})
 	return loaded, runErr
+}
+
+// reapDeadProgramRecords removes store records for managed programs
+// whose kernel object no longer exists. Such rows are left behind when
+// a prior generation's programs die without an Unload -- a daemon
+// restart, an external unload, or a ClusterBpfApplication deleted and
+// recreated -- and they poison later attaches: the TCX attach order
+// anchors a new program against an existing one by kernel program ID,
+// and an anchor pointing at a dead program makes the kernel reject the
+// attach with ENOENT (see attachTCX). Nothing else prunes them --
+// PlanFromObservation deliberately leaves store-managed rows "for the
+// next bpfman invocation to reconcile", and that reconcile lived
+// nowhere until here.
+//
+// Runs under its own writer lock so the kernel-vs-store comparison and
+// the deletes cannot be raced by a concurrent attach or unload. Load
+// is the home for it: it is infrequent (once per generation) and
+// already takes the writer lock for shared-map loads, unlike the
+// read-only Get or the hot per-interface attach path. Best-effort --
+// errors are logged, never returned, so a reap failure cannot block a
+// load.
+//
+// Deletes are dependents-first: a dead map owner cannot be removed
+// while a (also dead) dependent still references it via the
+// map_owner_id ON DELETE RESTRICT foreign key. The fixed-point loop
+// deletes every dead program with no remaining dependents on each
+// pass, until none remain or a pass makes no progress. Deleting a
+// program row cascades to its links and shared-map-pin rows via the
+// schema foreign keys.
+func (m *Manager) reapDeadProgramRecords(ctx context.Context) error {
+	return lock.Run(ctx, m.rt.Layout().LockPath(), func(_ context.Context, _ lock.WriterScope) error {
+		storeProgs, err := m.store.List(ctx)
+		if err != nil {
+			return fmt.Errorf("list store programs: %w", err)
+		}
+
+		dead := make(map[kernel.ProgramID]struct{})
+		for id := range storeProgs {
+			if _, err := m.kernel.GetProgramByID(ctx, id); err != nil {
+				dead[id] = struct{}{}
+			}
+		}
+		if len(dead) == 0 {
+			return nil
+		}
+
+		for {
+			progress := false
+			for id := range dead {
+				deps, err := m.store.CountDependentPrograms(ctx, id)
+				if err != nil {
+					m.logger.WarnContext(ctx, "reap: dependent check failed",
+						"program_id", id, "error", err)
+					continue
+				}
+				if deps > 0 {
+					// Its dependents are also dead; reap them first.
+					continue
+				}
+				if err := m.store.Delete(ctx, id); err != nil {
+					m.logger.WarnContext(ctx, "reap: delete dead program record failed",
+						"program_id", id, "error", err)
+					continue
+				}
+				m.logger.InfoContext(ctx, "reaped dead program record absent from kernel",
+					"program_id", id)
+				delete(dead, id)
+				progress = true
+			}
+			if len(dead) == 0 || !progress {
+				break
+			}
+		}
+		if len(dead) > 0 {
+			m.logger.WarnContext(ctx, "reap: dead program records remain after reap",
+				"remaining", len(dead))
+		}
+		return nil
+	})
 }
 
 // loadBody runs the per-program load loop and the batched Phase B

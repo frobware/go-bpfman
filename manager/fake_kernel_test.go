@@ -289,6 +289,16 @@ func (f *fakeKernel) InjectKernelProgram(id kernel.ProgramID, name string, progT
 	}
 }
 
+// RemoveKernelProgram simulates a program disappearing from the kernel
+// (external unload, crash, or a daemon restart that lost the kernel
+// objects) while its store record remains. Used to set up the
+// dead-record reap path.
+func (f *fakeKernel) RemoveKernelProgram(id kernel.ProgramID) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.programs, id)
+}
+
 // recordExtensionAttach records an XDP/TC extension attachment with the progPinPath.
 func (f *fakeKernel) recordExtensionAttach(op, programName string, id uint32, progPinPath string) {
 	f.mu.Lock()
