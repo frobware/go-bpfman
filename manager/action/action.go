@@ -161,6 +161,15 @@ type AttachFexit struct {
 
 func (AttachFexit) isAction() {}
 
+// AttachLsm attaches a pinned program to an LSM hook.
+type AttachLsm struct {
+	ProgPinPath bpfman.ProgPinPath
+	HookName    string
+	LinkPinPath bpfman.LinkPath
+}
+
+func (AttachLsm) isAction() {}
+
 // Dispatcher actions - operations on dispatcher state
 
 // DeleteDispatcher removes a dispatcher and all its extension link

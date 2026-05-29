@@ -816,6 +816,64 @@ func TestParseLinkAttachFexit(t *testing.T) {
 	}
 }
 
+func TestParseLinkAttachLsm(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		args       []runtime.Arg
+		wantOutput string
+		wantErr    string
+	}{
+		{
+			name:       "program ID only",
+			args:       []runtime.Arg{word("lsm"), word("42")},
+			wantOutput: "table",
+		},
+		{
+			name:       "with output flag",
+			args:       []runtime.Arg{word("lsm"), word("-o"), word("json"), word("42")},
+			wantOutput: "json",
+		},
+		{
+			name: "structured program ref",
+			args: []runtime.Arg{
+				word("lsm"), structuredProgram("prog", 55),
+			},
+			wantOutput: "table",
+		},
+		{
+			name:    "missing program ID",
+			args:    []runtime.Arg{word("lsm")},
+			wantErr: "requires a program ID",
+		},
+		{
+			name:    "metadata flag rejected",
+			args:    []runtime.Arg{word("lsm"), word("-m"), word("k=v"), word("42")},
+			wantErr: "not supported for attach",
+		},
+		{
+			name:    "unknown flag rejected",
+			args:    []runtime.Arg{word("lsm"), word("--unknown"), word("42")},
+			wantErr: "unknown flag",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cmd, err := parseLinkAttach(tt.args)
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.NotNil(t, cmd.Spec)
+			assert.Equal(t, tt.wantOutput, cmd.Output.Output.Value)
+		})
+	}
+}
+
 func TestParseLinkAttachXDP_Errors(t *testing.T) {
 	t.Parallel()
 

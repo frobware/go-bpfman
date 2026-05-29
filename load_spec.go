@@ -27,6 +27,7 @@ type LoadSpec struct {
 	imageUsername   string // for registry auth
 	imagePassword   string // for registry auth
 	attachFunc      string
+	hookName        string
 	mapOwnerID      kernel.ProgramID
 }
 
@@ -34,6 +35,12 @@ type LoadSpec struct {
 // function (fentry and fexit).
 func (t ProgramType) RequiresAttachFunc() bool {
 	return t == ProgramTypeFentry || t == ProgramTypeFexit
+}
+
+// RequiresHookName returns true if this program type requires a hook name
+// at load time (lsm).
+func (t ProgramType) RequiresHookName() bool {
+	return t == ProgramTypeLsm
 }
 
 // Valid returns true if this is a known, specified program type.
@@ -61,6 +68,9 @@ func NewLoadSpec(objectPath, programName string, programType ProgramType) (LoadS
 	}
 	if programType.RequiresAttachFunc() {
 		return LoadSpec{}, fmt.Errorf("%s requires NewAttachLoadSpec with attachFunc", programType)
+	}
+	if programType.RequiresHookName() {
+		return LoadSpec{}, fmt.Errorf("%s requires NewLsmLoadSpec with hookName", programType)
 	}
 	return LoadSpec{
 		objectPath:  objectPath,
@@ -101,6 +111,30 @@ func NewAttachLoadSpec(objectPath, programName string, programType ProgramType, 
 	}, nil
 }
 
+// NewLsmLoadSpec creates a LoadSpec for LSM programs.
+//
+// Returns an error if:
+//   - objectPath is empty
+//   - programName is empty
+//   - hookName is empty
+func NewLsmLoadSpec(objectPath, programName, hookName string) (LoadSpec, error) {
+	if objectPath == "" {
+		return LoadSpec{}, errors.New("objectPath is required")
+	}
+	if programName == "" {
+		return LoadSpec{}, errors.New("programName is required")
+	}
+	if hookName == "" {
+		return LoadSpec{}, errors.New("hookName is required for lsm")
+	}
+	return LoadSpec{
+		objectPath:  objectPath,
+		programName: programName,
+		programType: ProgramTypeLsm,
+		hookName:    hookName,
+	}, nil
+}
+
 // Getters for LoadSpec fields
 
 // ObjectPath returns the bytecode object path the spec was
@@ -122,6 +156,7 @@ func (s LoadSpec) ImagePullPolicy() ImagePullPolicy { return s.imagePullPolicy }
 func (s LoadSpec) ImageUsername() string            { return s.imageUsername }
 func (s LoadSpec) ImagePassword() string            { return s.imagePassword }
 func (s LoadSpec) AttachFunc() string               { return s.attachFunc }
+func (s LoadSpec) HookName() string                 { return s.hookName }
 func (s LoadSpec) MapOwnerID() kernel.ProgramID     { return s.mapOwnerID }
 
 // HasImageAuth returns true if this LoadSpec has registry authentication configured.
@@ -191,6 +226,13 @@ func (s LoadSpec) WithAttachFunc(fn string) LoadSpec {
 	return s
 }
 
+// WithHookName returns a new LoadSpec with hook name set.
+// Used when reconstructing from stored data.
+func (s LoadSpec) WithHookName(name string) LoadSpec {
+	s.hookName = name
+	return s
+}
+
 // imageSourceJSON is the JSON representation of image provenance fields.
 // Kept as a nested object for backwards compatibility with existing DB rows.
 type imageSourceJSON struct {
@@ -213,6 +255,7 @@ type loadSpecJSON struct {
 	GlobalData  map[string][]byte `json:"global_data"`  // always emit; {} when no globals
 	ImageSource *imageSourceJSON  `json:"image_source"` // always emit; null when file-loaded
 	AttachFunc  *string           `json:"attach_func"`  // null for program types that do not use it; the attach symbol name (e.g. fentry/fexit) when applicable
+	HookName    *string           `json:"hook_name"`    // null for program types that do not use it; the LSM hook name (e.g. file_open) when applicable
 	MapOwnerID  *kernel.ProgramID `json:"map_owner_id"` // null when this program does not share another's maps; mirrors ProgramHandles.MapOwnerID
 }
 
@@ -240,6 +283,11 @@ func (s LoadSpec) MarshalJSON() ([]byte, error) {
 		af := s.attachFunc
 		attachFunc = &af
 	}
+	var hookName *string
+	if s.hookName != "" {
+		hn := s.hookName
+		hookName = &hn
+	}
 	return json.Marshal(loadSpecJSON{
 		ObjectPath:  s.objectPath,
 		ProgramName: s.programName,
@@ -247,6 +295,7 @@ func (s LoadSpec) MarshalJSON() ([]byte, error) {
 		GlobalData:  gd,
 		ImageSource: imgSrc,
 		AttachFunc:  attachFunc,
+		HookName:    hookName,
 		MapOwnerID:  mapOwnerID,
 	})
 }
@@ -270,6 +319,9 @@ func (s *LoadSpec) UnmarshalJSON(data []byte) error {
 	}
 	if js.AttachFunc != nil {
 		s.attachFunc = *js.AttachFunc
+	}
+	if js.HookName != nil {
+		s.hookName = *js.HookName
 	}
 	if js.MapOwnerID != nil {
 		s.mapOwnerID = *js.MapOwnerID

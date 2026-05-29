@@ -41,6 +41,8 @@ var _ platform.ProgramDiscoverer = (*ProgramDiscoverer)(nil)
 //
 // For fentry/fexit programs, the attach function is extracted from the ELF
 // section name (e.g., "fentry/vfs_read" -> AttachFunc="vfs_read").
+// For lsm programs, the hook name is extracted from the ELF section name
+// (e.g., "lsm/file_open" -> HookName="file_open").
 func DiscoverPrograms(objectPath string) ([]platform.DiscoveredProgram, error) {
 	f, err := os.Open(objectPath)
 	if err != nil {
@@ -78,6 +80,10 @@ func DiscoverProgramsFromReader(rd io.ReaderAt) ([]platform.DiscoveredProgram, e
 		// Extract attach function from section name for fentry/fexit
 		if progType == bpfman.ProgramTypeFentry || progType == bpfman.ProgramTypeFexit {
 			prog.AttachFunc = ExtractAttachFunc(progSpec.SectionName)
+		}
+		// Extract hook name from section name for lsm
+		if progType == bpfman.ProgramTypeLsm {
+			prog.HookName = ExtractAttachFunc(progSpec.SectionName)
 		}
 
 		programs = append(programs, prog)

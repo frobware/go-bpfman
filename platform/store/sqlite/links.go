@@ -261,6 +261,14 @@ func (s *sqliteStore) populateLinkDetails(ctx context.Context, links []bpfman.Li
 			}
 			return kernel.LinkID(linkID), d, nil
 		}},
+		{s.stmtListAllLsmDetails, "lsm", func(rows *sql.Rows) (kernel.LinkID, bpfman.LinkDetails, error) {
+			var linkID int64
+			var d bpfman.LsmDetails
+			if err := rows.Scan(&linkID, &d.HookName); err != nil {
+				return 0, nil, err
+			}
+			return kernel.LinkID(linkID), d, nil
+		}},
 		{s.stmtListAllXDPDetails, "xdp", func(rows *sql.Rows) (kernel.LinkID, bpfman.LinkDetails, error) {
 			var linkID int64
 			var d bpfman.XDPDetails
@@ -375,6 +383,10 @@ func (s *sqliteStore) SaveLink(ctx context.Context, spec bpfman.LinkRecord) erro
 	case bpfman.FentryDetails:
 		return s.saveDetails(ctx, s.stmtSaveFentryDetails, "Fentry", func() ([]any, error) {
 			return []any{id, d.FnName}, nil
+		})
+	case bpfman.LsmDetails:
+		return s.saveDetails(ctx, s.stmtSaveLsmDetails, "Lsm", func() ([]any, error) {
+			return []any{id, d.HookName}, nil
 		})
 	case bpfman.FexitDetails:
 		return s.saveDetails(ctx, s.stmtSaveFexitDetails, "Fexit", func() ([]any, error) {
@@ -618,6 +630,12 @@ func (s *sqliteStore) getLinkDetails(ctx context.Context, kind bpfman.LinkKind, 
 		return s.getDetailsFromRow(ctx, s.stmtGetFexitDetails, "fexit", linkID, func(row *sql.Row) (bpfman.LinkDetails, error) {
 			var d bpfman.FexitDetails
 			err := row.Scan(&d.FnName)
+			return d, err
+		})
+	case bpfman.LinkKindLsm:
+		return s.getDetailsFromRow(ctx, s.stmtGetLsmDetails, "lsm", linkID, func(row *sql.Row) (bpfman.LinkDetails, error) {
+			var d bpfman.LsmDetails
+			err := row.Scan(&d.HookName)
 			return d, err
 		})
 	case bpfman.LinkKindXDP:

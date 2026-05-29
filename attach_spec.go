@@ -152,6 +152,23 @@ func NewFexitAttachSpec(programID kernel.ProgramID) (FexitAttachSpec, error) {
 func (FexitAttachSpec) attachSpec()                   {}
 func (s FexitAttachSpec) ProgramID() kernel.ProgramID { return s.programID }
 
+// LsmAttachSpec specifies how to attach an LSM program.
+// Note: hookName comes from the program's stored metadata, not user input.
+type LsmAttachSpec struct {
+	programID kernel.ProgramID
+}
+
+// NewLsmAttachSpec creates a LsmAttachSpec with validated fields.
+func NewLsmAttachSpec(programID kernel.ProgramID) (LsmAttachSpec, error) {
+	if programID == 0 {
+		return LsmAttachSpec{}, errors.New("programID is required")
+	}
+	return LsmAttachSpec{programID: programID}, nil
+}
+
+func (LsmAttachSpec) attachSpec()                   {}
+func (s LsmAttachSpec) ProgramID() kernel.ProgramID { return s.programID }
+
 // XDPAttachSpec specifies how to attach XDP.
 type XDPAttachSpec struct {
 	programID kernel.ProgramID

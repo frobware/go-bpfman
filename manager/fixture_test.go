@@ -150,6 +150,7 @@ func (f *testFixture) Load(ctx context.Context, spec bpfman.LoadSpec, opts manag
 		Name:       spec.ProgramName(),
 		Type:       spec.ProgramType(),
 		AttachFunc: spec.AttachFunc(),
+		HookName:   spec.HookName(),
 	}}
 	if gd := spec.GlobalData(); gd != nil {
 		programs[0].GlobalData = gd
@@ -162,6 +163,7 @@ func (f *testFixture) Load(ctx context.Context, spec bpfman.LoadSpec, opts manag
 		Name:       spec.ProgramName(),
 		Type:       spec.ProgramType(),
 		AttachFunc: spec.AttachFunc(),
+		HookName:   spec.HookName(),
 	})
 	// Lockless after v2 (docs/PLAN-load-lockless.md): no flock acquisition.
 	result, err := f.Manager.Load(ctx, source, programs, opts)

@@ -140,6 +140,49 @@ func (k *kernelAdapter) AttachFexit(ctx context.Context, progPinPath bpfman.Prog
 	return k.attachTracing(ctx, progPinPath, fnName, linkPinPath)
 }
 
+// AttachLsm attaches a pinned LSM program to its hook.
+// The hook name was specified at load time and is stored in the program.
+func (k *kernelAdapter) AttachLsm(ctx context.Context, progPinPath bpfman.ProgPinPath, hookName string, linkPinPath bpfman.LinkPath) (bpfman.AttachOutput, error) {
+	linkPin := linkPinPath.String()
+	prog, err := ebpf.LoadPinnedProgram(progPinPath.String(), nil)
+	if err != nil {
+		return bpfman.AttachOutput{}, fmt.Errorf("load pinned program %s: %w", progPinPath, err)
+	}
+	defer prog.Close()
+
+	lnk, err := link.AttachLSM(link.LSMOptions{
+		Program: prog,
+	})
+	if err != nil {
+		return bpfman.AttachOutput{}, fmt.Errorf("attach lsm to %s: %w", hookName, err)
+	}
+
+	if linkPinPath != "" {
+		if err := pinWithRetry(linkPinPath, lnk.Pin); err != nil {
+			lnk.Close()
+			return bpfman.AttachOutput{}, fmt.Errorf("pin link to %s: %w", linkPinPath, err)
+		}
+	}
+
+	linkInfo, err := lnk.Info()
+	if err != nil {
+		lnk.Close()
+		return bpfman.AttachOutput{}, fmt.Errorf("get link info: %w", err)
+	}
+
+	if linkPin != "" {
+		k.trackLink(linkPin, lnk)
+	} else {
+		lnk.Close()
+	}
+
+	return bpfman.AttachOutput{
+		LinkID:     kernel.LinkID(linkInfo.ID),
+		KernelLink: ToKernelLink(linkInfo),
+		PinPath:    linkPinPath,
+	}, nil
+}
+
 // attachTracing is the shared implementation for fentry and fexit attachment.
 func (k *kernelAdapter) attachTracing(ctx context.Context, progPinPath bpfman.ProgPinPath, fnName string, linkPinPath bpfman.LinkPath) (bpfman.AttachOutput, error) {
 	linkPin := linkPinPath.String()

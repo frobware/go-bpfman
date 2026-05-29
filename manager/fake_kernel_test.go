@@ -838,6 +838,33 @@ func (f *fakeKernel) AttachFexit(_ context.Context, progPinPath bpfman.ProgPinPa
 	}, nil
 }
 
+func (f *fakeKernel) AttachLsm(_ context.Context, progPinPath bpfman.ProgPinPath, hookName string, linkPinPath bpfman.LinkPath) (bpfman.AttachOutput, error) {
+	linkID := kernel.LinkID(f.nextID.Add(1))
+	createPinFile(linkPinPath)
+	kl := kernel.Link{ID: linkID, ProgramID: 0, LinkType: "lsm"}
+	// Store for DetachLink lookup and kernel iteration
+	link := bpfman.Link{
+		Record: bpfman.LinkRecord{
+			ID:        linkID,
+			Kind:      bpfman.LinkKindLsm,
+			PinPath:   bpfman.NewLinkPath(linkPinPath),
+			CreatedAt: time.Now(),
+			Details:   bpfman.LsmDetails{HookName: hookName},
+		},
+		Status: bpfman.LinkStatus{
+			Kernel:     &kl,
+			KernelSeen: true,
+			PinPresent: linkPinPath != "",
+		},
+	}
+	f.links[linkID] = &link
+	return bpfman.AttachOutput{
+		LinkID:     linkID,
+		KernelLink: &kl,
+		PinPath:    linkPinPath,
+	}, nil
+}
+
 func (f *fakeKernel) DetachLink(_ context.Context, linkPinPath bpfman.LinkPath) error {
 	for id, link := range f.links {
 		pinPath := ""

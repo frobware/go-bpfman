@@ -96,6 +96,11 @@ func TestDescribe(t *testing.T) {
 			contains: "attach fexit tcp_connect",
 		},
 		{
+			name:     "AttachLsm",
+			action:   AttachLsm{HookName: "file_open"},
+			contains: "attach lsm file_open",
+		},
+		{
 			name:     "AttachTCX",
 			action:   AttachTCX{Ifindex: 3, Direction: "ingress"},
 			contains: "attach TCX ifindex=3 ingress",
@@ -231,6 +236,7 @@ func TestDescribe_Exhaustive(t *testing.T) {
 		AttachUprobeContainer{},
 		AttachFentry{},
 		AttachFexit{},
+		AttachLsm{},
 		AttachTCX{},
 		DeleteDispatcher{},
 		DetachLink{},

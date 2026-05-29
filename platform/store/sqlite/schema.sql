@@ -131,11 +131,12 @@ CREATE TABLE IF NOT EXISTS managed_programs (
     program_name TEXT NOT NULL,
     program_type TEXT NOT NULL CHECK (program_type IN (
         'xdp','tc','tcx','tracepoint','kprobe','kretprobe',
-        'uprobe','uretprobe','fentry','fexit'
+        'uprobe','uretprobe','fentry','fexit','lsm'
     )),
     object_path TEXT NOT NULL,
     pin_path TEXT NOT NULL,
     attach_func TEXT,
+    hook_name TEXT,
     global_data TEXT CHECK (global_data IS NULL OR json_valid(global_data)),
                                      -- JSON map<string, bytes>, opaque
     map_owner_id INTEGER,        -- Self-reference: program that owns shared maps
@@ -189,7 +190,7 @@ CREATE TABLE IF NOT EXISTS links (
     link_id         INTEGER PRIMARY KEY,  -- kernel ID or synthetic ID
     kind            TEXT NOT NULL CHECK (kind IN (
                         'tracepoint','kprobe','kretprobe','uprobe','uretprobe',
-                        'fentry','fexit','xdp','tc','tcx'
+                        'fentry','fexit','xdp','tc','tcx','lsm'
                     )),        -- LinkKind discriminator
     kernel_prog_id  INTEGER NOT NULL,     -- useful for queries
     pin_path        TEXT,
@@ -273,6 +274,16 @@ CREATE TABLE IF NOT EXISTS link_fentry_details (
 CREATE TABLE IF NOT EXISTS link_fexit_details (
     link_id INTEGER PRIMARY KEY,
     fn_name TEXT NOT NULL,
+
+    FOREIGN KEY (link_id)
+        REFERENCES links(link_id)
+        ON DELETE CASCADE
+) STRICT;
+
+-- LSM links
+CREATE TABLE IF NOT EXISTS link_lsm_details (
+    link_id INTEGER PRIMARY KEY,
+    hook_name TEXT NOT NULL,
 
     FOREIGN KEY (link_id)
         REFERENCES links(link_id)

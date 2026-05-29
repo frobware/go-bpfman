@@ -216,6 +216,10 @@ func (k *stubKernel) AttachFexit(ctx context.Context, progPinPath bpfman.ProgPin
 	panic("stubKernel.AttachFexit not implemented")
 }
 
+func (k *stubKernel) AttachLsm(ctx context.Context, progPinPath bpfman.ProgPinPath, hookName string, linkPinPath bpfman.LinkPath) (bpfman.AttachOutput, error) {
+	panic("stubKernel.AttachLsm not implemented")
+}
+
 // TracepointLister
 func (k *stubKernel) ListTracepoints(ctx context.Context) ([]string, error) {
 	panic("stubKernel.ListTracepoints not implemented")
