@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"time"
 
 	"github.com/frobware/go-bpfman"
@@ -182,71 +183,93 @@ func (m *Manager) Load(ctx context.Context, source LoadSource, programs []Progra
 // next bpfman invocation to reconcile", and that reconcile lived
 // nowhere until here.
 //
-// Runs under its own writer lock so the kernel-vs-store comparison and
+// This is the imperative shell: it gathers the inputs (the store's
+// programs, and for each whether the kernel still has it), hands the
+// decision to the pure planReap, and applies the resulting plan. It
+// runs under its own writer lock so the kernel-vs-store snapshot and
 // the deletes cannot be raced by a concurrent attach or unload. Load
 // is the home for it: it is infrequent (once per generation) and
 // already takes the writer lock for shared-map loads, unlike the
 // read-only Get or the hot per-interface attach path. Best-effort --
 // errors are logged, never returned, so a reap failure cannot block a
 // load.
-//
-// Deletes are dependents-first: a dead map owner cannot be removed
-// while a (also dead) dependent still references it via the
-// map_owner_id ON DELETE RESTRICT foreign key. The fixed-point loop
-// deletes every dead program with no remaining dependents on each
-// pass, until none remain or a pass makes no progress. Deleting a
-// program row cascades to its links and shared-map-pin rows via the
-// schema foreign keys.
 func (m *Manager) reapDeadProgramRecords(ctx context.Context) error {
 	return lock.Run(ctx, m.rt.Layout().LockPath(), func(_ context.Context, _ lock.WriterScope) error {
-		storeProgs, err := m.store.List(ctx)
+		progs, err := m.store.List(ctx)
 		if err != nil {
 			return fmt.Errorf("list store programs: %w", err)
 		}
 
-		dead := make(map[kernel.ProgramID]struct{})
-		for id := range storeProgs {
+		dead := make(map[kernel.ProgramID]bool)
+		for id := range progs {
 			if _, err := m.kernel.GetProgramByID(ctx, id); err != nil {
-				dead[id] = struct{}{}
+				dead[id] = true
 			}
-		}
-		if len(dead) == 0 {
-			return nil
 		}
 
-		for {
-			progress := false
-			for id := range dead {
-				deps, err := m.store.CountDependentPrograms(ctx, id)
-				if err != nil {
-					m.logger.WarnContext(ctx, "reap: dependent check failed",
-						"program_id", id, "error", err)
-					continue
-				}
-				if deps > 0 {
-					// Its dependents are also dead; reap them first.
-					continue
-				}
-				if err := m.store.Delete(ctx, id); err != nil {
-					m.logger.WarnContext(ctx, "reap: delete dead program record failed",
-						"program_id", id, "error", err)
-					continue
-				}
-				m.logger.InfoContext(ctx, "reaped dead program record absent from kernel",
-					"program_id", id)
-				delete(dead, id)
-				progress = true
+		for _, id := range planReap(progs, dead) {
+			if err := m.store.Delete(ctx, id); err != nil {
+				m.logger.WarnContext(ctx, "reap: delete dead program record failed",
+					"program_id", id, "error", err)
+				continue
 			}
-			if len(dead) == 0 || !progress {
-				break
-			}
-		}
-		if len(dead) > 0 {
-			m.logger.WarnContext(ctx, "reap: dead program records remain after reap",
-				"remaining", len(dead))
+			m.logger.InfoContext(ctx, "reaped dead program record absent from kernel",
+				"program_id", id)
 		}
 		return nil
 	})
+}
+
+// planReap decides which dead program records to delete and in what
+// order. It is pure: the store's program metadata and the set of dead
+// program IDs go in, an ordered slice of IDs to delete comes out, with
+// no IO. The map-sharing dependency is read from each record's
+// MapOwnerID rather than queried, so the dependents-first ordering can
+// be decided -- and tested -- on plain data.
+//
+// A program may be deleted only once nothing still records it as map
+// owner: managed_programs.map_owner_id is ON DELETE RESTRICT, and a
+// live dependent's shared maps must not be pulled out from under it.
+// deps counts every program (live or dead) that names each program as
+// its owner; a dead program is emitted only when its count reaches
+// zero, and emitting it decrements its own owner's count, which can
+// unblock that owner on a later pass. A dead owner whose dependent is
+// still live therefore stays put -- correctly. Iteration is over
+// sorted IDs so the plan is deterministic.
+func planReap(progs map[kernel.ProgramID]bpfman.ProgramRecord, dead map[kernel.ProgramID]bool) []kernel.ProgramID {
+	deps := make(map[kernel.ProgramID]int, len(progs))
+	for _, rec := range progs {
+		if owner := rec.Handles.MapOwnerID; owner != nil {
+			deps[*owner]++
+		}
+	}
+
+	deadIDs := make([]kernel.ProgramID, 0, len(dead))
+	for id := range dead {
+		deadIDs = append(deadIDs, id)
+	}
+	slices.Sort(deadIDs)
+
+	removed := make(map[kernel.ProgramID]bool, len(dead))
+	plan := make([]kernel.ProgramID, 0, len(dead))
+	for {
+		progress := false
+		for _, id := range deadIDs {
+			if removed[id] || deps[id] > 0 {
+				continue
+			}
+			plan = append(plan, id)
+			removed[id] = true
+			if owner := progs[id].Handles.MapOwnerID; owner != nil {
+				deps[*owner]--
+			}
+			progress = true
+		}
+		if !progress {
+			break
+		}
+	}
+	return plan
 }
 
 // loadBody runs the per-program load loop and the batched Phase B
