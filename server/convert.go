@@ -27,6 +27,8 @@ func protoToBpfmanType(pt pb.BpfmanProgramType) (bpfman.ProgramType, error) {
 		return bpfman.ProgramTypeFexit, nil
 	case pb.BpfmanProgramType_TCX:
 		return bpfman.ProgramTypeTCX, nil
+	case pb.BpfmanProgramType_LSM:
+		return bpfman.ProgramTypeLsm, nil
 	default:
 		return bpfman.ProgramType{}, fmt.Errorf("unknown program type: %d", pt)
 	}
@@ -51,6 +53,8 @@ func bpfmanTypeToProto(pt bpfman.ProgramType) uint32 {
 		return uint32(pb.BpfmanProgramType_FEXIT)
 	case bpfman.ProgramTypeTCX:
 		return uint32(pb.BpfmanProgramType_TCX)
+	case bpfman.ProgramTypeLsm:
+		return uint32(pb.BpfmanProgramType_LSM)
 	default:
 		return uint32(pb.BpfmanProgramType_XDP) // zero value
 	}

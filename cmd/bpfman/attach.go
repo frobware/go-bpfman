@@ -22,6 +22,7 @@ type AttachCmd struct {
 	Uprobe     AttachUprobeCmd     `cmd:"" help:"Attach a program to a user-space probe."`
 	Fentry     AttachFentryCmd     `cmd:"" help:"Attach a program to a function entry tracing point."`
 	Fexit      AttachFexitCmd      `cmd:"" help:"Attach a program to a function exit tracing point."`
+	Lsm        AttachLsmCmd        `cmd:"" help:"Attach a program to an LSM hook."`
 }
 
 // attachResult holds the result of an attach operation for output outside the lock.
@@ -312,6 +313,29 @@ func (c *AttachFexitCmd) Run(cli *bpfmancli.CLI, ctx context.Context) error {
 		spec, err := bpfman.NewFexitAttachSpec(c.ProgramID.Value)
 		if err != nil {
 			return attachResult{}, fmt.Errorf("invalid fexit spec: %w", err)
+		}
+
+		link, err := mgr.Attach(ctx, writeLock, spec)
+		if err != nil {
+			return attachResult{}, err
+		}
+		return attachResult{Link: link}, nil
+	})
+}
+
+// AttachLsmCmd attaches a program to an LSM hook.
+type AttachLsmCmd struct {
+	cliformat.OutputFlags
+	Example   ExampleFlag          `name:"example" help:"Show working examples and exit."`
+	Metadata  []bpfmancli.KeyValue `short:"m" name:"metadata" help:"KEY=VALUE metadata (can be repeated)."`
+	ProgramID bpfmancli.ProgramID  `arg:"" name:"program-id" help:"Program ID to attach."`
+}
+
+func (c *AttachLsmCmd) Run(cli *bpfmancli.CLI, ctx context.Context) error {
+	return runAttach(cli, ctx, &c.OutputFlags, func(ctx context.Context, mgr *manager.Manager, writeLock lock.WriterScope) (attachResult, error) {
+		spec, err := bpfman.NewLsmAttachSpec(c.ProgramID.Value)
+		if err != nil {
+			return attachResult{}, fmt.Errorf("invalid lsm spec: %w", err)
 		}
 
 		link, err := mgr.Attach(ctx, writeLock, spec)

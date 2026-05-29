@@ -166,6 +166,14 @@ message FexitAttachInfo {
     map<string, string> metadata = 1;
 }
 
+/* LsmAttachInfo represents the program specific metadata which bpfman
+ * needs to attach an LSM program. The hook is fixed at load time so
+ * no additional fields are required here.
+ */
+message LsmAttachInfo {
+    map<string, string> metadata = 1;
+}
+
 /* Program specific parameters, mostly concerning where and how to attach
  * the eBPF program.
  */
@@ -180,6 +188,7 @@ message AttachInfo {
         TCXAttachInfo tcx_attach_info = 6;
         FentryAttachInfo fentry_attach_info = 7;
         FexitAttachInfo fexit_attach_info = 8;
+        LsmAttachInfo lsm_attach_info = 9;
     }
 };
 
@@ -202,6 +211,7 @@ enum BpfmanProgramType {
     FENTRY = 5;
     FEXIT = 6;
     TCX = 7;
+    LSM = 8;
 }
 
 /* LoadInfo contains per-program information for LoadRequest. */
@@ -221,11 +231,17 @@ message FexitLoadInfo {
     string fn_name = 1;
 }
 
+/* LsmLoadInfo contains the program-specific load information for LoadInfo. */
+message LsmLoadInfo {
+    string hook_name = 1;
+}
+
 /* ProgSpecificInfo contains the program-specific load information for LoadInfo. */
 message ProgSpecificInfo {
     oneof info {
         FentryLoadInfo fentry_load_info = 1;
         FexitLoadInfo fexit_load_info = 2;
+        LsmLoadInfo lsm_load_info = 3;
     }
 }
 
@@ -344,6 +360,7 @@ enum BpfmanLinkType {
     LINK_TYPE_XDP = 8;
     LINK_TYPE_TC = 9;
     LINK_TYPE_TCX = 10;
+    LINK_TYPE_LSM = 11;
 }
 
 /* Common link fields */
@@ -385,6 +402,12 @@ message FentryLinkDetails {
 /* FexitLinkDetails contains fields specific to fexit attachments. */
 message FexitLinkDetails {
     string fn_name = 1;
+}
+
+/* LsmLinkDetails contains fields specific to LSM attachments.
+ * The hook name was specified at load time and is stored in the program. */
+message LsmLinkDetails {
+    string hook_name = 1;
 }
 
 /* XDPLinkDetails contains fields specific to XDP attachments. */
@@ -435,6 +458,7 @@ message LinkDetails {
         XDPLinkDetails xdp = 6;
         TCLinkDetails tc = 7;
         TCXLinkDetails tcx = 8;
+        LsmLinkDetails lsm = 9;
     }
 }
 

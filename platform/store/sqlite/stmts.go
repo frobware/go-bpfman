@@ -10,7 +10,7 @@ func (s *sqliteStore) prepareProgramStatements(ctx context.Context) error {
 	var err error
 
 	const sqlGetProgram = `
-		SELECT m.program_name, m.program_type, m.object_path, m.pin_path, m.attach_func,
+		SELECT m.program_name, m.program_type, m.object_path, m.pin_path, m.attach_func, m.hook_name,
 		       m.global_data, m.map_owner_id, m.map_pin_path, m.image_source, m.owner, m.description,
 		       m.license, m.gpl_compatible, m.created_at, m.updated_at, m.metadata_json
 		FROM managed_programs m
@@ -34,15 +34,16 @@ func (s *sqliteStore) prepareProgramStatements(ctx context.Context) error {
 	// signal that a program_id was reused and the row was overwritten.
 	const sqlSaveProgram = `
 		INSERT INTO managed_programs
-		(program_id, program_name, program_type, object_path, pin_path, attach_func,
+		(program_id, program_name, program_type, object_path, pin_path, attach_func, hook_name,
 		 global_data, map_owner_id, map_pin_path, image_source, owner, description, license, gpl_compatible, metadata_json, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(program_id) DO UPDATE SET
 		  program_name = excluded.program_name,
 		  program_type = excluded.program_type,
 		  object_path = excluded.object_path,
 		  pin_path = excluded.pin_path,
 		  attach_func = excluded.attach_func,
+		  hook_name = excluded.hook_name,
 		  global_data = excluded.global_data,
 		  map_owner_id = excluded.map_owner_id,
 		  map_pin_path = excluded.map_pin_path,
@@ -63,7 +64,7 @@ func (s *sqliteStore) prepareProgramStatements(ctx context.Context) error {
 	}
 
 	const sqlListPrograms = `
-		SELECT m.program_id, m.program_name, m.program_type, m.object_path, m.pin_path, m.attach_func,
+		SELECT m.program_id, m.program_name, m.program_type, m.object_path, m.pin_path, m.attach_func, m.hook_name,
 		       m.global_data, m.map_owner_id, m.map_pin_path, m.image_source, m.owner, m.description,
 		       m.license, m.gpl_compatible, m.created_at, m.updated_at, m.metadata_json
 		FROM managed_programs m`
@@ -162,6 +163,11 @@ func (s *sqliteStore) prepareLinkDetailStatements(ctx context.Context) error {
 		return fmt.Errorf("prepare GetFexitDetails: %w", err)
 	}
 
+	const sqlGetLsmDetails = "SELECT hook_name FROM link_lsm_details WHERE link_id = ?"
+	if s.stmtGetLsmDetails, err = s.db.PrepareContext(ctx, sqlGetLsmDetails); err != nil {
+		return fmt.Errorf("prepare GetLsmDetails: %w", err)
+	}
+
 	const sqlGetXDPDetails = `
 		SELECT d.interface, d.ifindex, d.priority, d.position, d.proceed_on, d.netns, d.nsid, d.dispatcher_program_id, disp.revision
 		FROM link_xdp_details d
@@ -230,6 +236,13 @@ func (s *sqliteStore) prepareLinkDetailStatements(ctx context.Context) error {
 		return fmt.Errorf("prepare SaveFexitDetails: %w", err)
 	}
 
+	const sqlSaveLsmDetails = `
+		INSERT INTO link_lsm_details (link_id, hook_name)
+		VALUES (?, ?)`
+	if s.stmtSaveLsmDetails, err = s.db.PrepareContext(ctx, sqlSaveLsmDetails); err != nil {
+		return fmt.Errorf("prepare SaveLsmDetails: %w", err)
+	}
+
 	const sqlSaveXDPDetails = `
 		INSERT INTO link_xdp_details (link_id, interface, ifindex, priority, position, proceed_on, netns, nsid, dispatcher_program_id)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -275,6 +288,11 @@ func (s *sqliteStore) prepareLinkDetailStatements(ctx context.Context) error {
 	const sqlListAllFexitDetails = "SELECT link_id, fn_name FROM link_fexit_details"
 	if s.stmtListAllFexitDetails, err = s.db.PrepareContext(ctx, sqlListAllFexitDetails); err != nil {
 		return fmt.Errorf("prepare ListAllFexitDetails: %w", err)
+	}
+
+	const sqlListAllLsmDetails = "SELECT link_id, hook_name FROM link_lsm_details"
+	if s.stmtListAllLsmDetails, err = s.db.PrepareContext(ctx, sqlListAllLsmDetails); err != nil {
+		return fmt.Errorf("prepare ListAllLsmDetails: %w", err)
 	}
 
 	const sqlListAllXDPDetails = `

@@ -73,14 +73,17 @@ func (s *Server) Load(ctx context.Context, req *pb.LoadRequest) (*pb.LoadRespons
 		// Check for actual type metadata to handle kretprobe/uretprobe
 		progType = resolveActualType(progType, info.Name, req.Metadata)
 
-		// Extract AttachFunc from ProgSpecificInfo for fentry/fexit
+		// Extract AttachFunc/HookName from ProgSpecificInfo for fentry/fexit/lsm
 		var attachFunc string
+		var hookName string
 		if info.Info != nil {
 			switch i := info.Info.Info.(type) {
 			case *pb.ProgSpecificInfo_FentryLoadInfo:
 				attachFunc = i.FentryLoadInfo.FnName
 			case *pb.ProgSpecificInfo_FexitLoadInfo:
 				attachFunc = i.FexitLoadInfo.FnName
+			case *pb.ProgSpecificInfo_LsmLoadInfo:
+				hookName = i.LsmLoadInfo.HookName
 			}
 		}
 
@@ -93,6 +96,7 @@ func (s *Server) Load(ctx context.Context, req *pb.LoadRequest) (*pb.LoadRespons
 			Name:       info.Name,
 			Type:       progType,
 			AttachFunc: attachFunc,
+			HookName:   hookName,
 			MapOwnerID: mapOwnerID,
 		})
 	}

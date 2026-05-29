@@ -255,6 +255,8 @@ func linkKindToProto(k bpfman.LinkKind) pb.BpfmanLinkType {
 		return pb.BpfmanLinkType_LINK_TYPE_TC
 	case bpfman.LinkKindTCX:
 		return pb.BpfmanLinkType_LINK_TYPE_TCX
+	case bpfman.LinkKindLsm:
+		return pb.BpfmanLinkType_LINK_TYPE_LSM
 	default:
 		return pb.BpfmanLinkType_LINK_TYPE_UNSPECIFIED
 	}
@@ -311,6 +313,14 @@ func linkDetailsToProto(d bpfman.LinkDetails) *pb.LinkDetails {
 			Details: &pb.LinkDetails_Fexit{
 				Fexit: &pb.FexitLinkDetails{
 					FnName: details.FnName,
+				},
+			},
+		}
+	case bpfman.LsmDetails:
+		return &pb.LinkDetails{
+			Details: &pb.LinkDetails_Lsm{
+				Lsm: &pb.LsmLinkDetails{
+					HookName: details.HookName,
 				},
 			},
 		}

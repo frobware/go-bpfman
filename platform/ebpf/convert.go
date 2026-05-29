@@ -53,6 +53,8 @@ func inferProgramType(sectionName string) bpfman.ProgramType {
 		return bpfman.ProgramTypeUprobe
 	case strings.HasPrefix(sectionName, "tracepoint"):
 		return bpfman.ProgramTypeTracepoint
+	case strings.HasPrefix(sectionName, "lsm"):
+		return bpfman.ProgramTypeLsm
 	case strings.HasPrefix(sectionName, "fentry"):
 		return bpfman.ProgramTypeFentry
 	case strings.HasPrefix(sectionName, "fexit"):

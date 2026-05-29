@@ -577,8 +577,10 @@ func parseLinkAttach(args []runtime.Arg) (*LinkAttachCommand, error) {
 		return parseLinkAttachFentry(rest)
 	case "fexit":
 		return parseLinkAttachFexit(rest)
+	case "lsm":
+		return parseLinkAttachLsm(rest)
 	default:
-		return nil, fmt.Errorf("unknown attach type %q (valid: xdp, tc, tcx, tracepoint, kprobe, uprobe, fentry, fexit)", attachType)
+		return nil, fmt.Errorf("unknown attach type %q (valid: xdp, tc, tcx, tracepoint, kprobe, uprobe, fentry, fexit, lsm)", attachType)
 	}
 }
 
@@ -1255,6 +1257,57 @@ func parseLinkAttachFexit(args []runtime.Arg) (*LinkAttachCommand, error) {
 	spec, err := bpfman.NewFexitAttachSpec(progID)
 	if err != nil {
 		return nil, fmt.Errorf("link attach fexit: %w", err)
+	}
+
+	return &LinkAttachCommand{Spec: spec, Output: output}, nil
+}
+
+// parseLinkAttachLsm parses "link attach lsm" arguments.
+//
+//	[-o <format>] <program-id>
+func parseLinkAttachLsm(args []runtime.Arg) (*LinkAttachCommand, error) {
+	var (
+		progArg runtime.Arg
+		output  = cliformat.OutputFlags{Output: cliformat.OutputValue{Value: "table"}}
+	)
+
+	for i := 0; i < len(args); i++ {
+		text := driver.ArgText(args[i])
+		switch text {
+		case "-m", "--metadata":
+			return nil, fmt.Errorf("link attach lsm: metadata is not supported for attach commands")
+		case "-o":
+			if output.Output.IsSet {
+				return nil, syntax.SpanErrorf(runtime.ArgSpan(args[i]), "link attach lsm: duplicate -o flag")
+			}
+			i++
+			if i >= len(args) {
+				return nil, syntax.SpanErrorf(runtime.ArgSpan(args[i-1]), "link attach lsm: -o requires a value")
+			}
+			output.Output = cliformat.OutputValue{Value: driver.ArgText(args[i]), IsSet: true}
+		default:
+			if strings.HasPrefix(text, "-") {
+				return nil, syntax.SpanErrorf(runtime.ArgSpan(args[i]), "link attach lsm: unknown flag %q", text)
+			}
+			if progArg != nil {
+				return nil, syntax.SpanErrorf(runtime.ArgSpan(args[i]), "link attach lsm: unexpected argument %q", text)
+			}
+			progArg = args[i]
+		}
+	}
+
+	if progArg == nil {
+		return nil, fmt.Errorf("link attach lsm: requires a program ID")
+	}
+
+	progID, err := parseProgramIDArg(progArg)
+	if err != nil {
+		return nil, fmt.Errorf("link attach lsm: %w", err)
+	}
+
+	spec, err := bpfman.NewLsmAttachSpec(progID)
+	if err != nil {
+		return nil, fmt.Errorf("link attach lsm: %w", err)
 	}
 
 	return &LinkAttachCommand{Spec: spec, Output: output}, nil

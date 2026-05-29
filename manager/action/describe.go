@@ -40,6 +40,8 @@ func Describe(a Action) string {
 		return fmt.Sprintf("attach fentry %s", a.FnName)
 	case AttachFexit:
 		return fmt.Sprintf("attach fexit %s", a.FnName)
+	case AttachLsm:
+		return fmt.Sprintf("attach lsm %s", a.HookName)
 	case AttachTCX:
 		return fmt.Sprintf("attach TCX ifindex=%d %s", a.Ifindex, a.Direction)
 

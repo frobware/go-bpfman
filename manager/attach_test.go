@@ -2097,3 +2097,115 @@ func TestTracepointAttach_PreflightSkippedWhenListEmpty(t *testing.T) {
 	require.NoError(t, err, "attach should succeed when tracepoint list is empty")
 	assert.NotZero(t, link.Record.ID)
 }
+
+// =============================================================================
+// LSM Lifecycle Tests
+// =============================================================================
+
+// TestLsm_AttachSucceeds verifies that:
+//
+//	Given a loaded LSM program with HookName specified,
+//	When I attach it,
+//	Then a link is created.
+func TestLsm_AttachSucceeds(t *testing.T) {
+	t.Parallel()
+
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	spec, err := bpfman.NewLsmLoadSpec(fix.BytecodeFile("lsm.o"), "lsm_prog", "file_open")
+	require.NoError(t, err, "failed to create load spec")
+
+	prog, err := fix.Load(ctx, spec, manager.LoadOpts{})
+	require.NoError(t, err, "Load should succeed")
+
+	attachSpec, err := bpfman.NewLsmAttachSpec(prog.Record.ProgramID)
+	require.NoError(t, err, "failed to create attach spec")
+	link, err := fix.Attach(ctx, attachSpec)
+	require.NoError(t, err, "AttachLsm should succeed")
+	require.NotZero(t, link.Record.ID, "link ID should be non-zero")
+
+	assert.Equal(t, 1, fix.Kernel.LinkCount(), "should have 1 link in kernel")
+}
+
+// TestLsm_LoadWithoutHookName_Fails verifies that:
+//
+//	Given an LSM program load request without HookName specified,
+//	When I try to create the spec,
+//	Then spec creation fails because lsm requires hookName.
+func TestLsm_LoadWithoutHookName_Fails(t *testing.T) {
+	t.Parallel()
+
+	fix := newTestFixture(t)
+
+	// NewLoadSpec should reject lsm because it requires a hook name
+	_, err := bpfman.NewLoadSpec("/path/to/lsm.o", "lsm_prog", bpfman.ProgramTypeLsm)
+	require.Error(t, err, "spec creation should fail without hookName for lsm")
+	assert.Contains(t, err.Error(), "hookName", "error should mention hookName")
+
+	// NewLsmLoadSpec should reject an empty hook name
+	_, err = bpfman.NewLsmLoadSpec("/path/to/lsm.o", "lsm_prog", "")
+	require.Error(t, err, "spec creation should fail with empty hookName")
+	assert.Contains(t, err.Error(), "hookName", "error should mention hookName")
+
+	assert.Equal(t, 0, fix.Kernel.ProgramCount(), "no programs should exist")
+}
+
+// TestLsm_FullLifecycle verifies the complete LSM lifecycle.
+func TestLsm_FullLifecycle(t *testing.T) {
+	t.Parallel()
+
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	// Step 1: Load LSM program
+	spec, err := bpfman.NewLsmLoadSpec(fix.BytecodeFile("lsm.o"), "lsm_prog", "file_open")
+	require.NoError(t, err)
+	prog, err := fix.Load(ctx, spec, manager.LoadOpts{})
+	require.NoError(t, err, "Load should succeed")
+
+	// Step 2: Attach
+	attachSpec, err := bpfman.NewLsmAttachSpec(prog.Record.ProgramID)
+	require.NoError(t, err)
+	link, err := fix.Attach(ctx, attachSpec)
+	require.NoError(t, err, "Attach should succeed")
+
+	assert.Equal(t, 1, fix.Kernel.ProgramCount(), "should have 1 program")
+	assert.Equal(t, 1, fix.Kernel.LinkCount(), "should have 1 link")
+
+	// Step 3: Verify link details
+	assert.Equal(t, bpfman.LinkKindLsm, link.Record.Kind, "link kind should be lsm")
+	if details, ok := link.Record.Details.(bpfman.LsmDetails); ok {
+		assert.Equal(t, "file_open", details.HookName, "hook name should be preserved")
+	} else {
+		t.Errorf("expected LsmDetails, got %T", link.Record.Details)
+	}
+
+	// Step 4: Detach
+	err = fix.Detach(ctx, link.Record.ID)
+	require.NoError(t, err, "Detach should succeed")
+	assert.Equal(t, 0, fix.Kernel.LinkCount(), "link should be removed after detach")
+
+	// Step 5: Unload
+	err = fix.Unload(ctx, prog.Record.ProgramID)
+	require.NoError(t, err, "Unload should succeed")
+	assert.Equal(t, 0, fix.Kernel.ProgramCount(), "program should be removed after unload")
+}
+
+// TestLsm_HookNamePreservedAfterLoad verifies that the hook name
+// specified at load time is recoverable from the stored program record.
+func TestLsm_HookNamePreservedAfterLoad(t *testing.T) {
+	t.Parallel()
+
+	fix := newTestFixture(t)
+	ctx := context.Background()
+
+	spec, err := bpfman.NewLsmLoadSpec(fix.BytecodeFile("lsm.o"), "lsm_prog", "socket_connect")
+	require.NoError(t, err)
+
+	prog, err := fix.Load(ctx, spec, manager.LoadOpts{})
+	require.NoError(t, err)
+
+	assert.Equal(t, "socket_connect", prog.Record.Load.HookName(), "hook name should be preserved in stored record")
+	assert.Equal(t, bpfman.ProgramTypeLsm, prog.Record.Load.ProgramType(), "program type should be lsm")
+}

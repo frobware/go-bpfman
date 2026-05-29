@@ -195,6 +195,14 @@ type FexitDetails struct {
 func (FexitDetails) linkDetails()   {}
 func (FexitDetails) Kind() LinkKind { return LinkKindFexit }
 
+// LsmDetails contains fields specific to LSM attachments.
+type LsmDetails struct {
+	HookName string `json:"hook_name"`
+}
+
+func (LsmDetails) linkDetails()   {}
+func (LsmDetails) Kind() LinkKind { return LinkKindLsm }
+
 // XDPDetails contains fields specific to XDP attachments.
 // Netns empty means the root network namespace.
 type XDPDetails struct {
@@ -305,6 +313,7 @@ var (
 	LinkKindXDP        = LinkKind{"xdp"}
 	LinkKindTC         = LinkKind{"tc"}
 	LinkKindTCX        = LinkKind{"tcx"}
+	LinkKindLsm        = LinkKind{"lsm"}
 )
 
 // allLinkKinds is the canonical list of valid link kinds.
@@ -319,6 +328,7 @@ var allLinkKinds = []LinkKind{
 	LinkKindXDP,
 	LinkKindTC,
 	LinkKindTCX,
+	LinkKindLsm,
 }
 
 // AllLinkKinds returns all valid link kinds.
@@ -372,6 +382,8 @@ func ParseLinkKind(s string) (LinkKind, error) {
 		return LinkKindTC, nil
 	case "tcx":
 		return LinkKindTCX, nil
+	case "lsm":
+		return LinkKindLsm, nil
 	default:
 		return LinkKind{}, fmt.Errorf("unknown link kind %q", s)
 	}
@@ -424,6 +436,8 @@ func newLinkDetails(kind LinkKind) LinkDetails {
 		return &FentryDetails{}
 	case LinkKindFexit:
 		return &FexitDetails{}
+	case LinkKindLsm:
+		return &LsmDetails{}
 	}
 	return nil
 }
@@ -444,6 +458,7 @@ func LinkAttachKinds() []string {
 		"uprobe",
 		"fentry",
 		"fexit",
+		"lsm",
 	}
 }
 
@@ -471,6 +486,8 @@ func LinkAttachKindDetailsType(attachKind string) reflect.Type {
 		return reflect.TypeOf(FentryDetails{})
 	case "fexit":
 		return reflect.TypeOf(FexitDetails{})
+	case "lsm":
+		return reflect.TypeOf(LsmDetails{})
 	}
 	return nil
 }

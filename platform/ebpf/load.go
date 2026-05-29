@@ -138,6 +138,9 @@ func (k *kernelAdapter) Load(ctx context.Context, spec bpfman.LoadSpec, bpffs fs
 	if programType.RequiresAttachFunc() && spec.AttachFunc() != "" {
 		progSpec.AttachTo = spec.AttachFunc()
 	}
+	if programType.RequiresHookName() && spec.HookName() != "" {
+		progSpec.AttachTo = spec.HookName()
+	}
 
 	// For XDP/TC programs: load as BPF_PROG_TYPE_EXT targeting a test
 	// dispatcher. This matches Rust bpfman's approach where extension

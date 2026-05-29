@@ -46,7 +46,8 @@ func buildProgramRecord(
 			WithProgramType(loaded.InferredType).
 			WithGlobalData(spec.GlobalData()).
 			WithImageProvenance(spec.ImageURL(), spec.ImageDigest(), spec.ImagePullPolicy()).
-			WithAttachFunc(spec.AttachFunc()),
+			WithAttachFunc(spec.AttachFunc()).
+			WithHookName(spec.HookName()),
 		License:       loaded.License,
 		GPLCompatible: bpfman.IsGPLCompatible(loaded.License),
 		Handles: bpfman.ProgramHandles{
@@ -81,6 +82,7 @@ type ProgramSpec struct {
 	Name       string
 	Type       bpfman.ProgramType
 	AttachFunc string            // required for fentry/fexit
+	HookName   string            // required for lsm
 	GlobalData map[string][]byte // per-program overrides (optional)
 	MapOwnerID kernel.ProgramID  // explicit external map owner (0 = none)
 }
@@ -416,6 +418,7 @@ func (m *Manager) resolveBatchPrograms(
 				Name:       d.Name,
 				Type:       d.Type,
 				AttachFunc: d.AttachFunc,
+				HookName:   d.HookName,
 				GlobalData: globalData,
 			})
 		}
@@ -449,6 +452,8 @@ func buildLoadSpecs(
 		var err error
 		if prog.Type.RequiresAttachFunc() {
 			spec, err = bpfman.NewAttachLoadSpec(objectPath, prog.Name, prog.Type, prog.AttachFunc)
+		} else if prog.Type.RequiresHookName() {
+			spec, err = bpfman.NewLsmLoadSpec(objectPath, prog.Name, prog.HookName)
 		} else {
 			spec, err = bpfman.NewLoadSpec(objectPath, prog.Name, prog.Type)
 		}

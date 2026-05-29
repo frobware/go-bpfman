@@ -39,7 +39,7 @@ func (s *sqliteStore) Get(ctx context.Context, programID kernel.ProgramID) (bpfm
 // delegate to buildProgramRecord for the shared parsing logic.
 type scannedProgram struct {
 	programName, programTypeStr, objectPath, pinPath string
-	attachFunc, globalDataJSON, mapPinPath           sql.NullString
+	attachFunc, hookName, globalDataJSON, mapPinPath sql.NullString
 	imageSourceJSON, owner, description              sql.NullString
 	license, metadataJSON                            sql.NullString
 	mapOwnerID                                       sql.NullInt64
@@ -131,7 +131,8 @@ func buildProgramRecord(sp *scannedProgram) (bpfman.ProgramRecord, error) {
 			WithProgramType(programType).
 			WithGlobalData(globalData).
 			WithImageProvenance(imageURL, imageDigest, imagePullPolicy).
-			WithAttachFunc(attachFuncVal),
+			WithAttachFunc(attachFuncVal).
+			WithHookName(sp.hookName.String),
 		License:       licenseVal,
 		GPLCompatible: sp.gplCompatible != 0,
 		Handles: bpfman.ProgramHandles{
@@ -165,6 +166,7 @@ func (s *sqliteStore) scanProgram(row *sql.Row) (bpfman.ProgramRecord, error) {
 		&sp.objectPath,
 		&sp.pinPath,
 		&sp.attachFunc,
+		&sp.hookName,
 		&sp.globalDataJSON,
 		&sp.mapOwnerID,
 		&sp.mapPinPath,
@@ -241,9 +243,12 @@ func (s *sqliteStore) Save(ctx context.Context, programID kernel.ProgramID, meta
 	if metadata.Handles.MapsDir != "" {
 		mapPinPath = sql.NullString{String: metadata.Handles.MapsDir.String(), Valid: true}
 	}
-	var attachFunc, owner, description, license sql.NullString
+	var attachFunc, hookName, owner, description, license sql.NullString
 	if metadata.Load.AttachFunc() != "" {
 		attachFunc = sql.NullString{String: metadata.Load.AttachFunc(), Valid: true}
+	}
+	if metadata.Load.HookName() != "" {
+		hookName = sql.NullString{String: metadata.Load.HookName(), Valid: true}
 	}
 	if metadata.Meta.Owner != "" {
 		owner = sql.NullString{String: metadata.Meta.Owner, Valid: true}
@@ -280,6 +285,7 @@ func (s *sqliteStore) Save(ctx context.Context, programID kernel.ProgramID, meta
 		metadata.Load.ObjectPath(),
 		metadata.Handles.PinPath,
 		attachFunc,
+		hookName,
 		globalDataJSON,
 		mapOwnerID,
 		mapPinPath,
@@ -377,6 +383,7 @@ func (s *sqliteStore) scanProgramFromRows(rows *sql.Rows) (kernel.ProgramID, bpf
 		&sp.objectPath,
 		&sp.pinPath,
 		&sp.attachFunc,
+		&sp.hookName,
 		&sp.globalDataJSON,
 		&sp.mapOwnerID,
 		&sp.mapPinPath,

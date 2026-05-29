@@ -207,3 +207,30 @@ func (m *Manager) attachFexit(ctx context.Context, spec bpfman.FexitAttachSpec) 
 		},
 	})
 }
+
+// attachLsm attaches a pinned LSM program to its target hook.
+// The hook name was specified at load time and stored in the program's HookName.
+func (m *Manager) attachLsm(ctx context.Context, spec bpfman.LsmAttachSpec) (bpfman.Link, error) {
+	return m.simpleAttach(ctx, attachParams{
+		programID:     spec.ProgramID(),
+		defaultTarget: fmt.Sprintf("lsm/program/%d", spec.ProgramID()),
+		prepare: func(prog bpfman.ProgramRecord, progPinPath bpfman.ProgPinPath) (attachPlan, error) {
+			hookName := prog.Load.HookName()
+			if hookName == "" {
+				return attachPlan{}, fmt.Errorf("program %d has no hook name (lsm requires hook name at load time)", spec.ProgramID())
+			}
+			return attachPlan{
+				target:   hookName,
+				linkName: "lsm_" + hookName,
+				details:  bpfman.LsmDetails{HookName: hookName},
+				attachAction: func(linkPinPath bpfman.LinkPath) action.Action {
+					return action.AttachLsm{
+						ProgPinPath: progPinPath,
+						HookName:    hookName,
+						LinkPinPath: linkPinPath,
+					}
+				},
+			}, nil
+		},
+	})
+}

@@ -27,6 +27,7 @@ var (
 	ProgramTypeUretprobe  = ProgramType{"uretprobe"}
 	ProgramTypeFentry     = ProgramType{"fentry"}
 	ProgramTypeFexit      = ProgramType{"fexit"}
+	ProgramTypeLsm        = ProgramType{"lsm"}
 )
 
 // allProgramTypes is the canonical list of valid program types.
@@ -42,6 +43,7 @@ var allProgramTypes = []ProgramType{
 	ProgramTypeUretprobe,
 	ProgramTypeFentry,
 	ProgramTypeFexit,
+	ProgramTypeLsm,
 }
 
 // AllProgramTypes returns all valid program types.
@@ -96,6 +98,8 @@ func ParseProgramType(s string) (ProgramType, error) {
 		return ProgramTypeFentry, nil
 	case "fexit":
 		return ProgramTypeFexit, nil
+	case "lsm":
+		return ProgramTypeLsm, nil
 	default:
 		return ProgramType{}, fmt.Errorf("unknown program type %q", s)
 	}

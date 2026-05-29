@@ -16,7 +16,7 @@
 //   - Kernel:     LoadProgram, UnloadProgram, DetachLink, RemovePin,
 //     DetachTCFilter, AttachTracepoint, AttachKprobe, AttachTCX,
 //     AttachUprobeLocal, AttachUprobeContainer, AttachFentry,
-//     AttachFexit
+//     AttachFexit, AttachLsm
 //   - Filesystem: PublishBytecode, RemoveProgramDir, RemoveProgPin,
 //     RemoveLinkDir, RemoveMapDir, RemoveStagingDir,
 //     RemoveDispatcherProgPin,

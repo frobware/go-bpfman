@@ -134,6 +134,7 @@ func TestLinkAttachKindDetailsType_CoversEveryAttachKind(t *testing.T) {
 		"uprobe":     reflect.TypeOf(bpfman.UprobeDetails{}),
 		"fentry":     reflect.TypeOf(bpfman.FentryDetails{}),
 		"fexit":      reflect.TypeOf(bpfman.FexitDetails{}),
+		"lsm":        reflect.TypeOf(bpfman.LsmDetails{}),
 	}
 
 	for _, kind := range bpfman.LinkAttachKinds() {
