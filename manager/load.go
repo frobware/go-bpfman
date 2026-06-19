@@ -605,9 +605,21 @@ func (m *Manager) loadBody(ctx context.Context, specs []bpfman.LoadSpec, opts Lo
 		return nil, err
 	}
 
+	// The load is now committed. Anything below this point is
+	// response enrichment and must not fail the operation unless it
+	// also compensates both the persisted DB state and the live
+	// kernel/fs state.
+	//
+	// This enrichment exists only to satisfy the gRPC LoadResponse,
+	// which carries map_used_by per program for wire parity. The
+	// authoritative relationship lives in the map-set membership rows
+	// committed above and is re-derived on every Get/List, so this is
+	// pure response decoration and is best-effort by design. Once the
+	// gRPC layer goes away this can be removed and the field redesigned.
 	for i := range loaded {
 		if err := m.enrichMapSetUsers(ctx, &loaded[i]); err != nil {
-			return nil, fmt.Errorf("list map users for program %d: %w", loaded[i].Record.ProgramID, err)
+			m.logger.WarnContext(ctx, "failed to enrich map users after load",
+				"program_id", loaded[i].Record.ProgramID, "error", err)
 		}
 	}
 

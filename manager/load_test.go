@@ -50,6 +50,19 @@ func (s *recordDeleteMapSetStore) DeleteMapSet(ctx context.Context, mapSetID ker
 	return s.Store.DeleteMapSet(ctx, mapSetID)
 }
 
+type failMapSetUsersStore struct {
+	platform.Store
+	fail bool
+	err  error
+}
+
+func (s *failMapSetUsersStore) ListMapSetUsers(ctx context.Context, mapSetID kernel.ProgramID) ([]kernel.ProgramID, error) {
+	if s.fail {
+		return nil, s.err
+	}
+	return s.Store.ListMapSetUsers(ctx, mapSetID)
+}
+
 func newTestImageRef() *platform.ImageRef {
 	return &platform.ImageRef{
 		URL:        "test.io/image:latest",
@@ -270,6 +283,39 @@ func TestLoad_MapUsedByIsDerivedByManager(t *testing.T) {
 	require.Len(t, listed, 2)
 	assert.Equal(t, wantUsers, listed[0].Status.MapUsedBy)
 	assert.Equal(t, wantUsers, listed[1].Status.MapUsedBy)
+}
+
+func TestLoad_MapUsedByEnrichmentFailureDoesNotFailCommittedLoad(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	enrichErr := errors.New("injected map users read failure")
+	var store *failMapSetUsersStore
+	f := newTestFixtureWithOptionsAndStore(t, nil, nil, func(base platform.Store) platform.Store {
+		store = &failMapSetUsersStore{Store: base, fail: true, err: enrichErr}
+		return store
+	})
+	objPath := f.BytecodeFile("object.o")
+	f.Discoverer.SetPrograms(objPath, []platform.DiscoveredProgram{
+		{Name: "prog", SectionName: "xdp", Type: bpfman.ProgramTypeXDP},
+	})
+
+	loaded, err := f.Manager.Load(ctx,
+		manager.LoadSource{FilePath: objPath},
+		[]manager.ProgramSpec{{Name: "prog", Type: bpfman.ProgramTypeXDP}},
+		manager.LoadOpts{})
+	require.NoError(t, err)
+	require.Len(t, loaded, 1)
+	programID := loaded[0].Record.ProgramID
+	assert.Empty(t, loaded[0].Status.MapUsedBy)
+
+	_, err = f.Store.Get(ctx, programID)
+	require.NoError(t, err, "load must be committed despite enrichment failure")
+
+	store.fail = false
+	got, err := f.Manager.Get(ctx, programID)
+	require.NoError(t, err)
+	assert.Equal(t, []kernel.ProgramID{programID}, got.Status.MapUsedBy)
 }
 
 func TestLoad_MapSetGCDeletesSetOnlyAfterLastUser(t *testing.T) {
