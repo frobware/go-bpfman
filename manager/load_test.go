@@ -50,17 +50,24 @@ func (s *recordDeleteMapSetStore) DeleteMapSet(ctx context.Context, mapSetID ker
 	return s.Store.DeleteMapSet(ctx, mapSetID)
 }
 
-type failMapSetUsersStore struct {
+type failListInTxStore struct {
 	platform.Store
-	fail bool
-	err  error
+	err error
 }
 
-func (s *failMapSetUsersStore) ListMapSetUsers(ctx context.Context, mapSetID kernel.ProgramID) ([]kernel.ProgramID, error) {
-	if s.fail {
-		return nil, s.err
-	}
-	return s.Store.ListMapSetUsers(ctx, mapSetID)
+func (s *failListInTxStore) RunInTransaction(ctx context.Context, name string, fn func(platform.Store) error) error {
+	return s.Store.RunInTransaction(ctx, name, func(tx platform.Store) error {
+		return fn(&failListInTxTx{Store: tx, err: s.err})
+	})
+}
+
+type failListInTxTx struct {
+	platform.Store
+	err error
+}
+
+func (s *failListInTxTx) List(ctx context.Context) (map[kernel.ProgramID]bpfman.ProgramRecord, error) {
+	return nil, s.err
 }
 
 func newTestImageRef() *platform.ImageRef {
@@ -283,37 +290,32 @@ func TestLoad_MapUsedByIsDerivedByManager(t *testing.T) {
 	assert.Equal(t, wantUsers, listed[1].Status.MapUsedBy)
 }
 
-func TestLoad_MapUsedByEnrichmentFailureDoesNotFailCommittedLoad(t *testing.T) {
+func TestLoad_MapUsedByDerivationFailureRollsBackLoad(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	enrichErr := errors.New("injected map users read failure")
-	var store *failMapSetUsersStore
+	deriveErr := errors.New("injected map-set membership read failure")
 	f := newTestFixtureWithOptionsAndStore(t, nil, nil, func(base platform.Store) platform.Store {
-		store = &failMapSetUsersStore{Store: base, fail: true, err: enrichErr}
-		return store
+		return &failListInTxStore{Store: base, err: deriveErr}
 	})
 	objPath := f.BytecodeFile("object.o")
 	f.Discoverer.SetPrograms(objPath, []platform.DiscoveredProgram{
 		{Name: "prog", SectionName: "xdp", Type: bpfman.ProgramTypeXDP},
 	})
 
-	loaded, err := f.Manager.Load(ctx,
+	_, err := f.Manager.Load(ctx,
 		manager.LoadSource{FilePath: objPath},
 		[]manager.ProgramSpec{{Name: "prog", Type: bpfman.ProgramTypeXDP}},
 		manager.LoadOpts{})
-	require.NoError(t, err)
-	require.Len(t, loaded, 1)
-	programID := loaded[0].Record.ProgramID
-	assert.Empty(t, loaded[0].Status.MapUsedBy)
+	require.ErrorIs(t, err, deriveErr)
 
-	_, err = f.Store.Get(ctx, programID)
-	require.NoError(t, err, "load must be committed despite enrichment failure")
-
-	store.fail = false
-	got, err := f.Manager.Get(ctx, programID)
-	require.NoError(t, err)
-	assert.Equal(t, []kernel.ProgramID{programID}, got.Status.MapUsedBy)
+	// The map_used_by derivation runs inside the load commit, so its
+	// failure rolls the whole transaction back: no program row
+	// survives, and the kernel/fs work is compensated.
+	progs, listErr := f.Store.List(ctx)
+	require.NoError(t, listErr)
+	assert.Empty(t, progs, "load must roll back when the in-tx map_used_by derivation fails")
+	assert.Equal(t, 0, f.Kernel.ProgramCount(), "kernel program must be cleaned up after rollback")
 }
 
 func TestLoad_MapSetGCDeletesSetOnlyAfterLastUser(t *testing.T) {
