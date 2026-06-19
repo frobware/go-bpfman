@@ -7,6 +7,13 @@ problem understates it. The underlying issue is an altitude violation:
 read-path map-set membership was attached at the manager layer instead of
 being derived where the rest of the read model is derived.
 
+**Status:** implemented in commit `520d2174`. The plan below landed as
+written, with one refinement to step 5 recorded there: the load response
+is also an in-process contract (the shell asserts on it), not gRPC-only,
+so the field stays on `Manager.Load` and is derived inside the load
+transaction. The present-tense diagnosis that follows describes the state
+before that change.
+
 ## Initial understanding (as framed in the doc)
 
 `PR161-TODO.md` #5 framed this as a performance defect:
@@ -27,7 +34,8 @@ manager altitude and leaves the single-get and load paths still calling
 the store. The current code is therefore the original PR state:
 `enrichMapSetUsers` (`manager/list.go:312`) calls `store.ListMapSetUsers`
 once per program from `ListPrograms` (`manager/list.go:406`), the single
-get (`manager/list.go:192`), and the load path -- the N+1 is live.
+get (`manager/list.go:192`), and the load path -- the N+1 this change
+removes.
 
 ## New understanding
 
@@ -110,10 +118,14 @@ Move the derivation to the altitude the design already uses.
    snapshot, so a per-id authoritative query is correct there. This is
    not a deletion of the store API, only of its use for read enrichment.
 
-5. The load response still needs `MapUsedBy` for gRPC wire parity (see
-   the boundary comment in `manager/load.go`). It can be filled from the
-   same derived grouping rather than a separate post-commit store read,
-   which also removes the post-commit fallible read that #2 had to make
+5. The load response still carries `MapUsedBy`, both for gRPC
+   LoadResponse parity and because the in-process shell asserts on it
+   (the `*_LoadAndGet` scripts match it exhaustively on the load output),
+   so it stays on `Manager.Load`. It is derived inside the phase-B
+   transaction from `tx.List` and the same `MapSetMembers` grouping,
+   atomic with the save: the membership read commits or rolls back with
+   the load rather than running as a best-effort post-commit decoration.
+   This removes the post-commit fallible read that #2 had to make
    best-effort.
 
 ## Why this is better than the doc's framing
