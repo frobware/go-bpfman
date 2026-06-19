@@ -75,4 +75,5 @@ else:
 '
 
 printf '\n=== the by-name shared pin on bpffs ===\n'
+# shellcheck disable=SC2012 # human-readable ls -l listing in a demo; not parsed
 ls -l "$RT/fs/shared/" 2>&1 | sed 's/^/  /'
