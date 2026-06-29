@@ -10,13 +10,39 @@
 //
 // # Schema
 //
-// The schema (schema.sql) uses a polymorphic registry pattern for
-// links: a links table with a kind discriminator column and separate
-// detail tables per link type (link_tracepoint_details,
-// link_kprobe_details, link_xdp_details, link_tc_details,
-// link_tcx_details, link_uprobe_details, link_fentry_details,
-// link_fexit_details). Programs store user metadata as a JSON column
-// (metadata_json).
+// The schema uses a polymorphic registry pattern for links: a links
+// table with a kind discriminator column and separate detail tables
+// per link type (link_tracepoint_details, link_kprobe_details,
+// link_xdp_details, link_tc_details, link_tcx_details,
+// link_uprobe_details, link_fentry_details, link_fexit_details).
+// Programs store user metadata as a JSON column (metadata_json).
+//
+// # Schema Versioning and Migrations
+//
+// The schema is versioned and evolved by ordered, forward-only
+// migrations under migrations/, applied with golang-migrate
+// (github.com/golang-migrate/migrate/v4). Each migration is a pair of
+// files, migrations/NNNNN_*.up.sql and migrations/NNNNN_*.down.sql; the
+// numeric prefix is the schema version the up file advances the
+// database to, and golang-migrate records the applied version in its
+// own schema_migrations table.
+//
+// Opening a store applies every pending migration in order; a database
+// already at the latest version is untouched. A database newer than the
+// running build understands is refused, never downgraded and never
+// deleted. The lowest migration, 00001_baseline.up.sql, is the initial
+// schema: every statement is idempotent (CREATE TABLE/INDEX IF NOT
+// EXISTS) so that a database already carrying this schema -- one written
+// by a pre-migration build, with no schema_migrations table -- adopts
+// the migration framework on next open without losing data.
+//
+// The migration database driver is configured with NoTxWrap, so
+// golang-migrate does not wrap a migration in its own transaction.
+// Migrations are written to be idempotent where practical, and a
+// migration that needs multi-statement atomicity manages its own
+// transaction. This is what lets a SQLite table rebuild toggle PRAGMA
+// foreign_keys (a no-op inside a transaction) around its own explicit
+// BEGIN/COMMIT; see the migration template under migrations/.
 //
 // # Driver
 //

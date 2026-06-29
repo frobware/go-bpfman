@@ -1,3 +1,9 @@
+-- Initial schema: the baseline every database starts from. Later
+-- schema changes ship as 00002_*.up.sql / 00002_*.down.sql and so on.
+-- Every statement is IF NOT EXISTS so that a database already carrying
+-- this schema adopts the migration framework on first open without
+-- re-creating anything.
+--
 -- Schema for bpfman SQLite database
 --
 -- This schema uses the registry + detail tables pattern for links,
