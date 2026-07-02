@@ -79,7 +79,7 @@ xdp_id=$("$BPFMAN" load file --path "$TESTDATA/xdp_pass.bpf.o" --programs xdp:pa
 xdp_link_id=$("$BPFMAN" attach "$xdp_id" xdp --iface "$HOST_LINK" --priority 50 -m fixture=program-load -m kind=xdp | link_id)
 
 tc_id=$("$BPFMAN" load file --path "$TESTDATA/tc_counter.bpf.o" --programs tc:stats -m fixture=program-load | prog_id)
-tc_link_id=$("$BPFMAN" attach "$tc_id" tc --direction ingress --iface "$HOST_LINK" --priority 60 -m fixture=program-load -m kind=tc | link_id)
+tc_link_id=$("$BPFMAN" attach "$tc_id" tc --direction ingress --iface "$HOST_LINK" --priority 60 --proceed-on ok shot dispatcher_return -m fixture=program-load -m kind=tc | link_id)
 
 tcx_id=$("$BPFMAN" load file --path "$TESTDATA/tcx_counter.bpf.o" --programs tcx:tcx_stats -m fixture=program-load | prog_id)
 tcx_link_id=$("$BPFMAN" attach "$tcx_id" tcx --direction ingress --iface "$HOST_LINK" --priority 70 -m fixture=program-load -m kind=tcx | link_id)
@@ -112,7 +112,7 @@ fexit_link_id=$("$BPFMAN" attach "$fexit_id" fexit -m fixture=program-load -m ki
 # same interface (a two-member dispatcher chain) and the tracepoint
 # program on a second tracepoint.
 
-xdp_link2_id=$("$BPFMAN" attach "$xdp_id" xdp --iface "$HOST_LINK" --priority 55 -m fixture=program-load -m kind=xdp | link_id)
+xdp_link2_id=$("$BPFMAN" attach "$xdp_id" xdp --iface "$HOST_LINK" --priority 55 --proceed-on pass drop -m fixture=program-load -m kind=xdp | link_id)
 tracepoint_link2_id=$("$BPFMAN" attach "$tracepoint_id" tracepoint --tracepoint syscalls/sys_exit_kill -m fixture=program-load -m kind=tracepoint | link_id)
 
 # --- image-loaded examples ---
@@ -138,6 +138,29 @@ image_tracepoint_link_id=$("$BPFMAN" attach "$image_tracepoint_id" tracepoint --
 mapshare_id=$("$BPFMAN" load file --path "$TESTDATA/kprobe_counter.bpf.o" --programs kprobe:kprobe_counter --map-owner-id "$kprobe_id" -m fixture=program-load | prog_id)
 mapshare_link_id=$("$BPFMAN" attach "$mapshare_id" kprobe --fn-name do_unlinkat -m fixture=program-load -m kind=kprobe-mapshare | link_id)
 
+# --- flag-variation examples ---
+#
+# Exercise the less-travelled load and attach flags so the get views
+# render every optional field: a uprobe with global-data overrides and
+# a PID filter, and an xdp attach through a named network namespace.
+# Note the Rust global-arg parser takes bare hex with no 0x prefix.
+# The peer end of the veth pair moves into the namespace; clean up
+# with:
+#
+#   sudo ip netns del bpfmanrust-ns
+NETNS_NAME=bpfmanrust-ns
+
+if ! ip netns list 2>/dev/null | grep -q "^$NETNS_NAME"; then
+	ip netns add "$NETNS_NAME"
+	ip link set "$PEER_LINK" netns "$NETNS_NAME"
+	ip -n "$NETNS_NAME" link set "$PEER_LINK" up
+fi
+
+netns_xdp_link_id=$("$BPFMAN" attach "$xdp_id" xdp --iface "$PEER_LINK" --priority 50 --netns "/var/run/netns/$NETNS_NAME" -m fixture=program-load -m kind=xdp-netns | link_id)
+
+uprobe_flags_id=$("$BPFMAN" load file --path "$TESTDATA/uprobe_exact.bpf.o" --programs uprobe:uprobe_counter -g expected_pid=00000000 -g weight=0100000000000000 -m fixture=program-load | prog_id)
+uprobe_flags_link_id=$("$BPFMAN" attach "$uprobe_flags_id" uprobe --target "$libc" --fn-name malloc --pid $$ -m fixture=program-load -m kind=uprobe-flags | link_id)
+
 # --- show the rendered output ---
 
 show() {
@@ -161,6 +184,8 @@ show fexit      "$fexit_id"      "$fexit_link_id"
 show xdp-image        "$image_xdp_id"        "$image_xdp_link_id"
 show tracepoint-image "$image_tracepoint_id" "$image_tracepoint_link_id"
 show kprobe-mapshare  "$mapshare_id"         "$mapshare_link_id"
+show xdp-netns        "$xdp_id"              "$netns_xdp_link_id"
+show uprobe-flags     "$uprobe_flags_id"     "$uprobe_flags_link_id"
 
 echo
 echo "=== program list ==="
