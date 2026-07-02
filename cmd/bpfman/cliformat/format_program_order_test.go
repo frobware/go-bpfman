@@ -62,3 +62,28 @@ func TestFormatProgramTable_PathPrefersSourcePath(t *testing.T) {
 	}
 }
 
+// The Spec renders the load source as one concept with variant-specific
+// rows: a file load shows the Path operand; an image load shows the
+// image provenance instead of the stored-copy path, which Status
+// already reports as Bytecode.
+func TestFormatProgramTable_ImageLoadShowsProvenance(t *testing.T) {
+	t.Parallel()
+
+	prog := bpfman.Program{
+		Record: bpfman.ProgramRecord{
+			ProgramID: 42,
+			Load:      bpfman.LoadSpec{}.WithObjectPath("/run/bpfman/programs/42/bytecode.o").WithImageProvenance("quay.io/bpfman-bytecode/xdp_pass:latest", "sha256:abc", bpfman.PullIfNotPresent),
+		},
+	}
+
+	out := formatProgramTable(prog)
+	if !strings.Contains(out, "Image URL:      quay.io/bpfman-bytecode/xdp_pass:latest\n") {
+		t.Errorf("image load should show Image URL, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Pull Policy:    IfNotPresent\n") {
+		t.Errorf("image load should show Pull Policy, got:\n%s", out)
+	}
+	if strings.Contains(out, "\n    Path:") {
+		t.Errorf("image load should not show a Path row, got:\n%s", out)
+	}
+}
