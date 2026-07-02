@@ -112,6 +112,16 @@ image_xdp_link_id=$("$BPFMAN" link attach xdp "$image_xdp_id" "$HOST_LINK" --pri
 image_tracepoint_id=$("$BPFMAN" program load image quay.io/bpfman-bytecode/go-tracepoint-counter --programs tracepoint:tracepoint_kill_recorder --pull-policy IfNotPresent -m fixture=program-load -o json | prog_id)
 image_tracepoint_link_id=$("$BPFMAN" link attach tracepoint "$image_tracepoint_id" syscalls/sys_enter_kill -m fixture=program-load -m kind=tracepoint-image -o json | link_id)
 
+# --- map-sharing example ---
+#
+# Load a second copy of the kprobe counter that borrows the first
+# one's maps via --map-owner-id, so the get views show a multi-member
+# Maps Used By on both the owner and the borrower, and the borrower a
+# populated Map Owner ID.
+
+mapshare_id=$("$BPFMAN" program load file "$TESTDATA/kprobe_counter.bpf.o" --programs kprobe:kprobe_counter --map-owner-id "$kprobe_id" -m fixture=program-load -o json | prog_id)
+mapshare_link_id=$("$BPFMAN" link attach kprobe "$mapshare_id" do_unlinkat -m fixture=program-load -m kind=kprobe-mapshare -o json | link_id)
+
 # --- show the rendered output ---
 
 show() {
@@ -134,6 +144,7 @@ show fentry     "$fentry_id"     "$fentry_link_id"
 show fexit      "$fexit_id"      "$fexit_link_id"
 show xdp-image        "$image_xdp_id"        "$image_xdp_link_id"
 show tracepoint-image "$image_tracepoint_id" "$image_tracepoint_link_id"
+show kprobe-mapshare  "$mapshare_id"         "$mapshare_link_id"
 
 echo
 echo "=== program list ==="
