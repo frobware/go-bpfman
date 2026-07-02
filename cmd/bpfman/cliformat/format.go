@@ -218,6 +218,17 @@ func programStatusRows(prog bpfman.Program) []row {
 	if prog.Status.ProgPin != "" {
 		st = append(st, fieldRow("Map Dir", prog.Status.MapDir.String()))
 	}
+	// Map-sharing membership: every managed program whose records
+	// point at this program's map set, i.e. whose data disappears if
+	// this program's maps go away. Space-separated so each ID is a
+	// word to a terminal's double-click selection.
+	if len(prog.Status.MapUsedBy) > 0 {
+		ids := make([]string, len(prog.Status.MapUsedBy))
+		for i, id := range prog.Status.MapUsedBy {
+			ids[i] = fmt.Sprintf("%d", id)
+		}
+		st = append(st, fieldRow("Maps Used By", strings.Join(ids, " ")))
+	}
 	if kp.Memlock != 0 {
 		st = append(st, fieldRow("Memory", fmt.Sprintf("%d bytes", kp.Memlock)))
 	}
