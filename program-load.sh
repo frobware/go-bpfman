@@ -98,6 +98,20 @@ fexit_link_id=$("$BPFMAN" link attach fexit "$fexit_id" -m fixture=program-load 
 xdp_link2_id=$("$BPFMAN" link attach xdp "$xdp_id" "$HOST_LINK" --priority 55 -m fixture=program-load -m kind=xdp -o json | link_id)
 tracepoint_link2_id=$("$BPFMAN" link attach tracepoint "$tracepoint_id" syscalls/sys_exit_kill -m fixture=program-load -m kind=tracepoint -o json | link_id)
 
+# --- image-loaded examples ---
+#
+# Load two programs from the published bytecode images (the same ones
+# the e2e corpus exercises) so the lists and get views show file- and
+# image-sourced programs side by side. Requires network access to
+# quay.io on the first run; IfNotPresent reuses the cached image after
+# that.
+
+image_xdp_id=$("$BPFMAN" program load image quay.io/bpfman-bytecode/go-xdp-counter --programs xdp:xdp_stats --pull-policy IfNotPresent -m fixture=program-load -o json | prog_id)
+image_xdp_link_id=$("$BPFMAN" link attach xdp "$image_xdp_id" "$HOST_LINK" --priority 80 -m fixture=program-load -m kind=xdp-image -o json | link_id)
+
+image_tracepoint_id=$("$BPFMAN" program load image quay.io/bpfman-bytecode/go-tracepoint-counter --programs tracepoint:tracepoint_kill_recorder --pull-policy IfNotPresent -m fixture=program-load -o json | prog_id)
+image_tracepoint_link_id=$("$BPFMAN" link attach tracepoint "$image_tracepoint_id" syscalls/sys_enter_kill -m fixture=program-load -m kind=tracepoint-image -o json | link_id)
+
 # --- show the rendered output ---
 
 show() {
@@ -118,6 +132,8 @@ show uprobe     "$uprobe_id"     "$uprobe_link_id"
 show uretprobe  "$uretprobe_id"  "$uretprobe_link_id"
 show fentry     "$fentry_id"     "$fentry_link_id"
 show fexit      "$fexit_id"      "$fexit_link_id"
+show xdp-image        "$image_xdp_id"        "$image_xdp_link_id"
+show tracepoint-image "$image_tracepoint_id" "$image_tracepoint_link_id"
 
 echo
 echo "=== program list ==="
