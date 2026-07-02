@@ -49,6 +49,26 @@ func TestRenderProgramList_Columns(t *testing.T) {
 	assert.Equal(t, []string{"PROGRAM ID", "APPLICATION", "TYPE", "FUNCTION NAME", "LINK IDS"}, header)
 }
 
+// When no listed program carries an application label the APPLICATION
+// column is elided rather than rendered as a blank stripe down the
+// table. One labelled entry anywhere in the result brings it back for
+// every row.
+func TestRenderProgramList_ApplicationColumnElidedWhenEmpty(t *testing.T) {
+	t.Parallel()
+
+	unlabelled := bpfman.ProgramListEntry{ProgramID: 7, Type: "tc", FunctionName: "fn"}
+	labelled := bpfman.ProgramListEntry{ProgramID: 8, Application: "demo", Type: "xdp", FunctionName: "pass"}
+
+	headerFor := func(entries ...bpfman.ProgramListEntry) []string {
+		var buf bytes.Buffer
+		require.NoError(t, RenderProgramList(&buf, ProgramListView{Result: bpfman.ProgramListResult{Programs: entries}}, OutputFormatText))
+		return tableGap.Split(strings.TrimRight(strings.SplitN(buf.String(), "\n", 2)[0], " "), -1)
+	}
+
+	assert.Equal(t, []string{"PROGRAM ID", "TYPE", "FUNCTION NAME", "LINK IDS"}, headerFor(unlabelled))
+	assert.Equal(t, []string{"PROGRAM ID", "APPLICATION", "TYPE", "FUNCTION NAME", "LINK IDS"}, headerFor(unlabelled, labelled))
+}
+
 // The link column carries the bpfman link IDs -- the handles link get and
 // link list accept -- so a listing row leads straight to its links without
 // another query. All IDs render; there is no truncation. Single spaces

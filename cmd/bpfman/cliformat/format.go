@@ -420,21 +420,35 @@ func RenderProgramList(w io.Writer, view ProgramListView, format OutputFormat) e
 // its links. Every ID renders, space-separated and untruncated -- single
 // spaces keep each ID selectable as a word in a terminal while the
 // table's wider column gaps keep the cell one column -- and a count
-// would only restate the list's length. The per-entry fields are
-// precomputed by the manager, so kernel-only rows render with their
-// kernel type and name, an empty application cell, and the no-links
-// sentinel.
+// would only restate the list's length.
+//
+// The APPLICATION column is elided when no listed program carries an
+// application label, so an unlabelled result set does not render a
+// blank stripe down the table; one labelled entry brings it back for
+// every row. The per-entry fields are precomputed by the manager, so
+// kernel-only rows render with their kernel type and name, the
+// no-links sentinel, and (when the column renders at all) an empty
+// application cell.
 func formatProgramsCompositeTable(result bpfman.ProgramListResult) string {
-	headers := []string{"PROGRAM ID", "APPLICATION", "TYPE", "FUNCTION NAME", "LINK IDS"}
+	withApplication := false
+	for _, e := range result.Programs {
+		if e.Application != "" {
+			withApplication = true
+			break
+		}
+	}
+
+	headers := []string{"PROGRAM ID", "TYPE", "FUNCTION NAME", "LINK IDS"}
+	if withApplication {
+		headers = []string{"PROGRAM ID", "APPLICATION", "TYPE", "FUNCTION NAME", "LINK IDS"}
+	}
 	rows := make([][]string, len(result.Programs))
 	for i, e := range result.Programs {
-		rows[i] = []string{
-			fmt.Sprintf("%d", e.ProgramID),
-			e.Application,
-			e.Type,
-			e.FunctionName,
-			formatLinkIDs(e.Links),
+		row := []string{fmt.Sprintf("%d", e.ProgramID)}
+		if withApplication {
+			row = append(row, e.Application)
 		}
+		rows[i] = append(row, e.Type, e.FunctionName, formatLinkIDs(e.Links))
 	}
 	return renderTable("", headers, rows)
 }
