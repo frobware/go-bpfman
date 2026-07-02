@@ -59,17 +59,18 @@ func RenderLinkList(w io.Writer, view LinkListView, format OutputFormat) error {
 	})
 }
 
+// renderLinkListTable renders the link-list overview. The pin path is
+// deliberately absent: the bpffs layout is internal naming, not
+// interface, and the ATTACHMENT summary carries the "attached to what?"
+// answer in domain terms. Pin detail stays on `link get` and in the
+// JSON output.
 func renderLinkListTable(w io.Writer, view LinkListView) error {
-	headers := []string{"LINK ID", "KERNEL LINK ID", "KIND", "PROGRAM ID", "ATTACHMENT", "PIN PATH"}
+	headers := []string{"LINK ID", "KERNEL LINK ID", "KIND", "PROGRAM ID", "ATTACHMENT"}
 	rows := make([][]string, len(view.Links))
 	for i, l := range view.Links {
 		kernelLinkID := "<none>"
 		if l.KernelLinkID != nil {
 			kernelLinkID = fmt.Sprintf("%d", *l.KernelLinkID)
-		}
-		pinPath := "<none>"
-		if l.PinPath != nil {
-			pinPath = l.PinPath.String()
 		}
 		rows[i] = []string{
 			fmt.Sprintf("%d", l.ID),
@@ -77,7 +78,6 @@ func renderLinkListTable(w io.Writer, view LinkListView) error {
 			l.Kind.String(),
 			fmt.Sprintf("%d", l.ProgramID),
 			attachmentSummary(l.Details),
-			pinPath,
 		}
 	}
 	return writeOutput(w, renderTable("", headers, rows))
