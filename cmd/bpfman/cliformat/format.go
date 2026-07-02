@@ -413,14 +413,19 @@ func RenderProgramList(w io.Writer, view ProgramListView, format OutputFormat) e
 }
 
 // formatProgramsCompositeTable renders the default program-list table.
-// The columns -- Program ID, Application, Type, Function Name, and a
-// link count -- let the listing answer "which application?" and "is it
-// attached?" without a second command. The specific link IDs belong to
-// `link list` and `program get`, not this overview. The per-entry fields
-// are precomputed by the manager, so kernel-only rows render with their
-// kernel type and name, an empty application cell, and a zero count.
+// The columns -- Program ID, Application, Type, Function Name, and the
+// bpfman link IDs -- let the listing answer "which application?" and
+// "attached by what?" without a second command: each link ID is the
+// handle `link get` and `link list` accept, so a row leads straight to
+// its links. Every ID renders, space-separated and untruncated -- single
+// spaces keep each ID selectable as a word in a terminal while the
+// table's wider column gaps keep the cell one column -- and a count
+// would only restate the list's length. The per-entry fields are
+// precomputed by the manager, so kernel-only rows render with their
+// kernel type and name, an empty application cell, and the no-links
+// sentinel.
 func formatProgramsCompositeTable(result bpfman.ProgramListResult) string {
-	headers := []string{"PROGRAM ID", "APPLICATION", "TYPE", "FUNCTION NAME", "#LINKS"}
+	headers := []string{"PROGRAM ID", "APPLICATION", "TYPE", "FUNCTION NAME", "LINK IDS"}
 	rows := make([][]string, len(result.Programs))
 	for i, e := range result.Programs {
 		rows[i] = []string{
@@ -428,10 +433,24 @@ func formatProgramsCompositeTable(result bpfman.ProgramListResult) string {
 			e.Application,
 			e.Type,
 			e.FunctionName,
-			fmt.Sprintf("%d", len(e.Links)),
+			formatLinkIDs(e.Links),
 		}
 	}
 	return renderTable("", headers, rows)
+}
+
+// formatLinkIDs joins a program's bpfman link IDs for the list table,
+// with a sentinel when the program has no links so "unattached" never
+// renders as a blank cell.
+func formatLinkIDs(ids []bpfman.LinkID) string {
+	if len(ids) == 0 {
+		return "<none>"
+	}
+	parts := make([]string, len(ids))
+	for i, id := range ids {
+		parts[i] = fmt.Sprintf("%d", id)
+	}
+	return strings.Join(parts, " ")
 }
 
 // DispatcherListView is the output view for dispatcher list commands.
