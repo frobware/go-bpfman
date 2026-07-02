@@ -181,7 +181,15 @@ func programSpecRows(prog bpfman.Program) []row {
 		spec = append(spec, fieldRow("Metadata", "None"))
 	}
 	spec = append(spec, fieldRow("Name", p.Meta.Name))
-	spec = append(spec, fieldRow("Path", p.Load.ObjectPath()))
+	// Spec reports what the caller asked for: the file-load path
+	// operand when the record preserved one. Image loads and records
+	// predating source-path recording fall back to the stored copy,
+	// which Status reports as Bytecode either way.
+	if p.Load.SourcePath() != "" {
+		spec = append(spec, fieldRow("Path", p.Load.SourcePath()))
+	} else {
+		spec = append(spec, fieldRow("Path", p.Load.ObjectPath()))
+	}
 	spec = append(spec, fieldRow("Type", p.Load.ProgramType().String()))
 	sortRowsByLabel(spec)
 	return spec
