@@ -56,7 +56,9 @@ fi
 
 # --- load + attach one program of each kind ---
 
-xdp_id=$("$BPFMAN" program load file "$TESTDATA/xdp_pass.bpf.o" --programs xdp:pass -m fixture=program-load -o json | prog_id)
+# The xdp program alone carries an application label so the program
+# list renders both a populated APPLICATION cell and empty ones.
+xdp_id=$("$BPFMAN" program load file "$TESTDATA/xdp_pass.bpf.o" --programs xdp:pass --application demo-app -m fixture=program-load -o json | prog_id)
 xdp_link_id=$("$BPFMAN" link attach xdp "$xdp_id" "$HOST_LINK" --priority 50 -m fixture=program-load -m kind=xdp -o json | link_id)
 
 tc_id=$("$BPFMAN" program load file "$TESTDATA/tc_counter.bpf.o" --programs tc:stats -m fixture=program-load -o json | prog_id)

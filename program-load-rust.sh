@@ -73,7 +73,9 @@ fi
 
 # --- load + attach one program of each kind ---
 
-xdp_id=$("$BPFMAN" load file --path "$TESTDATA/xdp_pass.bpf.o" --programs xdp:pass -m fixture=program-load | prog_id)
+# The xdp program alone carries an application label so the program
+# list renders both a populated Application cell and empty ones.
+xdp_id=$("$BPFMAN" load file --path "$TESTDATA/xdp_pass.bpf.o" --programs xdp:pass --application demo-app -m fixture=program-load | prog_id)
 xdp_link_id=$("$BPFMAN" attach "$xdp_id" xdp --iface "$HOST_LINK" --priority 50 -m fixture=program-load -m kind=xdp | link_id)
 
 tc_id=$("$BPFMAN" load file --path "$TESTDATA/tc_counter.bpf.o" --programs tc:stats -m fixture=program-load | prog_id)
