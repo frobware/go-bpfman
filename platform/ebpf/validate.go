@@ -13,21 +13,21 @@ import (
 	"github.com/bpfman/bpfman/platform"
 )
 
-// ProgramDiscoverer implements platform.ProgramDiscoverer using cilium/ebpf.
-type ProgramDiscoverer struct{}
+// ProgramValidator implements platform.ProgramValidator using cilium/ebpf.
+type ProgramValidator struct{}
 
-// NewProgramDiscoverer creates a new program discoverer.
-func NewProgramDiscoverer() *ProgramDiscoverer {
-	return &ProgramDiscoverer{}
+// NewProgramValidator creates a new program validator.
+func NewProgramValidator() *ProgramValidator {
+	return &ProgramValidator{}
 }
 
-// ValidatePrograms implements platform.ProgramDiscoverer.
-func (d *ProgramDiscoverer) ValidatePrograms(objectPath string, programNames []string) error {
+// ValidatePrograms implements platform.ProgramValidator.
+func (d *ProgramValidator) ValidatePrograms(objectPath string, programNames []string) error {
 	return ValidatePrograms(objectPath, programNames)
 }
 
-// Ensure ProgramDiscoverer implements the interface.
-var _ platform.ProgramDiscoverer = (*ProgramDiscoverer)(nil)
+// Ensure ProgramValidator implements the interface.
+var _ platform.ProgramValidator = (*ProgramValidator)(nil)
 
 // InferProgramType returns the program type based on the ELF section name.
 // This follows the Rust bpfman approach of deriving the type from bytecode

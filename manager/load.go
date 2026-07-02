@@ -810,7 +810,7 @@ func (m *Manager) resolveBatchPrograms(
 	for i, p := range programs {
 		programNames[i] = p.Name
 	}
-	if err := m.programDiscoverer.ValidatePrograms(objectPath, programNames); err != nil {
+	if err := m.programValidator.ValidatePrograms(objectPath, programNames); err != nil {
 		return nil, err
 	}
 	return programs, nil

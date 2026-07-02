@@ -43,7 +43,7 @@ import (
 	"github.com/bpfman/bpfman/platform"
 )
 
-// fakeProgramInfo describes a program the fake discoverer knows about
+// fakeProgramInfo describes a program the fake validator knows about
 // in a given object, standing in for what a real ELF scan would find.
 type fakeProgramInfo struct {
 	// Name is the program's function/symbol name.
@@ -56,27 +56,27 @@ type fakeProgramInfo struct {
 	AttachFunc string
 }
 
-// fakeDiscoverer implements platform.ProgramDiscoverer for testing.
-type fakeDiscoverer struct {
+// fakeValidator implements platform.ProgramValidator for testing.
+type fakeValidator struct {
 	// Programs maps object path to the programs it contains
 	programs map[string][]fakeProgramInfo
 	// ValidateErr if set, ValidatePrograms returns this error
 	validateErr error
 }
 
-func newFakeDiscoverer() *fakeDiscoverer {
-	return &fakeDiscoverer{
+func newFakeValidator() *fakeValidator {
+	return &fakeValidator{
 		programs: make(map[string][]fakeProgramInfo),
 	}
 }
 
 // SetPrograms configures the programs to return for a given object path.
-func (d *fakeDiscoverer) SetPrograms(objectPath string, programs []fakeProgramInfo) {
+func (d *fakeValidator) SetPrograms(objectPath string, programs []fakeProgramInfo) {
 	d.programs[objectPath] = programs
 }
 
 // AddPrograms appends programs to the list for the given object path.
-func (d *fakeDiscoverer) AddPrograms(objectPath string, programs ...fakeProgramInfo) {
+func (d *fakeValidator) AddPrograms(objectPath string, programs ...fakeProgramInfo) {
 	d.programs[objectPath] = append(d.programs[objectPath], programs...)
 }
 
@@ -84,7 +84,7 @@ func (d *fakeDiscoverer) AddPrograms(objectPath string, programs ...fakeProgramI
 // configured for objectPath, in configuration order. Tests that load
 // a whole object use it to declare each program, mirroring the CLI's
 // required --programs.
-func (d *fakeDiscoverer) specsFor(objectPath string) []manager.ProgramSpec {
+func (d *fakeValidator) specsFor(objectPath string) []manager.ProgramSpec {
 	infos := d.programs[objectPath]
 	specs := make([]manager.ProgramSpec, len(infos))
 	for i, p := range infos {
@@ -94,11 +94,11 @@ func (d *fakeDiscoverer) specsFor(objectPath string) []manager.ProgramSpec {
 }
 
 // SetValidateError configures ValidatePrograms to return the given error.
-func (d *fakeDiscoverer) SetValidateError(err error) {
+func (d *fakeValidator) SetValidateError(err error) {
 	d.validateErr = err
 }
 
-func (d *fakeDiscoverer) ValidatePrograms(objectPath string, programNames []string) error {
+func (d *fakeValidator) ValidatePrograms(objectPath string, programNames []string) error {
 	if d.validateErr != nil {
 		return d.validateErr
 	}
@@ -131,8 +131,8 @@ func (d *fakeDiscoverer) ValidatePrograms(objectPath string, programNames []stri
 	return nil
 }
 
-// Ensure fakeDiscoverer implements the interface.
-var _ platform.ProgramDiscoverer = (*fakeDiscoverer)(nil)
+// Ensure fakeValidator implements the interface.
+var _ platform.ProgramValidator = (*fakeValidator)(nil)
 
 // fakeImagePuller implements platform.ImagePuller for testing.
 type fakeImagePuller struct {

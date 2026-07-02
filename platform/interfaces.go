@@ -662,12 +662,12 @@ type SignatureVerifier interface {
 	Verify(ctx context.Context, req SignatureVerificationRequest) (SignatureVerification, error)
 }
 
-// ProgramDiscoverer validates requested program names against BPF
+// ProgramValidator validates requested program names against BPF
 // object files. Loads name every program explicitly; there is no
 // whole-object discovery (section names cannot distinguish tc from
 // tcx and carry no fentry/fexit attach function, so a discovered
 // type would be a guess).
-type ProgramDiscoverer interface {
+type ProgramValidator interface {
 	// ValidatePrograms checks that all specified program names exist in
 	// the object file. Returns an error listing missing programs.
 	ValidatePrograms(objectPath string, programNames []string) error
