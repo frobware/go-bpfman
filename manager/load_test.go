@@ -77,56 +77,6 @@ func newTestImageRef() *platform.ImageRef {
 	}
 }
 
-func TestLoad_AutoDiscover_SingleProgram(t *testing.T) {
-	t.Parallel()
-
-	discoverer := newFakeDiscoverer()
-	puller := newFakeImagePuller()
-	f := newTestFixtureWithOptions(t, discoverer, puller)
-	objPath := f.BytecodeFile("object.o")
-	puller.SetObjectPath(objPath)
-	discoverer.SetPrograms(objPath, []platform.DiscoveredProgram{
-		{Name: "test_prog", SectionName: "xdp", Type: bpfman.ProgramTypeXDP},
-	})
-
-	programs, err := f.LoadDirect(context.Background(), manager.LoadSource{
-		Image: newTestImageRef(),
-	}, nil, manager.LoadOpts{})
-
-	require.NoError(t, err)
-	assert.Len(t, programs, 1)
-	assert.Equal(t, "test_prog", programs[0].Record.Meta.Name)
-	assert.Equal(t, 1, f.Kernel.ProgramCount())
-}
-
-func TestLoad_AutoDiscover_MultiplePrograms(t *testing.T) {
-	t.Parallel()
-
-	discoverer := newFakeDiscoverer()
-	puller := newFakeImagePuller()
-	f := newTestFixtureWithOptions(t, discoverer, puller)
-	objPath := f.BytecodeFile("object.o")
-	puller.SetObjectPath(objPath)
-	discoverer.SetPrograms(objPath, []platform.DiscoveredProgram{
-		{Name: "prog_a", SectionName: "xdp", Type: bpfman.ProgramTypeXDP},
-		{Name: "prog_b", SectionName: "xdp", Type: bpfman.ProgramTypeXDP},
-		{Name: "prog_c", SectionName: "xdp", Type: bpfman.ProgramTypeXDP},
-	})
-
-	programs, err := f.LoadDirect(context.Background(), manager.LoadSource{
-		Image: newTestImageRef(),
-	}, nil, manager.LoadOpts{})
-
-	require.NoError(t, err)
-	assert.Len(t, programs, 3)
-	assert.Equal(t, 3, f.Kernel.ProgramCount())
-
-	// Verify programs are loaded in sorted order
-	assert.Equal(t, "prog_a", programs[0].Record.Meta.Name)
-	assert.Equal(t, "prog_b", programs[1].Record.Meta.Name)
-	assert.Equal(t, "prog_c", programs[2].Record.Meta.Name)
-}
-
 func TestLoad_MultiProgramDoesNotFabricateMapOwnership(t *testing.T) {
 	t.Parallel()
 
@@ -134,13 +84,13 @@ func TestLoad_MultiProgramDoesNotFabricateMapOwnership(t *testing.T) {
 	discoverer := newFakeDiscoverer()
 	f := newTestFixtureWithDiscoverer(t, discoverer)
 	objPath := f.BytecodeFile("object.o")
-	discoverer.SetPrograms(objPath, []platform.DiscoveredProgram{
+	discoverer.SetPrograms(objPath, []fakeProgramInfo{
 		{Name: "prog_a", SectionName: "xdp", Type: bpfman.ProgramTypeXDP},
 		{Name: "prog_b", SectionName: "xdp", Type: bpfman.ProgramTypeXDP},
 		{Name: "prog_c", SectionName: "xdp", Type: bpfman.ProgramTypeXDP},
 	})
 
-	programs, err := f.LoadDirect(ctx, manager.LoadSource{FilePath: objPath}, nil, manager.LoadOpts{})
+	programs, err := f.LoadDirect(ctx, manager.LoadSource{FilePath: objPath}, discoverer.specsFor(objPath), manager.LoadOpts{})
 	require.NoError(t, err)
 	require.Len(t, programs, 3)
 
@@ -165,7 +115,7 @@ func TestFindLoadedProgramByMetadataUsesFirstMatchForMultiProgramLoad(t *testing
 	discoverer := newFakeDiscoverer()
 	f := newTestFixtureWithDiscoverer(t, discoverer)
 	objPath := f.BytecodeFile("object.o")
-	discoverer.SetPrograms(objPath, []platform.DiscoveredProgram{
+	discoverer.SetPrograms(objPath, []fakeProgramInfo{
 		{Name: "prog_a", SectionName: "xdp", Type: bpfman.ProgramTypeXDP},
 		{Name: "prog_b", SectionName: "xdp", Type: bpfman.ProgramTypeXDP},
 	})
@@ -198,7 +148,7 @@ func TestLoad_MapSetSurvivesCreatorUnload(t *testing.T) {
 	discoverer := newFakeDiscoverer()
 	f := newTestFixtureWithDiscoverer(t, discoverer)
 	objPath := f.BytecodeFile("object.o")
-	discoverer.SetPrograms(objPath, []platform.DiscoveredProgram{
+	discoverer.SetPrograms(objPath, []fakeProgramInfo{
 		{Name: "owner", SectionName: "xdp", Type: bpfman.ProgramTypeXDP},
 		{Name: "dependent", SectionName: "xdp", Type: bpfman.ProgramTypeXDP},
 	})
@@ -248,7 +198,7 @@ func TestLoad_MapUsedByIsDerivedByManager(t *testing.T) {
 	discoverer := newFakeDiscoverer()
 	f := newTestFixtureWithDiscoverer(t, discoverer)
 	objPath := f.BytecodeFile("object.o")
-	discoverer.SetPrograms(objPath, []platform.DiscoveredProgram{
+	discoverer.SetPrograms(objPath, []fakeProgramInfo{
 		{Name: "owner", SectionName: "xdp", Type: bpfman.ProgramTypeXDP},
 		{Name: "dependent", SectionName: "xdp", Type: bpfman.ProgramTypeXDP},
 	})
@@ -296,7 +246,7 @@ func TestLoad_MapUsedByDerivationFailureRollsBackLoad(t *testing.T) {
 		return &failListInTxStore{Store: base, err: deriveErr}
 	})
 	objPath := f.BytecodeFile("object.o")
-	f.Discoverer.SetPrograms(objPath, []platform.DiscoveredProgram{
+	f.Discoverer.SetPrograms(objPath, []fakeProgramInfo{
 		{Name: "prog", SectionName: "xdp", Type: bpfman.ProgramTypeXDP},
 	})
 
@@ -326,7 +276,7 @@ func TestLoad_MapSetGCDeletesSetOnlyAfterLastUser(t *testing.T) {
 		return recorder
 	})
 	objPath := f.BytecodeFile("object.o")
-	discoverer.SetPrograms(objPath, []platform.DiscoveredProgram{
+	discoverer.SetPrograms(objPath, []fakeProgramInfo{
 		{Name: "owner", SectionName: "xdp", Type: bpfman.ProgramTypeXDP},
 		{Name: "dependent", SectionName: "xdp", Type: bpfman.ProgramTypeXDP},
 	})
@@ -363,7 +313,7 @@ func TestLoad_MapSetSurvivesDependentUnloadWhileCreatorLives(t *testing.T) {
 	discoverer := newFakeDiscoverer()
 	f := newTestFixtureWithDiscoverer(t, discoverer)
 	objPath := f.BytecodeFile("object.o")
-	discoverer.SetPrograms(objPath, []platform.DiscoveredProgram{
+	discoverer.SetPrograms(objPath, []fakeProgramInfo{
 		{Name: "owner", SectionName: "xdp", Type: bpfman.ProgramTypeXDP},
 		{Name: "dependent", SectionName: "xdp", Type: bpfman.ProgramTypeXDP},
 	})
@@ -405,7 +355,7 @@ func TestLoad_ReusedProgramIDCollidingWithSurvivingMapSetFailsClosed(t *testing.
 	discoverer := newFakeDiscoverer()
 	f := newTestFixtureWithDiscoverer(t, discoverer)
 	objPath := f.BytecodeFile("object.o")
-	discoverer.SetPrograms(objPath, []platform.DiscoveredProgram{
+	discoverer.SetPrograms(objPath, []fakeProgramInfo{
 		{Name: "owner", SectionName: "xdp", Type: bpfman.ProgramTypeXDP},
 		{Name: "dependent", SectionName: "xdp", Type: bpfman.ProgramTypeXDP},
 		{Name: "reused", SectionName: "xdp", Type: bpfman.ProgramTypeXDP},
@@ -465,7 +415,7 @@ func TestLoad_MapOwnerIDMustNameExistingMapSet(t *testing.T) {
 	discoverer := newFakeDiscoverer()
 	f := newTestFixtureWithDiscoverer(t, discoverer)
 	objPath := f.BytecodeFile("object.o")
-	discoverer.SetPrograms(objPath, []platform.DiscoveredProgram{
+	discoverer.SetPrograms(objPath, []fakeProgramInfo{
 		{Name: "owner", SectionName: "xdp", Type: bpfman.ProgramTypeXDP},
 		{Name: "dependent", SectionName: "xdp", Type: bpfman.ProgramTypeXDP},
 		{Name: "candidate", SectionName: "xdp", Type: bpfman.ProgramTypeXDP},
@@ -526,7 +476,7 @@ func TestLoad_RollbackExplicitMapOwnerDoesNotRemoveOwnerMapSet(t *testing.T) {
 		return &failProgramSaveStore{Store: store, name: "dependent", err: saveErr}
 	})
 	objPath := f.BytecodeFile("object.o")
-	discoverer.SetPrograms(objPath, []platform.DiscoveredProgram{
+	discoverer.SetPrograms(objPath, []fakeProgramInfo{
 		{Name: "owner", SectionName: "xdp", Type: bpfman.ProgramTypeXDP},
 		{Name: "dependent", SectionName: "xdp", Type: bpfman.ProgramTypeXDP},
 	})
@@ -572,7 +522,7 @@ func TestLoad_ExplicitPrograms_PreservesOrder(t *testing.T) {
 	f := newTestFixtureWithOptions(t, discoverer, puller)
 	objPath := f.BytecodeFile("object.o")
 	puller.SetObjectPath(objPath)
-	discoverer.SetPrograms(objPath, []platform.DiscoveredProgram{
+	discoverer.SetPrograms(objPath, []fakeProgramInfo{
 		{Name: "prog_a", SectionName: "xdp", Type: bpfman.ProgramTypeXDP},
 		{Name: "prog_b", SectionName: "xdp", Type: bpfman.ProgramTypeXDP},
 		{Name: "prog_c", SectionName: "xdp", Type: bpfman.ProgramTypeXDP},
@@ -599,7 +549,11 @@ func TestLoad_ExplicitPrograms_PreservesOrder(t *testing.T) {
 	}
 }
 
-func TestLoad_AutoDiscover_NoPrograms(t *testing.T) {
+// Loading a whole object means naming every program in it: the
+// explicit specs carry the caller's declared types, so a tcx program
+// stays tcx (a section-derived guess could not distinguish it from
+// tc) and a fentry program carries its attach function.
+func TestLoad_WholeObjectExplicit(t *testing.T) {
 	t.Parallel()
 
 	discoverer := newFakeDiscoverer()
@@ -607,15 +561,27 @@ func TestLoad_AutoDiscover_NoPrograms(t *testing.T) {
 	f := newTestFixtureWithOptions(t, discoverer, puller)
 	objPath := f.BytecodeFile("object.o")
 	puller.SetObjectPath(objPath)
-	// Don't set any programs - empty object file
+	discoverer.SetPrograms(objPath, []fakeProgramInfo{
+		{Name: "xdp_prog", SectionName: "xdp", Type: bpfman.ProgramTypeXDP},
+		{Name: "tcx_prog", SectionName: "classifier/tcx_prog", Type: bpfman.ProgramTypeTCX},
+		{Name: "fentry_prog", SectionName: "fentry/vfs_read", Type: bpfman.ProgramTypeFentry, AttachFunc: "vfs_read"},
+	})
 
-	_, err := f.LoadDirect(context.Background(), manager.LoadSource{
+	programs, err := f.LoadDirect(context.Background(), manager.LoadSource{
 		Image: newTestImageRef(),
-	}, nil, manager.LoadOpts{})
+	}, []manager.ProgramSpec{
+		{Name: "xdp_prog", Type: bpfman.ProgramTypeXDP},
+		{Name: "tcx_prog", Type: bpfman.ProgramTypeTCX},
+		{Name: "fentry_prog", Type: bpfman.ProgramTypeFentry, AttachFunc: "vfs_read"},
+	}, manager.LoadOpts{})
 
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no programs found")
-	assert.Equal(t, 0, f.Kernel.ProgramCount())
+	require.NoError(t, err)
+	require.Len(t, programs, 3)
+	assert.Equal(t, bpfman.ProgramTypeXDP, programs[0].Record.Load.ProgramType())
+	assert.Equal(t, bpfman.ProgramTypeTCX, programs[1].Record.Load.ProgramType())
+	assert.Equal(t, bpfman.ProgramTypeFentry, programs[2].Record.Load.ProgramType())
+	assert.Equal(t, "vfs_read", programs[2].Record.Load.AttachFunc())
+	assert.Equal(t, 3, f.Kernel.ProgramCount())
 }
 
 func TestLoad_ExplicitPrograms_Valid(t *testing.T) {
@@ -626,7 +592,7 @@ func TestLoad_ExplicitPrograms_Valid(t *testing.T) {
 	f := newTestFixtureWithOptions(t, discoverer, puller)
 	objPath := f.BytecodeFile("object.o")
 	puller.SetObjectPath(objPath)
-	discoverer.SetPrograms(objPath, []platform.DiscoveredProgram{
+	discoverer.SetPrograms(objPath, []fakeProgramInfo{
 		{Name: "prog_a", SectionName: "xdp", Type: bpfman.ProgramTypeXDP},
 		{Name: "prog_b", SectionName: "xdp", Type: bpfman.ProgramTypeXDP},
 	})
@@ -652,7 +618,7 @@ func TestLoad_ExplicitPrograms_InvalidName(t *testing.T) {
 	f := newTestFixtureWithOptions(t, discoverer, puller)
 	objPath := f.BytecodeFile("object.o")
 	puller.SetObjectPath(objPath)
-	discoverer.SetPrograms(objPath, []platform.DiscoveredProgram{
+	discoverer.SetPrograms(objPath, []fakeProgramInfo{
 		{Name: "prog_a", SectionName: "xdp", Type: bpfman.ProgramTypeXDP},
 	})
 
@@ -676,7 +642,7 @@ func TestLoad_Rollback_SecondProgramFails(t *testing.T) {
 	f := newTestFixtureWithOptions(t, discoverer, puller)
 	objPath := f.BytecodeFile("object.o")
 	puller.SetObjectPath(objPath)
-	discoverer.SetPrograms(objPath, []platform.DiscoveredProgram{
+	discoverer.SetPrograms(objPath, []fakeProgramInfo{
 		{Name: "prog_a", SectionName: "xdp", Type: bpfman.ProgramTypeXDP},
 		{Name: "prog_b", SectionName: "xdp", Type: bpfman.ProgramTypeXDP},
 	})
@@ -686,7 +652,7 @@ func TestLoad_Rollback_SecondProgramFails(t *testing.T) {
 
 	_, err := f.LoadDirect(context.Background(), manager.LoadSource{
 		Image: newTestImageRef(),
-	}, nil, manager.LoadOpts{})
+	}, discoverer.specsFor(objPath), manager.LoadOpts{})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "prog_b")
@@ -724,7 +690,7 @@ func TestLoad_Rollback_ThirdProgramFails(t *testing.T) {
 	f := newTestFixtureWithOptions(t, discoverer, puller)
 	objPath := f.BytecodeFile("object.o")
 	puller.SetObjectPath(objPath)
-	discoverer.SetPrograms(objPath, []platform.DiscoveredProgram{
+	discoverer.SetPrograms(objPath, []fakeProgramInfo{
 		{Name: "prog_a", SectionName: "xdp", Type: bpfman.ProgramTypeXDP},
 		{Name: "prog_b", SectionName: "xdp", Type: bpfman.ProgramTypeXDP},
 		{Name: "prog_c", SectionName: "xdp", Type: bpfman.ProgramTypeXDP},
@@ -735,7 +701,7 @@ func TestLoad_Rollback_ThirdProgramFails(t *testing.T) {
 
 	_, err := f.LoadDirect(context.Background(), manager.LoadSource{
 		Image: newTestImageRef(),
-	}, nil, manager.LoadOpts{})
+	}, discoverer.specsFor(objPath), manager.LoadOpts{})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "prog_c")
@@ -753,59 +719,17 @@ func TestLoad_PullError(t *testing.T) {
 	f := newTestFixtureWithOptions(t, discoverer, puller)
 	objPath := f.BytecodeFile("object.o")
 	puller.SetObjectPath(objPath)
+	discoverer.SetPrograms(objPath, []fakeProgramInfo{
+		{Name: "prog_a", SectionName: "xdp", Type: bpfman.ProgramTypeXDP},
+	})
 
 	_, err := f.LoadDirect(context.Background(), manager.LoadSource{
 		Image: newTestImageRef(),
-	}, nil, manager.LoadOpts{})
+	}, discoverer.specsFor(objPath), manager.LoadOpts{})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "pull image")
 	assert.Equal(t, 0, f.Kernel.ProgramCount())
-}
-
-func TestLoad_DiscoverError(t *testing.T) {
-	t.Parallel()
-
-	discoverer := newFakeDiscoverer()
-	discoverer.SetDiscoverError(fmt.Errorf("corrupt ELF file"))
-	puller := newFakeImagePuller()
-	f := newTestFixtureWithOptions(t, discoverer, puller)
-	objPath := f.BytecodeFile("object.o")
-	puller.SetObjectPath(objPath)
-
-	_, err := f.LoadDirect(context.Background(), manager.LoadSource{
-		Image: newTestImageRef(),
-	}, nil, manager.LoadOpts{})
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "discover programs")
-	assert.Equal(t, 0, f.Kernel.ProgramCount())
-}
-
-func TestLoad_AutoDiscover_FentryFexit(t *testing.T) {
-	t.Parallel()
-
-	discoverer := newFakeDiscoverer()
-	puller := newFakeImagePuller()
-	f := newTestFixtureWithOptions(t, discoverer, puller)
-	objPath := f.BytecodeFile("object.o")
-	puller.SetObjectPath(objPath)
-	discoverer.SetPrograms(objPath, []platform.DiscoveredProgram{
-		{Name: "trace_vfs_read", SectionName: "fentry/vfs_read", Type: bpfman.ProgramTypeFentry, AttachFunc: "vfs_read"},
-		{Name: "trace_vfs_write", SectionName: "fexit/vfs_write", Type: bpfman.ProgramTypeFexit, AttachFunc: "vfs_write"},
-	})
-
-	programs, err := f.LoadDirect(context.Background(), manager.LoadSource{
-		Image: newTestImageRef(),
-	}, nil, manager.LoadOpts{})
-
-	require.NoError(t, err)
-	assert.Len(t, programs, 2)
-	assert.Equal(t, 2, f.Kernel.ProgramCount())
-
-	// Verify the programs were loaded (sorted by name)
-	assert.Equal(t, "trace_vfs_read", programs[0].Record.Meta.Name)
-	assert.Equal(t, "trace_vfs_write", programs[1].Record.Meta.Name)
 }
 
 func TestLoad_Rollback_FentryFexitSecondFails(t *testing.T) {
@@ -816,7 +740,7 @@ func TestLoad_Rollback_FentryFexitSecondFails(t *testing.T) {
 	f := newTestFixtureWithOptions(t, discoverer, puller)
 	objPath := f.BytecodeFile("object.o")
 	puller.SetObjectPath(objPath)
-	discoverer.SetPrograms(objPath, []platform.DiscoveredProgram{
+	discoverer.SetPrograms(objPath, []fakeProgramInfo{
 		{Name: "trace_vfs_read", SectionName: "fentry/vfs_read", Type: bpfman.ProgramTypeFentry, AttachFunc: "vfs_read"},
 		{Name: "trace_vfs_write", SectionName: "fexit/vfs_write", Type: bpfman.ProgramTypeFexit, AttachFunc: "vfs_write"},
 	})
@@ -826,7 +750,7 @@ func TestLoad_Rollback_FentryFexitSecondFails(t *testing.T) {
 
 	_, err := f.LoadDirect(context.Background(), manager.LoadSource{
 		Image: newTestImageRef(),
-	}, nil, manager.LoadOpts{})
+	}, discoverer.specsFor(objPath), manager.LoadOpts{})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "trace_vfs_write")
@@ -861,7 +785,7 @@ func TestLoad_Rollback_FentryFexitFirstFails(t *testing.T) {
 	f := newTestFixtureWithOptions(t, discoverer, puller)
 	objPath := f.BytecodeFile("object.o")
 	puller.SetObjectPath(objPath)
-	discoverer.SetPrograms(objPath, []platform.DiscoveredProgram{
+	discoverer.SetPrograms(objPath, []fakeProgramInfo{
 		{Name: "trace_vfs_read", SectionName: "fentry/vfs_read", Type: bpfman.ProgramTypeFentry, AttachFunc: "vfs_read"},
 		{Name: "trace_vfs_write", SectionName: "fexit/vfs_write", Type: bpfman.ProgramTypeFexit, AttachFunc: "vfs_write"},
 	})
@@ -871,7 +795,7 @@ func TestLoad_Rollback_FentryFexitFirstFails(t *testing.T) {
 
 	_, err := f.LoadDirect(context.Background(), manager.LoadSource{
 		Image: newTestImageRef(),
-	}, nil, manager.LoadOpts{})
+	}, discoverer.specsFor(objPath), manager.LoadOpts{})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "trace_vfs_read")
@@ -902,7 +826,7 @@ func TestLoad_Rollback_MixedTypesThirdFails(t *testing.T) {
 	f := newTestFixtureWithOptions(t, discoverer, puller)
 	objPath := f.BytecodeFile("object.o")
 	puller.SetObjectPath(objPath)
-	discoverer.SetPrograms(objPath, []platform.DiscoveredProgram{
+	discoverer.SetPrograms(objPath, []fakeProgramInfo{
 		{Name: "my_xdp", SectionName: "xdp", Type: bpfman.ProgramTypeXDP},
 		{Name: "trace_vfs_read", SectionName: "fentry/vfs_read", Type: bpfman.ProgramTypeFentry, AttachFunc: "vfs_read"},
 		{Name: "trace_vfs_write", SectionName: "fexit/vfs_write", Type: bpfman.ProgramTypeFexit, AttachFunc: "vfs_write"},
@@ -913,7 +837,7 @@ func TestLoad_Rollback_MixedTypesThirdFails(t *testing.T) {
 
 	_, err := f.LoadDirect(context.Background(), manager.LoadSource{
 		Image: newTestImageRef(),
-	}, nil, manager.LoadOpts{})
+	}, discoverer.specsFor(objPath), manager.LoadOpts{})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "trace_vfs_write")
@@ -956,7 +880,7 @@ func TestLoad_ValidationError(t *testing.T) {
 	f := newTestFixtureWithOptions(t, discoverer, puller)
 	objPath := f.BytecodeFile("object.o")
 	puller.SetObjectPath(objPath)
-	discoverer.SetPrograms(objPath, []platform.DiscoveredProgram{
+	discoverer.SetPrograms(objPath, []fakeProgramInfo{
 		{Name: "prog_a", SectionName: "xdp", Type: bpfman.ProgramTypeXDP},
 	})
 	discoverer.SetValidateError(fmt.Errorf("custom validation error"))
@@ -979,13 +903,13 @@ func TestLoad_FileSource(t *testing.T) {
 	discoverer := newFakeDiscoverer()
 	f := newTestFixtureWithDiscoverer(t, discoverer)
 	objPath := f.BytecodeFile("object.o")
-	discoverer.SetPrograms(objPath, []platform.DiscoveredProgram{
+	discoverer.SetPrograms(objPath, []fakeProgramInfo{
 		{Name: "test_prog", SectionName: "xdp", Type: bpfman.ProgramTypeXDP},
 	})
 
 	programs, err := f.LoadDirect(context.Background(), manager.LoadSource{
 		FilePath: objPath,
-	}, nil, manager.LoadOpts{})
+	}, discoverer.specsFor(objPath), manager.LoadOpts{})
 
 	require.NoError(t, err)
 	assert.Len(t, programs, 1)
@@ -999,7 +923,7 @@ func TestLoad_MetadataActualTypeResolvedInManager(t *testing.T) {
 	discoverer := newFakeDiscoverer()
 	f := newTestFixtureWithDiscoverer(t, discoverer)
 	objPath := f.BytecodeFile("object.o")
-	discoverer.SetPrograms(objPath, []platform.DiscoveredProgram{
+	discoverer.SetPrograms(objPath, []fakeProgramInfo{
 		{Name: "retprobe", SectionName: "kprobe", Type: bpfman.ProgramTypeKprobe},
 	})
 
@@ -1017,4 +941,39 @@ func TestLoad_MetadataActualTypeResolvedInManager(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, programs, 1)
 	assert.Equal(t, bpfman.ProgramTypeKretprobe, programs[0].Record.Load.ProgramType())
+}
+
+// A load with no program specs is rejected outright: the caller must
+// name every TYPE:NAME to load. Auto-discovery guessed types from
+// section names, which cannot distinguish tc from tcx (both live in
+// classifier sections) and cannot carry a fentry/fexit attach
+// function, so a whole-object load silently mislabelled programs.
+// Explicit wins, matching the Rust CLI's required --programs.
+func TestLoad_EmptyProgramsRejected(t *testing.T) {
+	t.Parallel()
+
+	f := newTestFixture(t)
+	objPath := f.BytecodeFile("object.o")
+
+	_, err := f.LoadDirect(context.Background(), manager.LoadSource{FilePath: objPath}, nil, manager.LoadOpts{})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no programs specified")
+	assert.Equal(t, 0, f.Kernel.ProgramCount())
+}
+
+// The rejection happens before the source resolves: an image load
+// with no programs fails without pulling the image it could not use.
+func TestLoad_EmptyProgramsRejectedBeforePull(t *testing.T) {
+	t.Parallel()
+
+	discoverer := newFakeDiscoverer()
+	puller := newFakeImagePuller()
+	f := newTestFixtureWithOptions(t, discoverer, puller)
+
+	_, err := f.LoadDirect(context.Background(), manager.LoadSource{Image: newTestImageRef()}, nil, manager.LoadOpts{})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no programs specified")
+	assert.Empty(t, puller.Pulls(), "an empty program list must be rejected before any image pull")
 }

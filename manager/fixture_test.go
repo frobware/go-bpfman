@@ -193,7 +193,7 @@ func (f *testFixture) Load(ctx context.Context, spec bpfman.LoadSpec, opts manag
 		programs[0].MapOwnerID = id
 	}
 	// Ensure the discoverer knows about the program so validation passes.
-	f.Discoverer.AddPrograms(spec.ObjectPath(), platform.DiscoveredProgram{
+	f.Discoverer.AddPrograms(spec.ObjectPath(), fakeProgramInfo{
 		Name:       spec.ProgramName(),
 		Type:       spec.ProgramType(),
 		AttachFunc: spec.AttachFunc(),

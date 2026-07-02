@@ -195,7 +195,7 @@ func newSharedMapDeleteFixture(t *testing.T, ctx context.Context) sharedMapDelet
 	f := newTestFixtureWithDiscoverer(t, discoverer)
 
 	obj := f.BytecodeFile("shared-delete.o")
-	discoverer.SetPrograms(obj, []platform.DiscoveredProgram{
+	discoverer.SetPrograms(obj, []fakeProgramInfo{
 		{Name: "owner", SectionName: "tracepoint", Type: bpfman.ProgramTypeTracepoint},
 		{Name: "dependent", SectionName: "tracepoint", Type: bpfman.ProgramTypeTracepoint},
 	})
