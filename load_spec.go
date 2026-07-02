@@ -117,9 +117,8 @@ func NewAttachLoadSpec(objectPath, programName string, programType ProgramType, 
 func (s LoadSpec) ObjectPath() string { return s.objectPath }
 
 // SourcePath returns the bytecode path the caller supplied to a file
-// load, verbatim. It is empty for image loads (image provenance lives
-// in the image source fields) and for records created before the path
-// was recorded.
+// load, verbatim. It is empty for image loads; image provenance lives
+// in the image source fields.
 func (s LoadSpec) SourcePath() string { return s.sourcePath }
 
 // ProgramName returns the program (function) name selected within the object.
@@ -251,7 +250,7 @@ type imageSourceJSON struct {
 // schema for consumers; absence is never used to encode meaning.
 type loadSpecJSON struct {
 	ObjectPath  string            `json:"object_path"` // bpfman's stored bytecode path post-load (<runtime-dir>/programs/<id>/bytecode.o)
-	SourcePath  *string           `json:"source_path"` // the caller's file-load path operand, verbatim; null for image loads and pre-recording rows
+	SourcePath  *string           `json:"source_path"` // the caller's file-load path operand, verbatim; null for image loads
 	ProgramName string            `json:"program_name"`
 	ProgramType ProgramType       `json:"program_type"`
 	GlobalData  map[string][]byte `json:"global_data"`  // always emit; {} when no globals
