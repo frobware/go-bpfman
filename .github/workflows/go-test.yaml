@@ -1,6 +1,6 @@
 name: Tests
 
-on:
+on: # yamllint disable-line rule:truthy
   workflow_call:
 
 # Each job is a thin shell over a `make ci-*` target. The
@@ -195,7 +195,7 @@ jobs:
         # gate it to RACE=0 while still covering both architectures.
         bytecode_source: [file, image]
         exclude:
-          - { bytecode_source: image, race: 1 }
+          - {bytecode_source: image, race: 1}
         include:
           - arch: amd64
             runner: ubuntu-latest

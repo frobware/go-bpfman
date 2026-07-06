@@ -33,8 +33,8 @@ linters:
       rules:
         main:
           deny:
-            - pkg: "github.com/hashicorp/go-multierror"
-              desc: "Use errors.Join instead"
+            - pkg: github.com/hashicorp/go-multierror
+              desc: Use errors.Join instead
 
     govet:
       enable:
@@ -52,9 +52,9 @@ linters:
 
     staticcheck:
       checks:
-        - "all"
-        - "-QF*"
-        - "-ST*"
+        - all
+        - -QF*
+        - -ST*
 
   exclusions:
     generated: lax
@@ -63,7 +63,7 @@ linters:
       - third_party
     rules:
       # Generated protobuf files.
-      - path: '\.pb\.go$'
+      - path: \.pb\.go$
         linters:
           - govet
           - staticcheck
@@ -73,7 +73,7 @@ linters:
       # attribute __attribute__((optimize("O0"))) -- not English
       # text we control -- and per-line nolint directives do not
       # round-trip through cgo comment lines reliably.
-      - path: 'cmd/bpfman-shell/uprobe_helper\.go$'
+      - path: cmd/bpfman-shell/uprobe_helper\.go$
         linters:
           - misspell
 
