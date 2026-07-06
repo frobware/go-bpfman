@@ -79,13 +79,18 @@
             # (PROTOC_VERSION) and the protoc-gen-* plugins are built
             # from Makefile-pinned versions, so none come from nixpkgs.
 
-            # Lint, coverage, misc.
+            # Lint, format, misc. taplo and yamllint check the
+            # tree's toml and yaml formatting conventions;
+            # clang-format for the C convention comes with clang
+            # above.
             checkmake
             golangci-lint
             hadolint
             iproute2
             jq
             shellcheck
+            taplo
+            yamllint
 
             # Load generation for chasing async-teardown lag in
             # the e2e suite and for reproducing the timing flakes
