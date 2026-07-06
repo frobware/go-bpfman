@@ -36,14 +36,14 @@ NET_COUNTER_MAP(mxdv_a_count);
 NET_COUNTER_MAP(mxdv_b_count);
 NET_COUNTER_MAP(mxdv_c_count);
 
-#define XDP_PARAM_PROG(prog_name, map_var, weight_var, verdict_var) \
-	int prog_name(struct xdp_md *ctx) { \
-		void *data = (void *)(long)ctx->data; \
-		void *data_end = (void *)(long)ctx->data_end; \
-		if (is_ipv4_icmp_echo(data, data_end)) \
-			bump_counter(&map_var, weight_var); \
-		return verdict_var; \
-	}
+#define XDP_PARAM_PROG(prog_name, map_var, weight_var, verdict_var)            \
+  int prog_name(struct xdp_md *ctx) {                                          \
+    void *data = (void *)(long)ctx->data;                                      \
+    void *data_end = (void *)(long)ctx->data_end;                              \
+    if (is_ipv4_icmp_echo(data, data_end))                                     \
+      bump_counter(&map_var, weight_var);                                      \
+    return verdict_var;                                                        \
+  }
 
 SEC("xdp")
 XDP_PARAM_PROG(mxdv_a, mxdv_a_count, weight_a, verdict_a)

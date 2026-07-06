@@ -29,6 +29,7 @@
 // chain to see every packet, PIPE is the canonical return.
 
 #include <linux/pkt_cls.h>
+
 #include "multi_prog_net_common.bpf.h"
 
 volatile const __u64 weight_a = 0;
@@ -39,14 +40,14 @@ NET_COUNTER_MAP(mtc_a_count);
 NET_COUNTER_MAP(mtc_b_count);
 NET_COUNTER_MAP(mtc_c_count);
 
-#define TC_COUNT_PROG(prog_name, map_var, weight_var) \
-	int prog_name(struct __sk_buff *skb) { \
-		void *data = (void *)(long)skb->data; \
-		void *data_end = (void *)(long)skb->data_end; \
-		if (is_ipv4_icmp_echo(data, data_end)) \
-			bump_counter(&map_var, weight_var); \
-		return TC_ACT_PIPE; \
-	}
+#define TC_COUNT_PROG(prog_name, map_var, weight_var)                          \
+  int prog_name(struct __sk_buff *skb) {                                       \
+    void *data = (void *)(long)skb->data;                                      \
+    void *data_end = (void *)(long)skb->data_end;                              \
+    if (is_ipv4_icmp_echo(data, data_end))                                     \
+      bump_counter(&map_var, weight_var);                                      \
+    return TC_ACT_PIPE;                                                        \
+  }
 
 SEC("classifier/mtc_a")
 TC_COUNT_PROG(mtc_a, mtc_a_count, weight_a)

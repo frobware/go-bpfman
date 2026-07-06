@@ -10,20 +10,20 @@
  * the rebuild contention that sharing a common function (e.g. do_unlinkat)
  * introduces when several parallel tests attach and detach concurrently.
  * The lease is a test-harness convention, not kernel access control.
- *
- * See docs/HERMETIC-FENTRY-FEXIT-KMOD.md in the bpfman tree.
  */
 
-#include <linux/module.h>
+#include <linux/atomic.h>
 #include <linux/debugfs.h>
 #include <linux/fs.h>
-#include <linux/atomic.h>
+#include <linux/module.h>
 #include <linux/uaccess.h>
 
 #define CREATE_TRACE_POINTS
 #include "bpfman_e2e_trace.h"
 
 #define BPFMAN_E2E_NUM_SLOTS 128
+
+// clang-format off
 
 /*
  * X-macro that expands to a list of slot indices. Used to keep the
@@ -48,6 +48,8 @@
 	X(112) X(113) X(114) X(115) X(116) X(117) X(118) X(119)      \
 	X(120) X(121) X(122) X(123) X(124) X(125) X(126) X(127)
 
+// clang-format on
+
 /*
  * Each target is noinline so a real symbol exists in kallsyms and
  * BTF, and the asm volatile barrier prevents the compiler from
@@ -56,33 +58,31 @@
  * notrace excludes a function from, so marking these notrace would
  * make them unattachable.
  */
-#define BPFMAN_E2E_DECLARE_TARGET(n)                                 \
-	noinline long bpfman_e2e_target_##n(unsigned long arg);
+#define BPFMAN_E2E_DECLARE_TARGET(n)                                           \
+  noinline long bpfman_e2e_target_##n(unsigned long arg);
 BPFMAN_E2E_FOR_EACH_SLOT(BPFMAN_E2E_DECLARE_TARGET)
 #undef BPFMAN_E2E_DECLARE_TARGET
 
-#define BPFMAN_E2E_DEFINE_TARGET(n)                                  \
-	noinline long bpfman_e2e_target_##n(unsigned long arg)       \
-	{                                                            \
-		asm volatile("" : : "r"(arg));                       \
-		return (long)arg;                                    \
-	}
+#define BPFMAN_E2E_DEFINE_TARGET(n)                                            \
+  noinline long bpfman_e2e_target_##n(unsigned long arg) {                     \
+    asm volatile("" : : "r"(arg));                                             \
+    return (long)arg;                                                          \
+  }
 BPFMAN_E2E_FOR_EACH_SLOT(BPFMAN_E2E_DEFINE_TARGET)
 #undef BPFMAN_E2E_DEFINE_TARGET
 
 typedef long (*bpfman_e2e_target_fn)(unsigned long);
 
 struct bpfman_e2e_slot {
-	unsigned int slot;
-	bpfman_e2e_target_fn fn;
-	atomic64_t trigger_count;
+  unsigned int slot;
+  bpfman_e2e_target_fn fn;
+  atomic64_t trigger_count;
 };
 
-#define BPFMAN_E2E_SLOT_ENTRY(n)                                     \
-	{ .slot = n, .fn = bpfman_e2e_target_##n, .trigger_count = ATOMIC64_INIT(0) },
+#define BPFMAN_E2E_SLOT_ENTRY(n)                                               \
+  {.slot = n, .fn = bpfman_e2e_target_##n, .trigger_count = ATOMIC64_INIT(0)},
 static struct bpfman_e2e_slot bpfman_e2e_slots[BPFMAN_E2E_NUM_SLOTS] = {
-	BPFMAN_E2E_FOR_EACH_SLOT(BPFMAN_E2E_SLOT_ENTRY)
-};
+    BPFMAN_E2E_FOR_EACH_SLOT(BPFMAN_E2E_SLOT_ENTRY)};
 #undef BPFMAN_E2E_SLOT_ENTRY
 
 static struct dentry *bpfman_e2e_root;
@@ -97,80 +97,74 @@ static struct dentry *bpfman_e2e_root;
  * one syscall plus one indirect call.
  */
 static ssize_t bpfman_e2e_trigger_write(struct file *file,
-					const char __user *buf,
-					size_t count, loff_t *ppos)
-{
-	struct bpfman_e2e_slot *slot = file->private_data;
-	long ret;
+                                        const char __user *buf, size_t count,
+                                        loff_t *ppos) {
+  struct bpfman_e2e_slot *slot = file->private_data;
+  long ret;
 
-	if (!slot || !slot->fn)
-		return -EINVAL;
-	ret = slot->fn(slot->slot);
-	trace_bpfman_e2e_ping(slot->slot, ret);
-	atomic64_inc(&slot->trigger_count);
-	return count;
+  if (!slot || !slot->fn)
+    return -EINVAL;
+  ret = slot->fn(slot->slot);
+  trace_bpfman_e2e_ping(slot->slot, ret);
+  atomic64_inc(&slot->trigger_count);
+  return count;
 }
 
-static ssize_t bpfman_e2e_count_read(struct file *file,
-				     char __user *buf,
-				     size_t count, loff_t *ppos)
-{
-	struct bpfman_e2e_slot *slot = file->private_data;
-	char tmp[32];
-	int len;
+static ssize_t bpfman_e2e_count_read(struct file *file, char __user *buf,
+                                     size_t count, loff_t *ppos) {
+  struct bpfman_e2e_slot *slot = file->private_data;
+  char tmp[32];
+  int len;
 
-	if (!slot)
-		return -EINVAL;
+  if (!slot)
+    return -EINVAL;
 
-	len = scnprintf(tmp, sizeof(tmp), "%lld\n",
-			(long long)atomic64_read(&slot->trigger_count));
-	return simple_read_from_buffer(buf, count, ppos, tmp, len);
+  len = scnprintf(tmp, sizeof(tmp), "%lld\n",
+                  (long long)atomic64_read(&slot->trigger_count));
+  return simple_read_from_buffer(buf, count, ppos, tmp, len);
 }
 
 static const struct file_operations bpfman_e2e_trigger_fops = {
-	.owner   = THIS_MODULE,
-	.open    = simple_open,
-	.write   = bpfman_e2e_trigger_write,
-	.llseek  = noop_llseek,
+    .owner = THIS_MODULE,
+    .open = simple_open,
+    .write = bpfman_e2e_trigger_write,
+    .llseek = noop_llseek,
 };
 
 static const struct file_operations bpfman_e2e_count_fops = {
-	.owner   = THIS_MODULE,
-	.open    = simple_open,
-	.read    = bpfman_e2e_count_read,
-	.llseek  = noop_llseek,
+    .owner = THIS_MODULE,
+    .open = simple_open,
+    .read = bpfman_e2e_count_read,
+    .llseek = noop_llseek,
 };
 
-static int __init bpfman_e2e_init(void)
-{
-	int i;
-	char name[32];
+static int __init bpfman_e2e_init(void) {
+  int i;
+  char name[32];
 
-	bpfman_e2e_root = debugfs_create_dir("bpfman_e2e", NULL);
-	if (IS_ERR(bpfman_e2e_root))
-		return PTR_ERR(bpfman_e2e_root);
+  bpfman_e2e_root = debugfs_create_dir("bpfman_e2e", NULL);
+  if (IS_ERR(bpfman_e2e_root))
+    return PTR_ERR(bpfman_e2e_root);
 
-	for (i = 0; i < BPFMAN_E2E_NUM_SLOTS; i++) {
-		snprintf(name, sizeof(name), "trigger_%03d", i);
-		debugfs_create_file(name, 0600, bpfman_e2e_root,
-				    &bpfman_e2e_slots[i],
-				    &bpfman_e2e_trigger_fops);
+  for (i = 0; i < BPFMAN_E2E_NUM_SLOTS; i++) {
+    snprintf(name, sizeof(name), "trigger_%03d", i);
+    debugfs_create_file(name, 0600, bpfman_e2e_root, &bpfman_e2e_slots[i],
+                        &bpfman_e2e_trigger_fops);
 
-		snprintf(name, sizeof(name), "count_%03d", i);
-		debugfs_create_file(name, 0400, bpfman_e2e_root,
-				    &bpfman_e2e_slots[i],
-				    &bpfman_e2e_count_fops);
-	}
+    snprintf(name, sizeof(name), "count_%03d", i);
+    debugfs_create_file(name, 0400, bpfman_e2e_root, &bpfman_e2e_slots[i],
+                        &bpfman_e2e_count_fops);
+  }
 
-	pr_info("bpfman_e2e_targets: %d slots ready under /sys/kernel/debug/bpfman_e2e/\n",
-		BPFMAN_E2E_NUM_SLOTS);
-	return 0;
+  pr_info("bpfman_e2e_targets: %d slots ready under "
+          "/sys/kernel/debug/bpfman_e2e/\n",
+          BPFMAN_E2E_NUM_SLOTS);
+  return 0;
 }
 
-static void __exit bpfman_e2e_exit(void)
-{
-	debugfs_remove_recursive(bpfman_e2e_root);
-	pr_info("bpfman_e2e_targets: unloaded\n");
+static void __exit bpfman_e2e_exit(void) {
+  debugfs_remove_recursive(bpfman_e2e_root);
+  pr_info("bpfman_e2e_targets: unloaded\n");
 }
 
 module_init(bpfman_e2e_init);

@@ -26,14 +26,14 @@ NET_COUNTER_MAP(mxda_count);
 NET_COUNTER_MAP(mxdb_count);
 NET_COUNTER_MAP(mxdc_count);
 
-#define XDP_COUNT_PROG(prog_name, map_var, weight_var, verdict) \
-	int prog_name(struct xdp_md *ctx) { \
-		void *data = (void *)(long)ctx->data; \
-		void *data_end = (void *)(long)ctx->data_end; \
-		if (is_ipv4_icmp_echo(data, data_end)) \
-			bump_counter(&map_var, weight_var); \
-		return verdict; \
-	}
+#define XDP_COUNT_PROG(prog_name, map_var, weight_var, verdict)                \
+  int prog_name(struct xdp_md *ctx) {                                          \
+    void *data = (void *)(long)ctx->data;                                      \
+    void *data_end = (void *)(long)ctx->data_end;                              \
+    if (is_ipv4_icmp_echo(data, data_end))                                     \
+      bump_counter(&map_var, weight_var);                                      \
+    return verdict;                                                            \
+  }
 
 SEC("xdp")
 XDP_COUNT_PROG(mxdp_chain_a, mxda_count, weight_a, XDP_PASS)

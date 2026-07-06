@@ -15,6 +15,7 @@
 // runs to completion).
 
 #include <linux/pkt_cls.h>
+
 #include "multi_prog_net_common.bpf.h"
 
 volatile const __u64 weight_a = 0;
@@ -25,14 +26,14 @@ NET_COUNTER_MAP(mxca_count);
 NET_COUNTER_MAP(mxcb_count);
 NET_COUNTER_MAP(mxcc_count);
 
-#define TCX_COUNT_PROG(prog_name, map_var, weight_var, verdict) \
-	int prog_name(struct __sk_buff *skb) { \
-		void *data = (void *)(long)skb->data; \
-		void *data_end = (void *)(long)skb->data_end; \
-		if (is_ipv4_icmp_echo(data, data_end)) \
-			bump_counter(&map_var, weight_var); \
-		return verdict; \
-	}
+#define TCX_COUNT_PROG(prog_name, map_var, weight_var, verdict)                \
+  int prog_name(struct __sk_buff *skb) {                                       \
+    void *data = (void *)(long)skb->data;                                      \
+    void *data_end = (void *)(long)skb->data_end;                              \
+    if (is_ipv4_icmp_echo(data, data_end))                                     \
+      bump_counter(&map_var, weight_var);                                      \
+    return verdict;                                                            \
+  }
 
 SEC("classifier/mtcx_chain_a")
 TCX_COUNT_PROG(mtcx_chain_a, mxca_count, weight_a, TC_ACT_UNSPEC)
