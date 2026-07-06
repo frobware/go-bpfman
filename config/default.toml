@@ -20,5 +20,5 @@ verify_enabled = true
 # certificate_oidc_issuer_regexp = "https://github\\.com/.*"
 
 [logging]
-level = "info"
 format = "text"
+level = "info"
