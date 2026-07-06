@@ -15,19 +15,16 @@
 // into a single program. Both sections infer BPF_PROG_TYPE_XDP.
 
 #include <linux/bpf.h>
+
 #include <bpf/bpf_helpers.h>
 
 SEC("xdp")
-int good(struct xdp_md *ctx)
-{
-	return XDP_PASS;
-}
+int good(struct xdp_md *ctx) { return XDP_PASS; }
 
 SEC("xdp.frags")
-int bad(struct xdp_md *ctx)
-{
-	char *p = (char *)(unsigned long)ctx->data;
-	return p[100]; // no bounds check against data_end -> verifier reject
+int bad(struct xdp_md *ctx) {
+  char *p = (char *)(unsigned long)ctx->data;
+  return p[100]; // no bounds check against data_end -> verifier reject
 }
 
 char _license[] SEC("license") = "Dual BSD/GPL";

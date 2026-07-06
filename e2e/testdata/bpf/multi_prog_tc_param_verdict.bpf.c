@@ -20,6 +20,7 @@
 // to what the default would do, given the same return verdicts.
 
 #include <linux/pkt_cls.h>
+
 #include "multi_prog_net_common.bpf.h"
 
 volatile const __u64 weight_a = 0;
@@ -33,14 +34,14 @@ NET_COUNTER_MAP(mtcv_a_count);
 NET_COUNTER_MAP(mtcv_b_count);
 NET_COUNTER_MAP(mtcv_c_count);
 
-#define TC_PARAM_PROG(prog_name, map_var, weight_var, verdict_var) \
-	int prog_name(struct __sk_buff *skb) { \
-		void *data = (void *)(long)skb->data; \
-		void *data_end = (void *)(long)skb->data_end; \
-		if (is_ipv4_icmp_echo(data, data_end)) \
-			bump_counter(&map_var, weight_var); \
-		return verdict_var; \
-	}
+#define TC_PARAM_PROG(prog_name, map_var, weight_var, verdict_var)             \
+  int prog_name(struct __sk_buff *skb) {                                       \
+    void *data = (void *)(long)skb->data;                                      \
+    void *data_end = (void *)(long)skb->data_end;                              \
+    if (is_ipv4_icmp_echo(data, data_end))                                     \
+      bump_counter(&map_var, weight_var);                                      \
+    return verdict_var;                                                        \
+  }
 
 SEC("classifier/mtcv_a")
 TC_PARAM_PROG(mtcv_a, mtcv_a_count, weight_a, verdict_a)

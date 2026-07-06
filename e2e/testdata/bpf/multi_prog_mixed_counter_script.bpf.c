@@ -29,14 +29,14 @@ COUNTER_MAP(mtp_count);
 COUNTER_MAP(mkp_count);
 COUNTER_MAP(mkrp_count);
 
-#define SLOT_COUNTER_PROG(prog_name, map_name, weight) \
-	int prog_name(void *ctx) { \
-		__u32 key = 0; \
-		__u64 *val = bpf_map_lookup_elem(&map_name, &key); \
-		if (val) \
-			__sync_fetch_and_add(val, weight); \
-		return 0; \
-	}
+#define SLOT_COUNTER_PROG(prog_name, map_name, weight)                         \
+  int prog_name(void *ctx) {                                                   \
+    __u32 key = 0;                                                             \
+    __u64 *val = bpf_map_lookup_elem(&map_name, &key);                         \
+    if (val)                                                                   \
+      __sync_fetch_and_add(val, weight);                                       \
+    return 0;                                                                  \
+  }
 
 SEC("tracepoint/mixed_tp")
 TRACEPOINT_SLOT_COUNTER_PROG(mixed_tp, mtp_count, weight_tp)

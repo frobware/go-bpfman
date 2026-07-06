@@ -9,6 +9,7 @@
 // test that owns it.
 
 #include <linux/bpf.h>
+
 #include <bpf/bpf_helpers.h>
 
 #include "counter_common.bpf.h"
@@ -22,33 +23,30 @@ COUNTER_MAP(mkp_b_count);
 COUNTER_MAP(mkp_c_count);
 
 SEC("kprobe/mkp_a")
-int mkp_a(void *ctx)
-{
-	__u32 key = 0;
-	__u64 *val = bpf_map_lookup_elem(&mkp_a_count, &key);
-	if (val)
-		__sync_fetch_and_add(val, weight_a);
-	return 0;
+int mkp_a(void *ctx) {
+  __u32 key = 0;
+  __u64 *val = bpf_map_lookup_elem(&mkp_a_count, &key);
+  if (val)
+    __sync_fetch_and_add(val, weight_a);
+  return 0;
 }
 
 SEC("kprobe/mkp_b")
-int mkp_b(void *ctx)
-{
-	__u32 key = 0;
-	__u64 *val = bpf_map_lookup_elem(&mkp_b_count, &key);
-	if (val)
-		__sync_fetch_and_add(val, weight_b);
-	return 0;
+int mkp_b(void *ctx) {
+  __u32 key = 0;
+  __u64 *val = bpf_map_lookup_elem(&mkp_b_count, &key);
+  if (val)
+    __sync_fetch_and_add(val, weight_b);
+  return 0;
 }
 
 SEC("kprobe/mkp_c")
-int mkp_c(void *ctx)
-{
-	__u32 key = 0;
-	__u64 *val = bpf_map_lookup_elem(&mkp_c_count, &key);
-	if (val)
-		__sync_fetch_and_add(val, weight_c);
-	return 0;
+int mkp_c(void *ctx) {
+  __u32 key = 0;
+  __u64 *val = bpf_map_lookup_elem(&mkp_c_count, &key);
+  if (val)
+    __sync_fetch_and_add(val, weight_c);
+  return 0;
 }
 
 char _license[] SEC("license") = "Dual BSD/GPL";

@@ -4,12 +4,11 @@
 // Derived from:
 // https://github.com/xdp-project/xdp-tools/blob/master/lib/libxdp/xdp-dispatcher.c.in
 
-// clang-format off
 #include <linux/bpf.h>
 #include <linux/in.h>
+
 #include <bpf/bpf_endian.h>
 #include <bpf/bpf_helpers.h>
-// clang-format on
 
 #define XDP_METADATA_SECTION "xdp_metadata"
 #define XDP_DISPATCHER_VERSION 2

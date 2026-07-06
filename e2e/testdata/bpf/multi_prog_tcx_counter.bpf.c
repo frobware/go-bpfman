@@ -19,6 +19,7 @@
 // every active program in the chain to see the packet.
 
 #include <linux/pkt_cls.h>
+
 #include "multi_prog_net_common.bpf.h"
 
 volatile const __u64 weight_a = 0;
@@ -29,14 +30,14 @@ NET_COUNTER_MAP(mtcx_a_count);
 NET_COUNTER_MAP(mtcx_b_count);
 NET_COUNTER_MAP(mtcx_c_count);
 
-#define TCX_COUNT_PROG(prog_name, map_var, weight_var) \
-	int prog_name(struct __sk_buff *skb) { \
-		void *data = (void *)(long)skb->data; \
-		void *data_end = (void *)(long)skb->data_end; \
-		if (is_ipv4_icmp_echo(data, data_end)) \
-			bump_counter(&map_var, weight_var); \
-		return TC_ACT_UNSPEC; \
-	}
+#define TCX_COUNT_PROG(prog_name, map_var, weight_var)                         \
+  int prog_name(struct __sk_buff *skb) {                                       \
+    void *data = (void *)(long)skb->data;                                      \
+    void *data_end = (void *)(long)skb->data_end;                              \
+    if (is_ipv4_icmp_echo(data, data_end))                                     \
+      bump_counter(&map_var, weight_var);                                      \
+    return TC_ACT_UNSPEC;                                                      \
+  }
 
 SEC("classifier/mtcx_a")
 TCX_COUNT_PROG(mtcx_a, mtcx_a_count, weight_a)

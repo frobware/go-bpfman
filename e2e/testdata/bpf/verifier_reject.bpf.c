@@ -16,22 +16,24 @@
 // surfaces from `program load`, not from a later attach.
 
 #include <linux/bpf.h>
+
 #include <bpf/bpf_helpers.h>
 
 struct {
-	__uint(type, BPF_MAP_TYPE_HASH);
-	__type(key, __u32);
-	__type(value, __u64);
-	__uint(max_entries, 1);
-	__uint(pinning, LIBBPF_PIN_NONE);
+  __uint(type, BPF_MAP_TYPE_HASH);
+  __type(key, __u32);
+  __type(value, __u64);
+  __uint(max_entries, 1);
+  __uint(pinning, LIBBPF_PIN_NONE);
 } verifier_reject_map SEC(".maps");
 
 SEC("kprobe/verifier_reject")
 int verifier_reject(void *ctx) {
-	__u32 key = 0;
-	__u64 *val = bpf_map_lookup_elem(&verifier_reject_map, &key);
-	(*val)++; // no null check -> verifier reject: invalid mem access 'map_value_or_null'
-	return 0;
+  __u32 key = 0;
+  __u64 *val = bpf_map_lookup_elem(&verifier_reject_map, &key);
+  (*val)++; // no null check -> verifier reject: invalid mem access
+            // 'map_value_or_null'
+  return 0;
 }
 
 char _license[] SEC("license") = "Dual BSD/GPL";
