@@ -2,9 +2,9 @@
 # Disables signature verification for easier local testing
 
 [signing]
-verify_enabled = false
 allow_unsigned = true
+verify_enabled = false
 
 [logging]
-level = "debug"
 format = "text"
+level = "debug"
