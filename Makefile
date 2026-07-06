@@ -622,6 +622,7 @@ help:
 	@printf "  %-31s %s\n" "test" "Run all tests"
 	@printf "  %-31s %s\n" "test-all" "Run every host-side test surface in CI order (pre-push gate)"
 	@printf "  %-31s %s\n" "bpfman-shell-fmt" "Format canonical .bpfman files"
+	@printf "  %-31s %s\n" "bpfman-clang-format" "Format C sources with clang-format (LLVM style)"
 	@printf "  %-31s %s\n" "update-lowered-goldens" "Regenerate the lowerer golden fixture"
 	@printf "  %-31s %s\n" "test-e2e" "Run e2e tests (requires root)"
 	@printf "  %-31s %s\n" "test-e2e-grpc" "Run the parallel gRPC e2e test against a real bpfman serve daemon (requires root)"
@@ -1214,6 +1215,10 @@ bpfman-build: bpfman-fmt bpfman-compile
 .PHONY: bpfman-fmt
 bpfman-fmt:
 	@find . -type f -name '*.go' -not -path './vendor/*' -print0 | xargs -0 gofmt -w
+
+.PHONY: bpfman-clang-format
+bpfman-clang-format:
+	@git ls-files -- '*.c' '*.h' ':!vendor' | xargs clang-format -i
 
 # Apply gofmt + goimports to every .go file via golangci-lint's `fmt`
 # subcommand, which honours the formatters block in .golangci.yml --
